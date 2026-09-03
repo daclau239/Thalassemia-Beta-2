@@ -1,17 +1,13 @@
 import base64
 import io
-import os
 import json
+import os
 import sqlite3
 import uuid
 from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
-from docx import Document
-from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Cm, Pt
 
 # Mật khẩu quản trị viên
 ADMIN_PASSWORD = "admin123"
@@ -152,56 +148,69 @@ DIEM_DAN_TOC_VN = {
     "Dân tộc khác": 0.5,
 }
 
-# 4. Danh mục câu hỏi Vòng 1 phân theo 4 Nhóm chuẩn lâm sàng
+DO_CAO_SONG = [
+    "Đồng bằng / Ven biển (< 100m)",
+    "Trung du / Đồi thấp (100m - 1000m)",
+    "Vùng núi cao (> 1000m - có thể làm tăng Hb sinh lý)",
+]
+
+MOI_TRUONG_LAM_VIEC = [
+    "Văn phòng / Học tập trong nhà",
+    "Lao động ngoài trời / Nông - Lâm - Ngư nghiệp",
+    "Nhà máy / Tiếp xúc hóa chất, kim loại nặng, chì",
+    "Môi trường hầm mỏ / Thiếu oxy kéo dài",
+]
+
+# 4. Bộ câu hỏi Vòng 1 diễn giải chi tiết theo 4 Nhóm
 CAU_HOI_NHOM_A = [
     (
         "q_a1",
-        "Gia đình/dòng họ có người đã chẩn đoán Thalassemia hoặc cần truyền máu định kỳ?",
+        "Trong gia đình hoặc dòng họ (ông bà, bố mẹ, anh chị em, cô dì chú bác), đã có ai từng được chẩn đoán mắc bệnh Thalassemia (tan máu bẩm sinh) hoặc phải đi truyền máu định kỳ dài hạn chưa?",
     ),
     (
         "q_a2",
-        "Gia đình có người bị lách to, biến dạng xương mặt, da vàng hoặc sạm đen bất thường?",
+        "Trong họ hàng có ai ghi nhận các dấu hiệu bất thường như: lách to (phải mổ cắt lách), biến dạng xương mặt (trán gồ, mũi tẹt, gò má cao) hoặc da sạm xám/vàng da kéo dài không rõ nguyên nhân?",
     ),
     (
         "q_a3",
-        "Tiền sử gia đình có ghi nhận trường hợp sảy thai liên tiếp, thai chết lưu hoặc phù thai?",
+        "Tiền sử thai sản trong gia đình hoặc bản thân từng có ghi nhận các trường hợp sảy thai liên tiếp, thai chết lưu không rõ nguyên nhân, hoặc thai nhi bị phù thai (Hydrops fetalis)?",
     ),
 ]
 
 CAU_HOI_NHOM_B = [
     (
         "q_b1",
-        "Bản thân từng có kết quả xét nghiệm ghi nhận thiếu máu nhược sắc, hồng cầu nhỏ?",
+        "Trong các lần khám sức khỏe hoặc xét nghiệm máu trước đây, bản thân bạn đã bao giờ được bác sĩ thông báo hoặc ghi nhận chỉ số thiếu máu, hồng cầu nhỏ nhược sắc (MCV < 80 fL, MCH < 27 pg) chưa?",
     ),
     (
         "q_b2",
-        "Từng làm Điện di Hb / Xét nghiệm Gen có nghi ngờ mang gen hoặc biến thể Hb (HbE, HbCS...)?",
+        "Bản thân đã từng làm xét nghiệm Điện di Huyết sắc tố (Hb electrophoresis) hoặc Xét nghiệm Gen và nhận kết quả nghi ngờ/xác định mang gen ẩn Thalassemia hoặc các biến thể Hb (như HbE, HbCS, Hb Bart's...)?",
     ),
     (
         "q_b3",
-        "Bản thân từng bị từ chối hiến máu do nồng độ Huyết sắc tố (Hb) thấp?",
+        "Bạn đã từng đi hiến máu nhân đạo nhưng bị bác sĩ từ chối tiếp nhận vì lý do nồng độ Huyết sắc tố (Hb) quá thấp hoặc bị kết luận là thiếu máu nhẹ chưa?",
     ),
 ]
 
 CAU_HOI_NHOM_C = [
     (
         "q_c1",
-        "Bản thân hoặc bố/mẹ thuộc các dân tộc thiểu số có tỷ lệ mang gen cao (Thái, Mường, Tày, Nùng, Ê Đê...)?",
+        "Bản thân bạn hoặc bố/mẹ thuộc các dân tộc thiểu số tại Việt Nam có tỷ lệ mang gen Thalassemia cao (như Thái, Mường, Tày, Nùng, Ê Đê, Gia Rai, Ba Na, Stiêng, Khơ-me...)?",
     ),
     (
         "q_c2",
-        "Vợ/Chồng hoặc bạn đời thuộc cùng dòng họ, cùng dân tộc thiểu số hoặc cùng thôn/bản?",
+        "Vợ/chồng hoặc bạn đời dự định kết hôn của bạn có cùng dòng họ, cùng dân tộc thiểu số, hoặc sinh sống cùng trong một thôn/bản/xã có tính chất khép kín trong nhiều thế hệ?",
     ),
 ]
 
 CAU_HOI_NHOM_D = [
     (
         "q_d1",
-        "Thường xuyên mệt mỏi, hoa mắt, chóng mặt, giảm khả năng tập trung kéo dài?",
+        "Bạn có thường xuyên xuất hiện cảm giác mệt mỏi mạn tính, hoa mắt, chóng mặt khi thay đổi tư thế, thể lực suy giảm hoặc giảm khả năng tập trung lao động/học tập kéo dài không?",
     ),
     (
         "q_d2",
-        "Da xanh xao, niêm mạc nhợt nhạt không rõ nguyên nhân dù ăn uống bình thường?",
+        "Bản thân hoặc người xung quanh có nhận thấy da bạn xanh xao, niêm mạc mắt/môi nhợt nhạt dai dẳng dù chế độ ăn uống hoàn toàn đầy đủ dinh dưỡng?",
     ),
 ]
 
@@ -230,32 +239,32 @@ def analyze_round2(mcv, mch, hb, rbc, rdw, gioitinh):
             )
         else:
             differential.append(
-                "Có biểu hiện hồng cầu nhỏ nhược sắc, cần làm thêm Ferritin serum."
+                "Có biểu hiện hồng cầu nhỏ nhược sắc, cần kiểm tra thêm Ferritin huyết thanh."
             )
 
         if rdw > 15.0:
             differential.append(
-                "RDW > 15%: Hồng cầu kích thước không đều (thường gặp ở thiếu sắt tiến triển)."
+                "RDW > 15%: Hồng cầu kích thước không đều (gợi ý thiếu sắt tiến triển)."
             )
         else:
             differential.append(
-                "RDW bình thường/tăng nhẹ: Thường gặp ở người mang gen Thalassemia."
+                "RDW bình thường/tăng nhẹ: Thường gặp trong thể mang gen Thalassemia."
             )
     elif mcv > 100.0:
         differential.append(
-            "Gợi ý nguyên nhân khác: Thiếu B12, Acid Folic hoặc bệnh lý gan."
+            "Gợi ý nguyên nhân khác: Thiếu Vitamin B12, Folic Acid hoặc bệnh lý gan."
         )
     else:
         differential.append(
-            "Các chỉ số thể tích và Hb hồng cầu trong giới hạn bình thường."
+            "Các chỉ số thể tích và Hb hồng cầu nằm trong giới hạn bình thường."
         )
 
     return morphology, chromic, mentzer, differential
 
 
-# 6. Cơ sở dữ liệu SQLite
+# 6. Database SQLite
 DATA_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "thalalassemia_v3.db"
+    os.path.dirname(os.path.abspath(__file__)), "thalalassemia_v4.db"
 )
 
 
@@ -286,7 +295,7 @@ def ghi_du_lieu(record_data):
         return False
 
 
-# 7. Khởi tạo State
+# 7. Init State
 def init_state():
     defaults = {
         "ho_so_id": "",
@@ -296,6 +305,8 @@ def init_state():
         "dantoc": "Chọn dân tộc",
         "vung_o": "Chọn vùng/miền",
         "tinh_o": "Chọn Tỉnh/Thành phố",
+        "do_cao": DO_CAO_SONG[0],
+        "moi_truong": MOI_TRUONG_LAM_VIEC[0],
         "s1_score": 0.0,
         "mcv": 0.0,
         "mch": 0.0,
@@ -321,7 +332,7 @@ def init_state():
             st.session_state[k] = v
 
 
-# 8. Giao diện chính
+# 8. Main App
 def main():
     init_state()
     ss = st.session_state
@@ -330,23 +341,26 @@ def main():
         """
     <div class="hero">
         <h1>🩸 HỆ THỐNG SÀNG LỌC & TƯ VẤN DI TRUYỀN THALASSEMIA</h1>
-        <p>Quy trình sàng lọc 3 vòng chuẩn hóa • Phân nhóm yếu tố nguy cơ • Mô hình tư vấn Mendel</p>
+        <p>Tích hợp dịch tễ độ cao & môi trường • Phân nhóm sàng lọc chuyên sâu • Mô hình di truyền Mendel</p>
     </div>
     """,
         unsafe_allow_html=True,
     )
 
-    # Thông tin hành chính
-    st.subheader("📋 Thông tin chung (Tuổi, Giới, Dân tộc, Khu vực)")
-    c1, c2, c3 = st.columns(3)
-    with c1:
+    # Khai báo thông tin hành chính & Môi trường sống
+    st.subheader(
+        "📋 Thông tin chung (Tuổi, Giới, Dân tộc, Địa lý & Môi trường)"
+    )
+
+    r1_1, r1_2, r1_3 = st.columns(3)
+    with r1_1:
         ss.hoten = st.text_input("Họ và tên:", value=ss.hoten)
         ss.gioitinh = st.selectbox(
             "Giới tính:",
             ["Nữ", "Nam"],
             index=0 if ss.gioitinh == "Nữ" else 1,
         )
-    with c2:
+    with r1_2:
         ss.ngaysinh = st.date_input(
             "Ngày sinh:", value=ss.ngaysinh, format="DD/MM/YYYY"
         )
@@ -355,9 +369,9 @@ def main():
             DAN_TOC,
             index=DAN_TOC.index(ss.dantoc) if ss.dantoc in DAN_TOC else 0,
         )
-    with c3:
+    with r1_3:
         ss.vung_o = st.selectbox(
-            "Vùng/Miền:",
+            "Vùng/Miền cư trú:",
             VUNG_MIEN,
             index=VUNG_MIEN.index(ss.vung_o) if ss.vung_o in VUNG_MIEN else 0,
         )
@@ -372,19 +386,40 @@ def main():
             index=tinh_ds.index(ss.tinh_o) if ss.tinh_o in tinh_ds else 0,
         )
 
+    # Hàng bổ sung: Độ cao & Môi trường làm việc
+    r2_1, r2_2 = st.columns(2)
+    with r2_1:
+        ss.do_cao = st.selectbox(
+            "⛰️ Độ cao khu vực sinh sống (so với mực nước biển):",
+            DO_CAO_SONG,
+            index=DO_CAO_SONG.index(ss.do_cao)
+            if ss.do_cao in DO_CAO_SONG
+            else 0,
+        )
+    with r2_2:
+        ss.moi_truong = st.selectbox(
+            "🏭 Môi trường làm việc / Học tập chính:",
+            MOI_TRUONG_LAM_VIEC,
+            index=MOI_TRUONG_LAM_VIEC.index(ss.moi_truong)
+            if ss.moi_truong in MOI_TRUONG_LAM_VIEC
+            else 0,
+        )
+
     st.markdown("---")
 
     # ------------------ VÒNG 1 ------------------
-    st.subheader("🟢 VÒNG 1: Đánh giá yếu tố nguy cơ")
-    st.caption("*Sắp xếp theo các nhóm chỉ số lâm sàng:*")
+    st.subheader("🟢 VÒNG 1: Đánh giá yếu tố nguy cơ (Diễn giải chi tiết)")
+    st.caption(
+        "*Vui lòng đọc kỹ câu hỏi dưới đây và lựa chọn 'Có' hoặc 'Không':*"
+    )
 
     score_v1 = DIEM_DAN_TOC_VN.get(ss.dantoc, 0.5)
 
     def render_group(title, questions, weight=1.0):
         nonlocal score_v1
-        st.markdown(f"**{title}**")
+        st.markdown(f"### {title}")
         for q_id, q_text in questions:
-            cq, ca = st.columns([3.5, 1])
+            cq, ca = st.columns([3.8, 1.2])
             with cq:
                 st.write(f"• {q_text}")
             with ca:
@@ -399,11 +434,12 @@ def main():
                     == "Có"
                 ):
                     score_v1 += weight
+            st.markdown("<div style='margin-bottom: 6px;'></div>", unsafe_allow_html=True)
 
-    render_group("🔹 Nhóm A — Tiền sử gia đình & Thai sản", CAU_HOI_NHOM_A, 1.5)
-    render_group("🔹 Nhóm B — Kết quả xét nghiệm cũ", CAU_HOI_NHOM_B, 1.5)
-    render_group("🔹 Nhóm C — Yếu tố dịch tễ & Hôn nhân", CAU_HOI_NHOM_C, 1.0)
-    render_group("🔹 Nhóm D — Triệu chứng không đặc hiệu", CAU_HOI_NHOM_D, 0.5)
+    render_group("📌 Nhóm A — Tiền sử gia đình & Thai sản", CAU_HOI_NHOM_A, 1.5)
+    render_group("📌 Nhóm B — Kết quả xét nghiệm cũ & Tiền sử hiến máu", CAU_HOI_NHOM_B, 1.5)
+    render_group("📌 Nhóm C — Yếu tố dịch tễ dân tộc & Hôn nhân", CAU_HOI_NHOM_C, 1.0)
+    render_group("📌 Nhóm D — Triệu chứng lâm sàng không đặc hiệu", CAU_HOI_NHOM_D, 0.5)
 
     ss.s1_score = score_v1
 
@@ -411,24 +447,24 @@ def main():
     if ss.s1_score >= 4.0:
         box(
             "danger-box",
-            f"🔴 <b>KẾT QUẢ: CÓ YẾU TỐ NGUY CƠ ĐÁNG CHÚ Ý ({ss.s1_score:.1f} điểm)</b><br>Ghi nhận các yếu tố nguy cơ cao từ tiền sử gia đình, xét nghiệm cũ hoặc dịch tễ.<br>👉 <b>Khuyến cáo:</b> Bắt buộc thực hiện Vòng 2 (Tổng phân tích tế bào máu).",
+            f"🔴 <b>KẾT QUẢ: CÓ YẾU TỐ NGUY CƠ ĐÁNG CHÚ Ý ({ss.s1_score:.1f} điểm)</b><br>Ghi nhận các yếu tố nguy cơ cao từ tiền sử gia đình, kết quả xét nghiệm cũ hoặc dịch tễ dân tộc.<br>👉 <b>Khuyến cáo:</b> Bắt buộc thực hiện Vòng 2 (Tổng phân tích tế bào máu).",
         )
     elif ss.s1_score >= 2.0:
         box(
             "warning-box",
-            f"🟡 <b>KẾT QUẢ: CÓ YẾU TỐ NGUY CƠ ({ss.s1_score:.1f} điểm)</b><br>Ghi nhận một số yếu tố tiền sử nhẹ hoặc triệu chứng không đặc hiệu.<br>👉 <b>Khuyến cáo:</b> Khuyên thực hiện xét nghiệm công thức máu kiểm tra MCV, MCH, Hb.",
+            f"🟡 <b>KẾT QUẢ: CÓ YẾU TỐ NGUY CƠ ({ss.s1_score:.1f} điểm)</b><br>Ghi nhận một số yếu tố tiền sử nhẹ hoặc biểu hiện lâm sàng không đặc hiệu.<br>👉 <b>Khuyến cáo:</b> Nên thực hiện xét nghiệm công thức máu kiểm tra chỉ số MCV, MCH, Hb.",
         )
     else:
         box(
             "success-box",
-            f"🟢 <b>KẾT QUẢ: YẾU TỐ NGUY CƠ THẤP ({ss.s1_score:.1f} điểm)</b><br>Chưa phát hiện các yếu tố tiền sử dịch tễ đáng lo ngại.",
+            f"🟢 <b>KẾT QUẢ: YẾU TỐ NGUY CƠ THẤP ({ss.s1_score:.1f} điểm)</b><br>Chưa phát hiện các yếu tố nguy cơ đáng ngại từ dịch tễ hay tiền sử.",
         )
 
     st.markdown("---")
 
     # ------------------ VÒNG 2 ------------------
     st.subheader("🔬 VÒNG 2: Phân tích công thức máu")
-    st.caption("*Nhập các chỉ số từ kết quả xét nghiệm máu:*")
+    st.caption("*Nhập các chỉ số từ kết quả xét nghiệm máu (CBC):*")
 
     c_hb, c_rbc, c_mcv, c_mch, c_rdw = st.columns(5)
     with c_hb:
@@ -453,6 +489,11 @@ def main():
             f"• **Mentzer Index (MCV / RBC):** {mentzer:.2f} "
             + ("(< 13)" if mentzer < 13 else "(≥ 13)")
         )
+
+        if "vùng núi cao" in ss.do_cao.lower():
+            st.info(
+                "⛰️ *Lưu ý độ cao:* Bệnh nhân sống ở vùng núi cao có thể có nồng độ Hb tăng sinh lý tự nhiên do phản ứng thích nghi thiếu oxy."
+            )
 
         st.markdown("**Phân biệt định hướng:**")
         for d in diff_list:
@@ -505,7 +546,7 @@ def main():
     ):
         box(
             "danger-box",
-            "🔴 <b>ĐÃ XÁC ĐỊNH BIẾN THỂ GEN / THỂ BỆNH</b><br>Cần theo dõi và quản lý bởi bác sĩ chuyên khoa Huyết học.",
+            "🔴 <b>ĐÃ XÁC ĐỊNH BIẾN THỂ GEN / THỂ BỆNH</b><br>Cần được theo dõi và điều trị chuyên khoa Huyết học.",
         )
     elif (
         ss.gen_test == "Phát hiện 1 đột biến dị hợp (Mang gen ẩn)"
@@ -514,7 +555,7 @@ def main():
     ):
         box(
             "warning-box",
-            "🟡 <b>KẾT QUẢ GỢI Ý NGƯỜI MANG GEN (TRAIT / CARRIER)</b><br>Người mang gen ẩn khỏe mạnh bình thường nhưng cần tư vấn di truyền trước khi sinh con.",
+            "🟡 <b>KẾT QUẢ GỢI Ý NGƯỜI MANG GEN (TRAIT / CARRIER)</b><br>Người mang gen ẩn hoàn toàn khỏe mạnh bình thường nhưng cần tư vấn di truyền trước khi kết hôn / sinh con.",
         )
     elif (
         ss.gen_test == "Không phát hiện đột biến"
@@ -562,7 +603,7 @@ def main():
             "danger-box",
             f"<b>🧬 TƯ VẤN NGUY CƠ DI TRUYỀN ({ss.loai_gen}):</b><br>"
             f"Trong <b>mỗi lần mang thai</b>, nếu cả hai bố mẹ đều là người mang biến thể {ss.loai_gen} phù hợp, nguy cơ theo mô hình di truyền Mendel là:<br>"
-            f"• <b>25%</b> nguy cơ con mắc bệnh thể nặng.<br>"
+            f"• <b>25%</b> nguy cơ con mắc bệnh thể nặng (đồng hợp tử).<br>"
             f"• <b>50%</b> nguy cơ con là người mang gen (khỏe mạnh).<br>"
             f"• <b>25%</b> nguy cơ con hoàn toàn không mang gen bệnh.<br>"
             f"👉 <i>Khuyên thực hiện chẩn đoán trước sinh (chọc ối / sinh thiết gai nhau) khi mang thai.</i>",
@@ -594,6 +635,8 @@ def main():
             "NgaySinh": ss.ngaysinh.strftime("%d/%m/%Y"),
             "DanToc": ss.dantoc,
             "TinhO": ss.tinh_o,
+            "DoCao": ss.do_cao,
+            "MoiTruong": ss.moi_truong,
             "DiemV1": ss.s1_score,
             "MCV": ss.mcv,
             "MCH": ss.mch,
