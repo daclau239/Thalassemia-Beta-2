@@ -14,15 +14,13 @@ from docx import Document
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
 
 # Mật khẩu quản trị viên
 ADMIN_PASSWORD = "admin123"
 
 # 1. Cấu hình trang
 st.set_page_config(
-    page_title="Sàng lọc Thalassemia & Thiếu máu thiếu sắt",
+    page_title="Sàng lọc Thalassemia & Bệnh lý Huyết học",
     page_icon="🩸",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -43,9 +41,6 @@ header, footer, div[data-testid="stDecoration"] { display: none; }
 .warning-box { background: #FFF6E8; border-left: 5px solid #F4A261; }
 .danger-box { background: #FDECEC; border-left: 5px solid #D62828; }
 .success-box { background: #E9F7EF; border-left: 5px solid #2A9D8F; }
-.hospital-box { 
-    background-color: #FFFFFF; border: 1px solid #BEE3F8; border-left: 5px solid #0077B6; 
-    border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -73,7 +68,6 @@ TINH_THEO_VUNG = {
 
 TAT_CA_TINH = ["Chọn Tỉnh/Thành phố"]
 for ds in TINH_THEO_VUNG.values(): TAT_CA_TINH.extend(ds)
-VUNG_CUA_TINH = {tinh: vung for vung, ds in TINH_THEO_VUNG.items() for tinh in ds}
 
 DAN_TOC = [
     "Chọn dân tộc", "Stiêng", "Ê Đê", "Gia Rai", "Ba Na", "Xơ Đăng", "Cơ Ho", "Hrê",
@@ -127,7 +121,32 @@ def lay_benh_vien_theo_tinh(tinh_tru):
     if tinh_tru in BENH_VIEN: return BENH_VIEN[tinh_tru], "chinh", ""
     return [{"ten": f"Bệnh viện Đa khoa Tỉnh/TP {tinh_tru}", "diachi": f"Trung tâm Tỉnh/TP {tinh_tru}", "dt": "Liên hệ 115"}], "goi_y", ""
 
-# 4. Thuật toán phân loại & Mentzer Index
+# 4. Thuật toán phân tích bệnh lý từ chỉ số máu
+def phan_tich_chiso_huyet_hoc(mcv, mch, hb_hieuchinh, rbc, rdw, gioitinh):
+    goi_y_list = []
+    
+    hb_cut = 12.0 if gioitinh == "Nữ" else 13.0
+    co_thieu_mau = (hb_hieuchinh > 0 and hb_hieuchinh < hb_cut)
+
+    if mcv > 95.0 or mch > 32.0:
+        goi_y_list.append("🔴 **Hồng cầu to / Ưu sắc (MCV > 95 fL, MCH > 32 pg):** Gợi ý nghi ngờ **Thiếu Vitamin B12** hoặc **Thiếu Acid Folic (Folate)**, bệnh lý gan hoặc lạm dụng rượu.")
+    elif 0 < mcv < 85.0 or 0 < mch < 28.0:
+        if co_thieu_mau:
+            goi_y_list.append("🟡 **Thiếu máu Hồng cầu nhỏ Nhược sắc (MCV < 85 fL, MCH < 28 pg):** Gợi ý nghi ngờ **Thalassemia (Mang gen/Mắc bệnh)** hoặc **Thiếu máu Thiếu sắt**.")
+        else:
+            goi_y_list.append("🟡 **Hồng cầu nhỏ Nhược sắc không thiếu máu:** Gợi ý rất cao **Người mang gen Thalassemia thể ẩn (Carrier)**.")
+
+    if rdw > 15.0:
+        goi_y_list.append("🟠 **Kích thước hồng cầu không đều (RDW > 15%):** Thường gặp trong **Thiếu máu thiếu sắt giai đoạn tiến triển** hoặc phối hợp nhiều nguyên nhân thiếu máu.")
+        
+    if rbc >= (4.9 if gioitinh == "Nữ" else 5.4) and (0 < mcv < 85.0):
+        goi_y_list.append("🟢 **Số lượng Hồng cầu (RBC) bảo tồn/tăng cao kèm MCV giảm:** Dấu hiệu đặc trưng nghiêng về **Thalassemia** hơn là Thiếu sắt.")
+
+    if not goi_y_list and mcv > 0:
+        goi_y_list.append("✅ Các chỉ số thể tích và hàm lượng Huyết sắc tố hồng cầu nằm trong giới hạn bình thường.")
+        
+    return goi_y_list
+
 def score_round2(mcv, mch, hb_tho, rbc, rdw, gioitinh, do_cao_option):
     giam_hb = ALTITUDE_CORRECTION_MAP.get(do_cao_option, 0.0)
     hb_hieuchinh = hb_tho - giam_hb  
@@ -158,7 +177,9 @@ def score_round2(mcv, mch, hb_tho, rbc, rdw, gioitinh, do_cao_option):
         ("RBC (Số lượng hồng cầu)", f"{rbc:.2f} M/uL", ref_rbc, score_rbc),
         ("RDW (Độ phân bố HC)", f"{rdw:.2f} %", "11.0 – 15.0 %", score_rdw),
     ]
-    return sum(r[3] for r in rows), rows, hb_hieuchinh, mentzer_str
+    
+    goi_y_benh = phan_tich_chiso_huyet_hoc(mcv, mch, hb_hieuchinh, rbc, rdw, gioitinh)
+    return sum(r[3] for r in rows), rows, hb_hieuchinh, mentzer_str, goi_y_benh
 
 # 5. Lưu trữ SQLite
 DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "thalalassemia_ho_so.db")
@@ -199,7 +220,7 @@ def init_state():
         "gioitinh": "Nữ", "hoten": "", "ngaysinh": date(2000, 1, 1), "dantoc": "Chọn dân tộc",
         "vung_o": "Chọn vùng/miền", "vung_lamviec": "Chọn vùng/miền", "tinh_o": "Chọn Tỉnh/Thành phố",
         "tinh_lamviec": "Chọn Tỉnh/Thành phố", "sdt": "", "do_cao": ALTITUDE_OPTIONS[0],
-        "mcv": 0.0, "mch": 0.0, "hb": 0.0, "rbc": 0.0, "rdw": 0.0, "mentzer_str": "",
+        "mcv": 0.0, "mch": 0.0, "hb": 0.0, "rbc": 0.0, "rdw": 0.0, "mentzer_str": "", "goi_y_benh": [],
         "vong1_da_luu": False, "vong2_da_luu": False, "vong3_da_luu": False,
         "dien_di_select": "Chưa thực hiện", "gen_select": "Chưa thực hiện", "ketluan_v3": "", "ghichu_v3": ""
     }
@@ -221,18 +242,20 @@ def luu_thong_tin(vong=None):
     data = {
         "HoSoID": ss.ho_so_id, "ThoiGian": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "HoTen": ss.hoten, "GioiTinh": ss.gioitinh, "NgaySinh": ss.ngaysinh.strftime("%d/%m/%Y"),
-        "DanToc": ss.dantoc, "SDT": ss.sdt, "TinhO": ss.tinh_o, "VungO": ss.vung_o,
-        "TinhLamViec": ss.tinh_lamviec, "VungLamViec": ss.vung_lamviec, "DoCaoSinhSong": ss.do_cao,
+        "DanToc": ss.dantoc, "SDT": ss.sdt, 
+        "TinhO": ss.tinh_o, "VungO": ss.vung_o,
+        "TinhLamViec": ss.tinh_lamviec, "VungLamViec": ss.vung_lamviec, 
+        "DoCaoSinhSong": ss.do_cao,
         "DiemV1": ss.s1, "CauTraLoiV1": [{"stt": i, "cau_hoi": CAU_HOI[i-1], "tra_loi": ss.get(f"q{i}")} for i in range(1, 16)],
         "MCV": ss.mcv, "MCH": ss.mch, "Hb": ss.hb, "RBC": ss.rbc, "RDW": ss.rdw,
-        "MentzerIndex": ss.mentzer_str, "DiemV2": ss.s2, "ChiTietV2": ss.r2_detail,
+        "MentzerIndex": ss.mentzer_str, "GoiYBenhLy": ss.goi_y_benh, "DiemV2": ss.s2, "ChiTietV2": ss.r2_detail,
         "DienDiHb": ss.dien_di_select, "XetNghiemGen": ss.gen_select,
         "KetLuanV3": ss.ketluan_v3, "GhiChuV3": ss.ghichu_v3,
         "Vong1DaLuu": ss.vong1_da_luu, "Vong2DaLuu": ss.vong2_da_luu, "Vong3DaLuu": ss.vong3_da_luu
     }
     return ghi_du_lieu_duy_nhat(data)
 
-# 7. Xuất Báo Cáo Word đầy đủ V3
+# 7. Xuất Báo Cáo Word
 def tao_phieu_word(data_dict):
     doc = Document()
     sec = doc.sections[0]
@@ -258,7 +281,7 @@ def tao_phieu_word(data_dict):
 
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run("PHIẾU KẾT QUẢ SÀNG LỌC THALASSEMIA & THIẾU MÁU THIẾU SẮT\n")
+    r = p.add_run("PHIẾU KẾT QUẢ SÀNG LỌC THALASSEMIA & BỆNH LÝ HUYẾT HỌC\n")
     r.bold = True
     r.font.size = Pt(13)
 
@@ -267,14 +290,21 @@ def tao_phieu_word(data_dict):
         ["Giới tính / Ngày sinh", f"{data_dict.get('GioiTinh', '')} - {data_dict.get('NgaySinh', '')}"],
         ["Dân tộc / SĐT", f"{data_dict.get('DanToc', '')} - {data_dict.get('SDT', '')}"],
         ["Nơi sinh sống", f"{data_dict.get('TinhO', '')} ({data_dict.get('VungO', '')})"],
+        ["Nơi làm việc / Học tập", f"{data_dict.get('TinhLamViec', '')} ({data_dict.get('VungLamViec', '')})"],
     ])
 
     if data_dict.get("Vong2DaLuu"):
         p2 = doc.add_paragraph()
-        p2.add_run("1. Kết quả Vòng 1 & Vòng 2 (Tổng phân tích máu & Phân biệt Sắt)\n").bold = True
+        p2.add_run("1. Kết quả Vòng 1 & Vòng 2 (Công thức máu & Phân tích định hướng)\n").bold = True
         add_table(["Thông số", "Giá trị", "Tham chiếu (Việt Nam)", "Điểm"], data_dict.get("ChiTietV2", []))
+        
         p_m = doc.add_paragraph()
-        p_m.add_run(f"Chỉ số Mentzer Index (MCV/RBC): {data_dict.get('MentzerIndex', '')}").bold = True
+        p_m.add_run(f"• Chỉ số Mentzer Index (MCV/RBC): {data_dict.get('MentzerIndex', '')}\n").bold = True
+        
+        p_g = doc.add_paragraph()
+        p_g.add_run("• Gợi ý bệnh lý / triệu chứng từ chỉ số máu:\n").bold = True
+        for g in data_dict.get("GoiYBenhLy", []):
+            p_g.add_run(f"  - {g.replace('**', '')}\n")
 
     if data_dict.get("Vong3DaLuu"):
         p3 = doc.add_paragraph()
@@ -292,7 +322,7 @@ def tao_phieu_word(data_dict):
 
 # 8. Màn hình Báo cáo Admin
 def render_admin():
-    st.subheader("📊 Trang Quản Trị & Báo Cáo Thống Kê (Cán bộ Y tế)")
+    st.subheader("📊 Trang Quản Trị & Báo Cáo Thống Kê")
     ds = doc_du_lieu_luu_tru()
     if not ds:
         st.info("Chưa có dữ liệu.")
@@ -300,10 +330,10 @@ def render_admin():
     
     st.metric("Tổng số hồ sơ trong hệ thống", len(ds))
     df = pd.DataFrame(ds)
-    st.dataframe(df[["HoSoID", "ThoiGian", "HoTen", "GioiTinh", "DanToc", "TinhO", "MentzerIndex"]], use_container_width=True)
+    st.dataframe(df[["HoSoID", "ThoiGian", "HoTen", "GioiTinh", "DanToc", "TinhO", "TinhLamViec", "MentzerIndex"]], use_container_width=True)
     
     csv_data = df.to_csv(index=False).encode('utf-8-sig')
-    st.download_button("📥 Tải file Báo cáo Excel/CSV toàn bộ hồ sơ", csv_data, f"BAO_CAO_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
+    st.download_button("📥 Tải file Báo cáo CSV toàn bộ hồ sơ", csv_data, f"BAO_CAO_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
 
 # 9. Giao diện Chính
 def render_main():
@@ -312,8 +342,8 @@ def render_main():
 
     st.markdown("""
     <div class="hero">
-        <h1>🩸 SÀNG LỌC THALASSEMIA & THIẾU MÁU THIẾU SẮT</h1>
-        <p>Chuẩn hóa khoảng tham chiếu Việt Nam • Tích hợp chỉ số Mentzer Index • Hỗ trợ tư vấn tiền hôn nhân</p>
+        <h1>🩸 SÀNG LỌC THALASSEMIA & BỆNH LÝ HUYẾT HỌC</h1>
+        <p>Phân tích chỉ số máu nâng cao • Chuẩn hóa khoảng tham chiếu Việt Nam • Tích hợp thông tin học tập/làm việc</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -337,8 +367,8 @@ def render_main():
         render_admin()
         return
 
-    # Khai báo thông tin
-    st.subheader("📋 1. Thông tin cá nhân & Địa bàn")
+    # Khai báo thông tin hành chính (Khôi phục Nơi làm việc/học tập)
+    st.subheader("📋 1. Thông tin cá nhân & Địa bàn sinh sống, làm việc")
     c1, c2 = st.columns(2)
     with c1:
         ss.hoten = st.text_input("Họ và tên (*):", value=ss.hoten)
@@ -349,21 +379,29 @@ def render_main():
         ss.sdt = st.text_input("Số điện thoại:", value=ss.sdt)
 
     with c2:
+        # Nơi sinh sống
         c2a, c2b = st.columns(2)
         with c2a: ss.vung_o = st.selectbox("Vùng sinh sống:", VUNG_MIEN, index=VUNG_MIEN.index(ss.vung_o) if ss.vung_o in VUNG_MIEN else 0)
         with c2b:
-            tinh_ds = TAT_CA_TINH if ss.vung_o == "Chọn vùng/miền" else ["Chọn Tỉnh/Thành phố"] + TINH_THEO_VUNG.get(ss.vung_o, [])
-            ss.tinh_o = st.selectbox("Tỉnh/Thành phố sinh sống:", tinh_ds, index=tinh_ds.index(ss.tinh_o) if ss.tinh_o in tinh_ds else 0)
+            tinh_ds_o = TAT_CA_TINH if ss.vung_o == "Chọn vùng/miền" else ["Chọn Tỉnh/Thành phố"] + TINH_THEO_VUNG.get(ss.vung_o, [])
+            ss.tinh_o = st.selectbox("Tỉnh/Thành phố sinh sống:", tinh_ds_o, index=tinh_ds_o.index(ss.tinh_o) if ss.tinh_o in tinh_ds_o else 0)
+        
+        # Nơi làm việc / học tập (Khôi phục)
+        c2c, c2d = st.columns(2)
+        with c2c: ss.vung_lamviec = st.selectbox("Vùng làm việc / Học tập:", VUNG_MIEN, index=VUNG_MIEN.index(ss.vung_lamviec) if ss.vung_lamviec in VUNG_MIEN else 0)
+        with c2d:
+            tinh_ds_lv = TAT_CA_TINH if ss.vung_lamviec == "Chọn vùng/miền" else ["Chọn Tỉnh/Thành phố"] + TINH_THEO_VUNG.get(ss.vung_lamviec, [])
+            ss.tinh_lamviec = st.selectbox("Tỉnh/TP làm việc / Học tập:", tinh_ds_lv, index=tinh_ds_lv.index(ss.tinh_lamviec) if ss.tinh_lamviec in tinh_ds_lv else 0)
+            
         ss.do_cao = st.selectbox("🏔️ Độ cao nơi sinh sống (Trừ Hb WHO):", ALTITUDE_OPTIONS, index=ALTITUDE_OPTIONS.index(ss.do_cao) if ss.do_cao in ALTITUDE_OPTIONS else 0)
 
-    # Hiển thị cơ sở y tế
     ds_bv, _, _ = lay_benh_vien_theo_tinh(ss.tinh_o)
     if ds_bv:
         st.markdown(f"🏥 **Cơ sở y tế gợi ý tại {ss.tinh_o}:** {ds_bv[0]['ten']} - 📍 {ds_bv[0]['diachi']} (Hotline: {ds_bv[0]['dt']})")
 
     st.markdown("---")
 
-    tab1, tab2, tab3 = st.tabs(["VÒNG 1: Tiền sử", "VÒNG 2: Công thức máu & Mentzer", "VÒNG 3: Điện di & Gen (NVYT Tích chọn)"])
+    tab1, tab2, tab3 = st.tabs(["VÒNG 1: Tiền sử", "VÒNG 2: Công thức máu & Phân tích Gợi ý", "VÒNG 3: Điện di & Gen (NVYT Tích chọn)"])
 
     with tab1:
         score_v1 = DIEM_DAN_TOC_VN.get(ss.dantoc, 0.5)
@@ -378,7 +416,7 @@ def render_main():
             if luu_thong_tin(vong=1): st.success("Đã lưu Vòng 1!")
 
     with tab2:
-        st.caption("🔬 *Tham chiếu chuẩn Việt Nam: Nam (Hb ≥13g/dL, RBC 4.2-5.4) | Nữ (Hb ≥12g/dL, RBC 4.0-4.9)*")
+        st.caption("🔬 *Nhập các chỉ số từ kết quả xét nghiệm Tổng phân tích tế bào máu ngoại vi:*")
         c_mcv, c_mch, c_hb, c_rbc, c_rdw = st.columns(5)
         with c_mcv: ss.mcv = st.number_input("MCV (fL):", value=ss.mcv, step=0.1)
         with c_mch: ss.mch = st.number_input("MCH (pg):", value=ss.mch, step=0.1)
@@ -386,11 +424,16 @@ def render_main():
         with c_rbc: ss.rbc = st.number_input("RBC (M/uL):", value=ss.rbc, step=0.01)
         with c_rdw: ss.rdw = st.number_input("RDW (%):", value=ss.rdw, step=0.1)
 
-        s2, r2_rows, hb_h, mentzer_str = score_round2(ss.mcv, ss.mch, ss.hb, ss.rbc, ss.rdw, ss.gioitinh, ss.do_cao)
-        ss.s2, ss.r2_detail, ss.mentzer_str = s2, r2_rows, mentzer_str
+        s2, r2_rows, hb_h, mentzer_str, goi_y_benh = score_round2(ss.mcv, ss.mch, ss.hb, ss.rbc, ss.rdw, ss.gioitinh, ss.do_cao)
+        ss.s2, ss.r2_detail, ss.mentzer_str, ss.goi_y_benh = s2, r2_rows, mentzer_str, goi_y_benh
 
-        if ss.mcv > 0 and ss.rbc > 0:
-            box("info-box", f"📊 <b>Chỉ số phân biệt Mentzer Index (MCV/RBC):</b> {mentzer_str}")
+        if ss.mcv > 0:
+            st.markdown("### 🔍 Phân tích định hướng & Phân biệt triệu chứng:")
+            box("info-box", f"📊 <b>Chỉ số Mentzer Index (MCV/RBC):</b> {mentzer_str}")
+            
+            st.markdown("**Gợi ý nghi ngờ bệnh lý từ các chỉ số máu:**")
+            for item in goi_y_benh:
+                st.markdown(f"- {item}")
 
         if st.button("💾 Lưu Vòng 2"):
             if luu_thong_tin(vong=2): st.success("Đã lưu Vòng 2!")
@@ -430,7 +473,6 @@ def render_main():
 
     st.markdown("---")
     
-    # Khối link tham khảo Sàng lọc tiền hôn nhân cho cặp đôi
     st.markdown("🔗 **Cổng thông tin & Trang tư vấn Sàng lọc Tiền hôn nhân uy tín:**")
     st.markdown("""
     * 🩸 [Viện Huyết học - Truyền máu Trung ương (Tư vấn Thalassemia)](https://vienhuyethoc.vn)
@@ -438,11 +480,11 @@ def render_main():
     * 👶 [Bệnh viện Nhi Đồng 1 - Chuyên khoa Huyết học](https://nhidong.org.vn)
     """)
 
-    # Nút xuất file Word
     word_bytes = tao_phieu_word({
         "HoTen": ss.hoten, "GioiTinh": ss.gioitinh, "NgaySinh": ss.ngaysinh.strftime("%d/%m/%Y"),
         "DanToc": ss.dantoc, "SDT": ss.sdt, "TinhO": ss.tinh_o, "VungO": ss.vung_o,
-        "ChiTietV2": ss.r2_detail, "MentzerIndex": ss.mentzer_str,
+        "TinhLamViec": ss.tinh_lamviec, "VungLamViec": ss.vung_lamviec,
+        "ChiTietV2": ss.r2_detail, "MentzerIndex": ss.mentzer_str, "GoiYBenhLy": ss.goi_y_benh,
         "DienDiHb": ss.dien_di_select, "XetNghiemGen": ss.gen_select,
         "KetLuanV3": ss.ketluan_v3, "GhiChuV3": ss.ghichu_v3,
         "Vong2DaLuu": ss.vong2_da_luu, "Vong3DaLuu": ss.vong3_da_luu
