@@ -10,6 +10,7 @@ import uuid
 import sqlite3
 
 import streamlit as st
+import pandas as pd
 
 from docx import Document
 from docx.shared import Pt, Cm
@@ -551,7 +552,105 @@ def tao_phieu_word_tu_data(data_dict):
     doc.save(output)
     return output.getvalue()
 
-# 8. Màn hình giao diện chính
+# 8. Màn hình Quản trị / Báo cáo dành cho Cán bộ Y tế
+def render_admin_dashboard():
+    st.subheader("📊 Trang Quản Trị & Báo Cáo Thống Kê (Dành cho Cán bộ Y tế)")
+    
+    ds = doc_du_lieu_luu_tru()
+    if not ds:
+        st.info("Chưa có dữ liệu hồ sơ nào trong cơ sở dữ liệu.")
+        return
+
+    # Thống kê nhanh
+    col_t1, col_t2, col_t3 = st.columns(3)
+    with col_t1: st.metric("Tổng số hồ sơ", len(ds))
+    with col_t2: 
+        nguy_co_cao = sum(1 for item in ds if "CAO" in str(item.get("KetLuanTong", "")).upper() or "CAO" in str(item.get("KetLuanV1", "")).upper())
+        st.metric("Số ca Nguy cơ Cao/Rất cao", nguy_co_cao)
+    with col_t3:
+        da_r2 = sum(1 for item in ds if item.get("Vong2DaLuu"))
+        st.metric("Hồ sơ đã nhập Vòng 2", da_r2)
+
+    st.markdown("---")
+    st.markdown("### 🔍 Danh sách hồ sơ bệnh nhân")
+
+    # Bộ lọc tìm kiếm
+    c_find, c_filter = st.columns([2, 1])
+    with c_find:
+        search_kw = st.text_input("🔎 Tìm kiếm theo Họ tên hoặc SĐT:", "").strip().lower()
+    with c_filter:
+        filter_risk = st.selectbox("Lọc theo mức độ nguy cơ:", ["Tất cả", "Nguy cơ RẤT CAO", "Nguy cơ CAO", "Nguy cơ TRUNG BÌNH", "Nguy cơ THẤP"])
+
+    ds_hien_thi = []
+    for record in ds:
+        name_match = search_kw in record.get("HoTen", "").lower() or search_kw in record.get("SDT", "").lower()
+        risk_str = record.get("KetLuanTong", record.get("KetLuanV1", ""))
+        risk_match = (filter_risk == "Tất cả") or (filter_risk.lower() in risk_str.lower())
+        
+        if name_match and risk_match:
+            ds_hien_thi.append(record)
+
+    # Chuyển đổi sang DataFrame để hiển thị bảng & xuất Excel/CSV
+    data_for_df = []
+    for item in ds_hien_thi:
+        data_for_df.append({
+            "Mã Hồ Sơ": item.get("HoSoID", "")[:8],
+            "Thời Gian": item.get("ThoiGian", ""),
+            "Họ và Tên": item.get("HoTen", ""),
+            "Ngày Sinh": item.get("NgaySinh", ""),
+            "Giới Tính": item.get("GioiTinh", ""),
+            "Dân Tộc": item.get("DanToc", ""),
+            "SĐT": item.get("SDT", ""),
+            "Tỉnh Sinh Sống": item.get("TinhO", ""),
+            "Độ Cao": item.get("DoCaoSinhSong", ""),
+            "Kết Luận V1": item.get("KetLuanV1", ""),
+            "Kết Luận Tổng": item.get("KetLuanTong", ""),
+        })
+
+    df = pd.DataFrame(data_for_df)
+    st.dataframe(df, use_container_width=True)
+
+    # Nút xuất file báo cáo Excel/CSV
+    if not df.empty:
+        csv_data = df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="📥 Tải file Báo cáo Excel/CSV toàn bộ hồ sơ",
+            data=csv_data,
+            file_name=f"BAO_CAO_THALASSEMIA_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+        )
+
+    # Xem chi tiết từng hồ sơ & Tải phiếu
+    st.markdown("---")
+    st.markdown("### 📄 Xem chi tiết & Xuất phiếu kết quả từng bệnh nhân")
+    
+    dict_options = {f"{item.get('HoTen', '')} - SĐT: {item.get('SDT', '')} ({item.get('ThoiGian', '')})": item for item in ds}
+    selected_key = st.selectbox("Chọn hồ sơ cần xem:", list(dict_options.keys()))
+    
+    if selected_key:
+        record_detail = dict_options[selected_key]
+        with st.expander("📌 Xem thông tin chi tiết hồ sơ", expanded=True):
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.write(f"**Họ tên:** {record_detail.get('HoTen')}")
+                st.write(f"**Ngày sinh:** {record_detail.get('NgaySinh')} | **Giới tính:** {record_detail.get('GioiTinh')}")
+                st.write(f"**Dân tộc:** {record_detail.get('DanToc')} | **SĐT:** {record_detail.get('SDT')}")
+                st.write(f"**Nơi sinh sống:** {record_detail.get('TinhO')} ({record_detail.get('VungO')})")
+            with col_d2:
+                st.write(f"**Kết luận V1:** {record_detail.get('KetLuanV1')}")
+                st.write(f"**Đánh giá tổng hợp:** {record_detail.get('KetLuanTong')}")
+                if record_detail.get("MCV"):
+                    st.write(f"**Chỉ số CBC:** MCV={record_detail.get('MCV')}, MCH={record_detail.get('MCH')}, Hb={record_detail.get('Hb')}")
+
+            word_bytes_single = tao_phieu_word_tu_data(record_detail)
+            st.download_button(
+                label=f"📄 Tải phiếu Word cho {record_detail.get('HoTen')}",
+                data=word_bytes_single,
+                file_name=f"PHIEU_{record_detail.get('HoTen','').replace(' ', '_')}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+
+# 9. Màn hình giao diện chính
 def render_main():
     init_state()
     ss = st.session_state
@@ -574,6 +673,10 @@ def render_main():
                 else: st.error("Sai mật khẩu!")
         else:
             st.success("👨‍⚕️ Cán bộ Y tế")
+            
+            # Chọn chế độ xem cho Admin
+            view_mode = st.radio("Chế độ xem:", ["Chẩn đoán / Khai báo", "Trang Báo Cáo / Quản Trị"])
+            
             if st.button("Đăng xuất Admin"):
                 ss.is_admin = False
                 st.rerun()
@@ -582,6 +685,11 @@ def render_main():
         if st.button("🔄 Tạo hồ sơ mới"):
             for k in list(st.session_state.keys()): del st.session_state[k]
             st.rerun()
+
+    # Nếu là Admin và chọn xem Trang Quản Trị
+    if ss.is_admin and 'view_mode' in locals() and view_mode == "Trang Báo Cáo / Quản Trị":
+        render_admin_dashboard()
+        return
 
     st.subheader("📋 1. Thông tin cá nhân & Địa bàn sinh sống / Làm việc")
     
