@@ -51,7 +51,7 @@ def box(kind, text):
 # 3. Danh mục dữ liệu chuẩn người Việt
 VUNG_MIEN = [
     "Chọn vùng/miền", "Đông Bắc", "Tây Bắc", "Đồng bằng sông Hồng", "Bắc Trung Bộ",
-    "Trung Trung Bộ", "Nam Trung Bộ", "Tây Nguyên", "Đông Nam Bộ", "Đồng bằng sông Cửu Long"
+    "Trung Trung Bộ", "Nam Trung Bộ", "Tây Nguyên", "Đồng bằng sông Cửu Long", "Đồng bằng Sông Cửu Long"
 ]
 
 TINH_THEO_VUNG = {
@@ -62,7 +62,6 @@ TINH_THEO_VUNG = {
     "Trung Trung Bộ": ["Đà Nẵng", "Quảng Nam - Quảng Ngãi", "Bình Định", "Phú Yên"],
     "Nam Trung Bộ": ["Khánh Hòa", "Ninh Thuận - Bình Thuận"],
     "Tây Nguyên": ["Kon Tum", "Gia Lai", "Đắc Lắc", "Đắc Nông - Lâm Đồng"],
-    "Đông Nam Bộ": ["Bình Phước - Bình Dương", "Đồng Nai - Bà Rịa Vũng Tàu", "Tây Ninh - Long An", "Thành phố Hồ Chí Minh"],
     "Đồng bằng sông Cửu Long": ["Tiền Giang - Vĩnh Long", "Bến Tre - Trà Vinh", "Đồng Tháp - An Giang", "Kiên Giang - Hậu Giang", "Cần Thơ", "Sóc Trăng - Bạc Liêu - Cà Mau"],
 }
 
@@ -122,7 +121,7 @@ def lay_benh_vien_theo_tinh(tinh_ten):
     if tinh_ten in BENH_VIEN: return BENH_VIEN[tinh_ten][0]
     return {"ten": f"Bệnh viện Đa khoa Tỉnh/TP {tinh_ten}", "diachi": f"Trung tâm Tỉnh/TP {tinh_ten}", "dt": "Liên hệ 115"}
 
-# 4. Thuật toán phân tích bệnh lý từ chỉ số máu
+# 4. Phân tích chỉ số máu (Vòng 2)
 def phan_tich_chiso_huyet_hoc(mcv, mch, hb_hieuchinh, rbc, rdw, gioitinh):
     goi_y_list = []
     hb_cut = 12.0 if gioitinh == "Nữ" else 13.0
@@ -293,9 +292,13 @@ def tao_phieu_word(data_dict):
         ["Nơi làm việc / Học tập", f"{data_dict.get('TinhLamViec', '')} ({data_dict.get('VungLamViec', '')})"],
     ])
 
+    if data_dict.get("Vong1DaLuu"):
+        p1 = doc.add_paragraph()
+        p1.add_run(f"1. Điểm Tiền sử & Dịch tễ (Vòng 1): {data_dict.get('DiemV1', 0.0)} điểm\n").bold = True
+
     if data_dict.get("Vong2DaLuu"):
         p2 = doc.add_paragraph()
-        p2.add_run("1. Kết quả Vòng 1 & Vòng 2 (Công thức máu & Phân tích định hướng)\n").bold = True
+        p2.add_run("2. Kết quả Vòng 2 (Công thức máu & Phân tích định hướng)\n").bold = True
         add_table(["Thông số", "Giá trị", "Tham chiếu (Việt Nam)", "Điểm"], data_dict.get("ChiTietV2", []))
         
         p_m = doc.add_paragraph()
@@ -308,7 +311,7 @@ def tao_phieu_word(data_dict):
 
     if data_dict.get("Vong3DaLuu"):
         p3 = doc.add_paragraph()
-        p3.add_run("\n2. Kết quả Vòng 3 (Chuyên sâu Điện di & Gen)\n").bold = True
+        p3.add_run("\n3. Kết quả Vòng 3 (Chuyên sâu Điện di & Gen)\n").bold = True
         add_table(["Hạng mục Vòng 3", "Kết quả ghi nhận / Tích chọn"], [
             ["Điện di Hemoglobin (Hb)", data_dict.get("DienDiHb", "Chưa chọn")],
             ["Xét nghiệm Gen Thalassemia", data_dict.get("XetNghiemGen", "Chưa chọn")],
@@ -330,7 +333,7 @@ def render_admin():
     
     st.metric("Tổng số hồ sơ trong hệ thống", len(ds))
     df = pd.DataFrame(ds)
-    st.dataframe(df[["HoSoID", "ThoiGian", "HoTen", "GioiTinh", "DanToc", "TinhO", "TinhLamViec", "MentzerIndex"]], use_container_width=True)
+    st.dataframe(df[["HoSoID", "ThoiGian", "HoTen", "GioiTinh", "DanToc", "TinhO", "TinhLamViec", "DiemV1", "DiemV2", "MentzerIndex"]], use_container_width=True)
     
     csv_data = df.to_csv(index=False).encode('utf-8-sig')
     st.download_button("📥 Tải file Báo cáo CSV toàn bộ hồ sơ", csv_data, f"BAO_CAO_{datetime.now().strftime('%Y%m%d')}.csv", "text/csv")
@@ -343,7 +346,7 @@ def render_main():
     st.markdown("""
     <div class="hero">
         <h1>🩸 SÀNG LỌC THALASSEMIA & BỆNH LÝ HUYẾT HỌC</h1>
-        <p>Phân tích chỉ số máu nâng cao • Chuẩn hóa khoảng tham chiếu Việt Nam • Tích hợp thông tin học tập/làm việc</p>
+        <p>Phân tích chỉ số máu nâng cao • Chuẩn hóa khoảng tham chiếu Việt Nam • Đánh giá rủi ro theo từng vòng</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -379,14 +382,12 @@ def render_main():
         ss.sdt = st.text_input("Số điện thoại:", value=ss.sdt)
 
     with c2:
-        # Nơi sinh sống
         c2a, c2b = st.columns(2)
         with c2a: ss.vung_o = st.selectbox("Vùng sinh sống:", VUNG_MIEN, index=VUNG_MIEN.index(ss.vung_o) if ss.vung_o in VUNG_MIEN else 0)
         with c2b:
             tinh_ds_o = TAT_CA_TINH if ss.vung_o == "Chọn vùng/miền" else ["Chọn Tỉnh/Thành phố"] + TINH_THEO_VUNG.get(ss.vung_o, [])
             ss.tinh_o = st.selectbox("Tỉnh/Thành phố sinh sống:", tinh_ds_o, index=tinh_ds_o.index(ss.tinh_o) if ss.tinh_o in tinh_ds_o else 0)
         
-        # Nơi làm việc / học tập
         c2c, c2d = st.columns(2)
         with c2c: ss.vung_lamviec = st.selectbox("Vùng làm việc / Học tập:", VUNG_MIEN, index=VUNG_MIEN.index(ss.vung_lamviec) if ss.vung_lamviec in VUNG_MIEN else 0)
         with c2d:
@@ -395,7 +396,6 @@ def render_main():
             
         ss.do_cao = st.selectbox("🏔️ Độ cao nơi sinh sống (Trừ Hb WHO):", ALTITUDE_OPTIONS, index=ALTITUDE_OPTIONS.index(ss.do_cao) if ss.do_cao in ALTITUDE_OPTIONS else 0)
 
-    # Khôi phục hiển thị cơ sở y tế theo cả nơi ở và nơi làm việc
     bv_o = lay_benh_vien_theo_tinh(ss.tinh_o)
     bv_lv = lay_benh_vien_theo_tinh(ss.tinh_lamviec)
 
@@ -409,9 +409,11 @@ def render_main():
 
     st.markdown("---")
 
-    tab1, tab2, tab3 = st.tabs(["VÒNG 1: Tiền sử", "VÒNG 2: Công thức máu & Phân tích Gợi ý", "VÒNG 3: Điện di & Gen (NVYT Tích chọn)"])
+    tab1, tab2, tab3 = st.tabs(["VÒNG 1: Tiền sử & Dịch tễ", "VÒNG 2: Công thức máu & Gợi ý bệnh lý", "VÒNG 3: Điện di & Gen (Chuyên sâu)"])
 
+    # ------------------ VÒNG 1 ------------------
     with tab1:
+        st.caption("📝 *Trả lời câu hỏi tiền sử bản thân và gia đình:*")
         score_v1 = DIEM_DAN_TOC_VN.get(ss.dantoc, 0.5)
         for idx, q_text in enumerate(CAU_HOI, 1):
             cq, ca = st.columns([3.5, 1])
@@ -420,9 +422,22 @@ def render_main():
                 if st.radio(f"q_{idx}", ["Có", "Không"], key=f"q{idx}", horizontal=True, label_visibility="collapsed") == "Có":
                     score_v1 += 1.0
         ss.s1 = score_v1
-        if st.button("💾 Lưu Vòng 1"):
-            if luu_thong_tin(vong=1): st.success("Đã lưu Vòng 1!")
 
+        st.markdown("---")
+        st.markdown("### 📊 Đánh giá & Gợi ý Vòng 1:")
+        st.metric("Tổng điểm yếu tố nguy cơ Vòng 1", f"{ss.s1:.1f} điểm")
+
+        if ss.s1 >= 4.0:
+            box("danger-box", f"🚨 <b>Mức độ nguy cơ: CAO ({ss.s1:.1f} điểm)</b><br>• Tiền sử gia đình hoặc dân tộc có tỷ lệ mang gen Thalassemia cao.<br>👉 <b>Gợi ý:</b> Bắt buộc thực hiện tiếp xét nghiệm Tổng phân tích tế bào máu (Vòng 2) và chủ động tham vấn y tế.")
+        elif ss.s1 >= 2.0:
+            box("warning-box", f"⚠️ <b>Mức độ nguy cơ: TRUNG BÌNH ({ss.s1:.1f} điểm)</b><br>• Đã ghi nhận yếu tố tiền sử hoặc triệu chứng nghi ngờ nhẹ.<br>👉 <b>Gợi ý:</b> Khuyên làm xét nghiệm Công thức máu (Vòng 2) để kiểm tra các chỉ số MCV, MCH, Hb.")
+        else:
+            box("success-box", f"✅ <b>Mức độ nguy cơ: THẤP ({ss.s1:.1f} điểm)</b><br>• Chưa phát hiện yếu tố tiền sử dịch tễ đáng ngại.<br>👉 <b>Gợi ý:</b> Vẫn nên làm xét nghiệm công thức máu định kỳ hoặc khám sức khỏe tiền hôn nhân.")
+
+        if st.button("💾 Lưu Vòng 1"):
+            if luu_thong_tin(vong=1): st.success("Đã lưu Vòng 1 thành công!")
+
+    # ------------------ VÒNG 2 ------------------
     with tab2:
         st.caption("🔬 *Nhập các chỉ số từ kết quả xét nghiệm Tổng phân tích tế bào máu ngoại vi:*")
         c_mcv, c_mch, c_hb, c_rbc, c_rdw = st.columns(5)
@@ -436,19 +451,32 @@ def render_main():
         ss.s2, ss.r2_detail, ss.mentzer_str, ss.goi_y_benh = s2, r2_rows, mentzer_str, goi_y_benh
 
         if ss.mcv > 0:
-            st.markdown("### 🔍 Phân tích định hướng & Phân biệt triệu chứng:")
-            box("info-box", f"📊 <b>Chỉ số Mentzer Index (MCV/RBC):</b> {mentzer_str}")
+            st.markdown("---")
+            st.markdown("### 📊 Đánh giá & Gợi ý Vòng 2:")
             
-            st.markdown("**Gợi ý nghi ngờ bệnh lý từ các chỉ số máu:**")
+            c_score1, c_score2 = st.columns(2)
+            with c_score1: st.metric("Điểm chỉ số máu Vòng 2", f"{ss.s2} / 13 điểm")
+            with c_score2: box("info-box", f"📊 <b>Chỉ số Mentzer Index (MCV/RBC):</b> {mentzer_str}")
+
+            if ss.s2 >= 6:
+                box("danger-box", "🚨 <b>Mức độ nghi ngờ: RẤT CAO</b><br>Các chỉ số thể hiện rõ tình trạng Hồng cầu nhỏ Nhược sắc. Cần làm ngay Vòng 3 (Điện di Hb & Xét nghiệm Gen).")
+            elif ss.s2 >= 3:
+                box("warning-box", "⚠️ <b>Mức độ nghi ngờ: TRUNG BÌNH</b><br>Có bất thường nhẹ về kích thước hoặc hàm lượng huyết sắc tố hồng cầu.")
+            else:
+                box("success-box", "✅ <b>Mức độ nghi ngờ: THẤP</b><br>Các chỉ số dòng hồng cầu nằm trong giới hạn bình thường.")
+
+            st.markdown("**Gợi ý nghi ngờ bệnh lý & Triệu chứng:**")
             for item in goi_y_benh:
                 st.markdown(f"- {item}")
 
         if st.button("💾 Lưu Vòng 2"):
-            if luu_thong_tin(vong=2): st.success("Đã lưu Vòng 2!")
+            if luu_thong_tin(vong=2): st.success("Đã lưu Vòng 2 thành công!")
 
+    # ------------------ VÒNG 3 ------------------
     with tab3:
-        st.markdown("### 🧬 Vòng 3: Dành cho Nhân viên Y tế tích chọn kết quả")
-        
+        st.markdown("### 🧬 Vòng 3: Xét nghiệm Điện di Hb & Phân tích Gen")
+        st.caption("*Tích chọn các kết quả cận lâm sàng chuyên sâu:*")
+
         ss.dien_di_select = st.radio(
             "1. Kết quả Điện di Huyết sắc tố (Hb):",
             [
@@ -476,6 +504,17 @@ def render_main():
         ss.ketluan_v3 = st.text_area("3. Kết luận chuyên môn Vòng 3:", value=ss.ketluan_v3)
         ss.ghichu_v3 = st.text_area("4. Ghi chú / Hướng xử trí tiếp theo:", value=ss.ghichu_v3)
 
+        st.markdown("---")
+        st.markdown("### 📊 Kết luận & Khuyến cáo di truyền Vòng 3:")
+        
+        co_dot_bien = "Đột biến" in ss.gen_select or "Gợi ý" in ss.dien_di_select
+        if co_dot_bien:
+            box("danger-box", "🔴 **XÁC ĐỊNH MANG GEN / MẮC BỆNH THALASSEMIA**<br>• Cần được tư vấn di truyền trước hôn nhân hoặc trước khi mang thai.<br>• Nếu bạn đời cũng mang gen, cần thực hiện chẩn đoán trước sinh (chọc ối/sinh thiết gai nhau).")
+        elif ss.gen_select == "Không phát hiện đột biến" and "Bình thường" in ss.dien_di_select:
+            box("success-box", "🟢 **KẾT QUẢ AN TOÀN**<br>• Không phát hiện các đột biến gen Thalassemia phổ biến. Rủi ro di truyền cho thế hệ sau rất thấp.")
+        else:
+            box("info-box", "🔵 **ĐANG CHỜ / CHƯA HOÀN THÀNH XÉT NGHIỆM VÒNG 3**<br>• Vui lòng hoàn thành xét nghiệm Điện di Hb và Gen để nhận được kết luận chính xác nhất từ bác sĩ chuyên khoa.")
+
         if st.button("💾 Lưu Vòng 3"):
             if luu_thong_tin(vong=3): st.success("Đã lưu Vòng 3 thành công!")
 
@@ -492,10 +531,11 @@ def render_main():
         "HoTen": ss.hoten, "GioiTinh": ss.gioitinh, "NgaySinh": ss.ngaysinh.strftime("%d/%m/%Y"),
         "DanToc": ss.dantoc, "SDT": ss.sdt, "TinhO": ss.tinh_o, "VungO": ss.vung_o,
         "TinhLamViec": ss.tinh_lamviec, "VungLamViec": ss.vung_lamviec,
+        "DiemV1": ss.s1, "DiemV2": ss.s2,
         "ChiTietV2": ss.r2_detail, "MentzerIndex": ss.mentzer_str, "GoiYBenhLy": ss.goi_y_benh,
         "DienDiHb": ss.dien_di_select, "XetNghiemGen": ss.gen_select,
         "KetLuanV3": ss.ketluan_v3, "GhiChuV3": ss.ghichu_v3,
-        "Vong2DaLuu": ss.vong2_da_luu, "Vong3DaLuu": ss.vong3_da_luu
+        "Vong1DaLuu": ss.vong1_da_luu, "Vong2DaLuu": ss.vong2_da_luu, "Vong3DaLuu": ss.vong3_da_luu
     })
     
     st.download_button("📄 Tải Phiếu Kết Quả Chuẩn Word (.docx)", word_bytes, f"PHIEU_SANG_LOC_{ss.hoten.replace(' ', '_')}.docx",
