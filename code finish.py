@@ -154,9 +154,10 @@ DIEM_DAN_TOC_VN = {
 }
 
 DO_CAO_SONG = [
-    "Đồng bằng / Ven biển (< 100m)",
-    "Trung du / Đồi thấp (100m - 1000m)",
-    "Vùng núi cao (> 1000m - có thể làm tăng Hb sinh lý)",
+    "Dưới 1000m (Đồng bằng / Trung du)",
+    "1000m - 1499m (Núi vừa)",
+    "1500m - 1999m (Núi cao - Đà Lạt, Sa Pa...)",
+    "Từ 2000m trở lên (Núi rất cao)",
 ]
 
 MOI_TRUONG_LAM_VIEC = [
@@ -166,7 +167,7 @@ MOI_TRUONG_LAM_VIEC = [
     "Môi trường hầm mỏ / Thiếu oxy kéo dài",
 ]
 
-# 4. Câu hỏi Vòng 1 diễn giải chi tiết
+# 4. Câu hỏi Vòng 1
 CAU_HOI_NHOM_A = [
     (
         "q_a1",
@@ -215,16 +216,14 @@ CAU_HOI_NHOM_D = [
     ),
     (
         "q_d2",
-        "Bản thân hoặc người xung quanh có nhận thấy da bạn xanh xao, niêm mạc mắt/môi nhợt nhạt dai dẳng dù ăn uống đầy đủ dinh dưỡng?",
+        "Bản thân bạn có nhận thấy da xanh xao, niêm mạc mắt/môi nhợt nhạt dai dẳng dù ăn uống đầy đủ dinh dưỡng không?",
     ),
 ]
 
 
-# 5. Hàm xuất file Word cho từng Vòng
+# 5. Hàm xuất file Word từng Vòng
 def export_docx_vong(vong_num, title, ss, content_dict):
     doc = Document()
-
-    # Cấu hình lề trang
     sections = doc.sections
     for section in sections:
         section.top_margin = Cm(2)
@@ -232,7 +231,6 @@ def export_docx_vong(vong_num, title, ss, content_dict):
         section.left_margin = Cm(2.5)
         section.right_margin = Cm(2.5)
 
-    # Tiêu đề
     p_title = doc.add_paragraph()
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run_title = p_title.add_run(f"KẾT QUẢ SÀNG LỌC THALASSEMIA - VÒNG {vong_num}")
@@ -249,18 +247,16 @@ def export_docx_vong(vong_num, title, ss, content_dict):
 
     doc.add_paragraph("--------------------------------------------------------------------------------")
 
-    # Thông tin bệnh nhân
     p_info = doc.add_paragraph()
     p_info.add_run("1. THÔNG TIN HÀNH CHÍNH & DỊCH TỄ:\n").bold = True
     p_info.add_run(f"• Họ và tên: {ss.hoten if ss.hoten else 'N/A'}\n")
     p_info.add_run(f"• Giới tính: {ss.gioitinh} | Ngày sinh: {ss.ngaysinh.strftime('%d/%m/%Y')}\n")
     p_info.add_run(f"• Dân tộc: {ss.dantoc} | Tỉnh/Thành: {ss.tinh_o}\n")
     p_info.add_run(f"• Độ cao sinh sống: {ss.do_cao}\n")
-    p_info.add_run(f"• Môi trường làm việc/học tập: {ss.moi_truong}\n")
+    p_info.add_run(f"• Môi trường làm việc: {ss.moi_truong}\n")
 
     doc.add_paragraph("--------------------------------------------------------------------------------")
 
-    # Nội dung chuyên môn vòng tương ứng
     p_detail = doc.add_paragraph()
     p_detail.add_run(f"2. KẾT QUẢ ĐÁNH GIÁ VÒNG {vong_num}:\n").bold = True
     for key, val in content_dict.items():
@@ -308,8 +304,19 @@ def ghi_du_lieu(record_data):
         return False
 
 
-# 7. Phân tích Vòng 2
-def analyze_round2(mcv, mch, hb, rbc, rdw, gioitinh):
+# 7. Phân tích Vòng 2 (Tính cả Hb hiệu chỉnh theo Độ cao)
+def analyze_round2(mcv, mch, hb_raw, rbc, rdw, gioitinh, do_cao):
+    # Tính toán mức trừ Hb do độ cao
+    hb_adj_val = 0.0
+    if "1000m - 1499m" in do_cao:
+        hb_adj_val = 0.2
+    elif "1500m - 1999m" in do_cao:
+        hb_adj_val = 0.5
+    elif "Từ 2000m trở lên" in do_cao:
+        hb_adj_val = 1.2
+
+    hb_eff = max(0.0, hb_raw - hb_adj_val)
+
     if mcv < 80.0:
         morphology = "Microcytic (Hồng cầu nhỏ)"
     elif mcv > 100.0:
@@ -350,7 +357,7 @@ def analyze_round2(mcv, mch, hb, rbc, rdw, gioitinh):
             "Các chỉ số thể tích và Hb hồng cầu nằm trong giới hạn bình thường."
         )
 
-    return morphology, chromic, mentzer, differential
+    return morphology, chromic, mentzer, differential, hb_eff, hb_adj_val
 
 
 # 8. Init State
@@ -399,7 +406,7 @@ def main():
         """
     <div class="hero">
         <h1>🩸 HỆ THỐNG SÀNG LỌC & TƯ VẤN DI TRUYỀN THALASSEMIA</h1>
-        <p>Quản lý hồ sơ theo từng Vòng • Xuất báo cáo Word (.docx) từng công đoạn độc lập</p>
+        <p>Quản lý hồ sơ theo từng Vòng • Tự động hiệu chỉnh Hb theo độ cao • Xuất Word từng công đoạn</p>
     </div>
     """,
         unsafe_allow_html=True,
@@ -548,7 +555,7 @@ def main():
     st.subheader("🔬 VÒNG 2: Phân tích công thức máu")
     c_hb, c_rbc, c_mcv, c_mch, c_rdw = st.columns(5)
     with c_hb:
-        ss.hb = st.number_input("Hb (g/dL):", value=ss.hb, step=0.1)
+        ss.hb = st.number_input("Hb thực tế (g/dL):", value=ss.hb, step=0.1)
     with c_rbc:
         ss.rbc = st.number_input("RBC (M/uL):", value=ss.rbc, step=0.01)
     with c_mcv:
@@ -562,12 +569,21 @@ def main():
     diff_str = "Chưa có dữ liệu"
 
     if ss.mcv > 0 and ss.rbc > 0:
-        morphology, chromic, mentzer, diff_list = analyze_round2(
-            ss.mcv, ss.mch, ss.hb, ss.rbc, ss.rdw, ss.gioitinh
+        morphology, chromic, mentzer, diff_list, hb_eff, hb_adj_val = analyze_round2(
+            ss.mcv, ss.mch, ss.hb, ss.rbc, ss.rdw, ss.gioitinh, ss.do_cao
         )
         diff_str = " | ".join(diff_list)
 
-        st.write(f"• **Phân loại:** {morphology} | {chromic}")
+        # Hiển thị thông tin điều chỉnh Hb theo độ cao
+        if hb_adj_val > 0:
+            st.info(
+                f"⛰️ **Điều chỉnh Hb sinh lý theo độ cao:** Khu vực **{ss.do_cao}** làm tăng Hb sinh lý. "
+                f"Chỉ số Hb đo được là **{ss.hb} g/dL**, sau khi trừ hiệu chỉnh (-{hb_adj_val} g/dL) để về chuẩn mực nước biển là **{hb_eff:.1f} g/dL**."
+            )
+        else:
+            st.caption("ℹ️ Độ cao sinh sống < 1000m: Giữ nguyên chỉ số Hb đo thực tế.")
+
+        st.write(f"• **Phân loại hình thái:** {morphology} | {chromic}")
         st.write(f"• **Mentzer Index:** {mentzer:.2f}")
 
         if ss.mcv < 85.0 or ss.mch < 28.0:
@@ -590,7 +606,8 @@ def main():
                     "HoTen": ss.hoten,
                     "MCV": ss.mcv,
                     "MCH": ss.mch,
-                    "Hb": ss.hb,
+                    "Hb_ThucTe": ss.hb,
+                    "Hb_HieuChinh": hb_eff,
                     "RBC": ss.rbc,
                     "RDW": ss.rdw,
                     "Mentzer": mentzer,
@@ -604,7 +621,8 @@ def main():
                 "Phân tích công thức máu",
                 ss,
                 {
-                    "Chỉ số CBC": f"Hb: {ss.hb} | RBC: {ss.rbc} | MCV: {ss.mcv} | MCH: {ss.mch} | RDW: {ss.rdw}",
+                    "Chỉ số CBC thực tế": f"Hb: {ss.hb} g/dL | RBC: {ss.rbc} | MCV: {ss.mcv} | MCH: {ss.mch} | RDW: {ss.rdw}",
+                    "Hb hiệu chỉnh (theo độ cao)": f"{hb_eff:.1f} g/dL (đã trừ {hb_adj_val} g/dL)",
                     "Mentzer Index": f"{mentzer:.2f}",
                     "Định hướng": diff_str,
                     "Kết luận Vòng 2": v2_label,
