@@ -57,7 +57,7 @@ VUNG_MIEN = [
 TINH_THEO_VUNG = {
     "Đông Bắc": ["Hà Giang", "Cao Bằng", "Bắc Kạn - Thái Nguyên", "Tuyên Quang", "Lạng Sơn", "Bắc Giang"],
     "Tây Bắc": ["Điện Biên - Lai Châu", "Sơn La", "Hòa Bình", "Yên Bái"],
-    "Đồng bằng sông Hồng": ["Hà Nội", "Vĩnh Phúc - Phú Thọ", "Bắc Ninh - Hưng Yên", "Quảng Ninh", "Hải Dương", "Thái Bình", "Hải Phòng", "Nam Định - Ninh Bình", "Thanh Hóa"],
+    "Đồng bằng sông Hồng": ["Hà Nội", "Hải Phòng", "Vĩnh Phúc - Phú Thọ", "Bắc Ninh - Hưng Yên", "Quảng Ninh", "Hải Dương", "Thái Bình", "Nam Định - Ninh Bình", "Thanh Hóa"],
     "Bắc Trung Bộ": ["Nghệ An", "Hà Tĩnh", "Quảng Bình", "Quảng Trị - Thừa Thiên Huế"],
     "Trung Trung Bộ": ["Đà Nẵng", "Quảng Nam - Quảng Ngãi", "Bình Định", "Phú Yên"],
     "Nam Trung Bộ": ["Khánh Hòa", "Ninh Thuận - Bình Thuận"],
@@ -113,34 +113,34 @@ BENH_VIEN = {
     "Thành phố Hồ Chí Minh": [{"ten": "Bệnh viện Truyền máu Huyết học TP.HCM", "diachi": "1 Trần Hữu Trang, Q. Tân Bình, TP.HCM", "dt": "028 3839 7535"}],
     "Thừa Thiên Huế": [{"ten": "Bệnh viện Trung ương Huế", "diachi": "16 Lê Lợi, TP. Huế", "dt": "0234 3822 325"}],
     "Đà Nẵng": [{"ten": "Bệnh viện Đà Nẵng", "diachi": "124 Hải Phòng, Q. Hải Châu, Đà Nẵng", "dt": "0236 3821 118"}],
-    "Cần Thơ": [{"ten": "Bệnh viện Đa khoa Trung ương Cần Thơ", "diachi": "315 Nguyễn Văn Linh, Q. Ninh Kiều, Cần Thơ", "dt": "0292 3820 071"}]
+    "Cần Thơ": [{"ten": "Bệnh viện Đa khoa Trung ương Cần Thơ", "diachi": "315 Nguyễn Văn Linh, Q. Ninh Kiều, Cần Thơ", "dt": "0292 3820 071"}],
+    "Hải Phòng": [{"ten": "Bệnh viện Hữu nghị Việt Tiệp Hải Phòng", "diachi": "1 Nhà Thương, Cát Dài, Lê Chân, Hải Phòng", "dt": "0225 3700 436"}]
 }
 
-def lay_benh_vien_theo_tinh(tinh_tru):
-    if not tinh_tru or tinh_tru == "Chọn Tỉnh/Thành phố": return [], "khong", ""
-    if tinh_tru in BENH_VIEN: return BENH_VIEN[tinh_tru], "chinh", ""
-    return [{"ten": f"Bệnh viện Đa khoa Tỉnh/TP {tinh_tru}", "diachi": f"Trung tâm Tỉnh/TP {tinh_tru}", "dt": "Liên hệ 115"}], "goi_y", ""
+def lay_benh_vien_theo_tinh(tinh_ten):
+    if not tinh_ten or tinh_ten == "Chọn Tỉnh/Thành phố": return None
+    if tinh_ten in BENH_VIEN: return BENH_VIEN[tinh_ten][0]
+    return {"ten": f"Bệnh viện Đa khoa Tỉnh/TP {tinh_ten}", "diachi": f"Trung tâm Tỉnh/TP {tinh_ten}", "dt": "Liên hệ 115"}
 
 # 4. Thuật toán phân tích bệnh lý từ chỉ số máu
 def phan_tich_chiso_huyet_hoc(mcv, mch, hb_hieuchinh, rbc, rdw, gioitinh):
     goi_y_list = []
-    
     hb_cut = 12.0 if gioitinh == "Nữ" else 13.0
     co_thieu_mau = (hb_hieuchinh > 0 and hb_hieuchinh < hb_cut)
 
     if mcv > 95.0 or mch > 32.0:
-        goi_y_list.append("🔴 **Hồng cầu to / Ưu sắc (MCV > 95 fL, MCH > 32 pg):** Gợi ý nghi ngờ **Thiếu Vitamin B12** hoặc **Thiếu Acid Folic (Folate)**, bệnh lý gan hoặc lạm dụng rượu.")
+        goi_y_list.append("🔴 **Hồng cầu to / Ưu sắc (MCV > 95 fL, MCH > 32 pg):** Nghi ngờ **Thiếu Vitamin B12** hoặc **Thiếu Acid Folic (Folate)**, bệnh lý gan hoặc lạm dụng rượu.")
     elif 0 < mcv < 85.0 or 0 < mch < 28.0:
         if co_thieu_mau:
-            goi_y_list.append("🟡 **Thiếu máu Hồng cầu nhỏ Nhược sắc (MCV < 85 fL, MCH < 28 pg):** Gợi ý nghi ngờ **Thalassemia (Mang gen/Mắc bệnh)** hoặc **Thiếu máu Thiếu sắt**.")
+            goi_y_list.append("🟡 **Thiếu máu Hồng cầu nhỏ Nhược sắc (MCV < 85 fL, MCH < 28 pg):** Nghi ngờ **Thalassemia (Mang gen/Mắc bệnh)** hoặc **Thiếu máu Thiếu sắt**.")
         else:
-            goi_y_list.append("🟡 **Hồng cầu nhỏ Nhược sắc không thiếu máu:** Gợi ý rất cao **Người mang gen Thalassemia thể ẩn (Carrier)**.")
+            goi_y_list.append("🟡 **Hồng cầu nhỏ Nhược sắc không thiếu máu:** Dấu hiệu nghi ngờ cao **Người mang gen Thalassemia thể ẩn (Carrier)**.")
 
     if rdw > 15.0:
-        goi_y_list.append("🟠 **Kích thước hồng cầu không đều (RDW > 15%):** Thường gặp trong **Thiếu máu thiếu sắt giai đoạn tiến triển** hoặc phối hợp nhiều nguyên nhân thiếu máu.")
+        goi_y_list.append("🟠 **Kích thước hồng cầu không đều (RDW > 15%):** Thường gặp trong **Thiếu máu thiếu sắt tiến triển** hoặc phối hợp thiếu máu.")
         
     if rbc >= (4.9 if gioitinh == "Nữ" else 5.4) and (0 < mcv < 85.0):
-        goi_y_list.append("🟢 **Số lượng Hồng cầu (RBC) bảo tồn/tăng cao kèm MCV giảm:** Dấu hiệu đặc trưng nghiêng về **Thalassemia** hơn là Thiếu sắt.")
+        goi_y_list.append("🟢 **Số lượng Hồng cầu (RBC) bảo tồn/tăng cao kèm MCV giảm:** Dấu hiệu nghiêng nhiều về **Thalassemia** hơn là Thiếu sắt.")
 
     if not goi_y_list and mcv > 0:
         goi_y_list.append("✅ Các chỉ số thể tích và hàm lượng Huyết sắc tố hồng cầu nằm trong giới hạn bình thường.")
@@ -367,7 +367,7 @@ def render_main():
         render_admin()
         return
 
-    # Khai báo thông tin hành chính (Khôi phục Nơi làm việc/học tập)
+    # Khai báo thông tin hành chính
     st.subheader("📋 1. Thông tin cá nhân & Địa bàn sinh sống, làm việc")
     c1, c2 = st.columns(2)
     with c1:
@@ -386,7 +386,7 @@ def render_main():
             tinh_ds_o = TAT_CA_TINH if ss.vung_o == "Chọn vùng/miền" else ["Chọn Tỉnh/Thành phố"] + TINH_THEO_VUNG.get(ss.vung_o, [])
             ss.tinh_o = st.selectbox("Tỉnh/Thành phố sinh sống:", tinh_ds_o, index=tinh_ds_o.index(ss.tinh_o) if ss.tinh_o in tinh_ds_o else 0)
         
-        # Nơi làm việc / học tập (Khôi phục)
+        # Nơi làm việc / học tập
         c2c, c2d = st.columns(2)
         with c2c: ss.vung_lamviec = st.selectbox("Vùng làm việc / Học tập:", VUNG_MIEN, index=VUNG_MIEN.index(ss.vung_lamviec) if ss.vung_lamviec in VUNG_MIEN else 0)
         with c2d:
@@ -395,9 +395,17 @@ def render_main():
             
         ss.do_cao = st.selectbox("🏔️ Độ cao nơi sinh sống (Trừ Hb WHO):", ALTITUDE_OPTIONS, index=ALTITUDE_OPTIONS.index(ss.do_cao) if ss.do_cao in ALTITUDE_OPTIONS else 0)
 
-    ds_bv, _, _ = lay_benh_vien_theo_tinh(ss.tinh_o)
-    if ds_bv:
-        st.markdown(f"🏥 **Cơ sở y tế gợi ý tại {ss.tinh_o}:** {ds_bv[0]['ten']} - 📍 {ds_bv[0]['diachi']} (Hotline: {ds_bv[0]['dt']})")
+    # Khôi phục hiển thị cơ sở y tế theo cả nơi ở và nơi làm việc
+    bv_o = lay_benh_vien_theo_tinh(ss.tinh_o)
+    bv_lv = lay_benh_vien_theo_tinh(ss.tinh_lamviec)
+
+    if bv_o or bv_lv:
+        st.markdown("---")
+        st.markdown("### 🏥 Cơ sở y tế gợi ý gần khu vực của bạn:")
+        if bv_o:
+            st.markdown(f"🏡 **Gần nơi sinh sống ({ss.tinh_o}):** {bv_o['ten']} - 📍 {bv_o['diachi']} (Hotline: {bv_o['dt']})")
+        if bv_lv and ss.tinh_lamviec != ss.tinh_o:
+            st.markdown(f"🏢 **Gần nơi làm việc ({ss.tinh_lamviec}):** {bv_lv['ten']} - 📍 {bv_lv['diachi']} (Hotline: {bv_lv['dt']})")
 
     st.markdown("---")
 
