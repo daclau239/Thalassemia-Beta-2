@@ -11,7 +11,7 @@ import streamlit as st
 from docx import Document
 
 # ============================================================
-# THALASSEMIA SCREENING V5
+# THALASSEMIA SCREENING - design by daclau at phan chau trinh university
 # ============================================================
 # 1) Hồ sơ bệnh nhân
 # 2) Vòng 1: 20 câu hỏi
@@ -609,6 +609,151 @@ def narrative_cbc_advice(
         )
 
     return findings, advice
+
+
+# ------------------------------------------------------------
+# CURATED MEDICAL FACILITIES BY PROVINCE/CITY
+# ------------------------------------------------------------
+# Mục tiêu của prototype:
+#   1) Ưu tiên bệnh viện hạng I trong chính tỉnh/thành người dùng đang sống.
+#   2) Ưu tiên bệnh viện tuyến Trung ương / hạng đặc biệt nếu có tại địa bàn.
+#   3) Hiển thị 3–5 cơ sở phù hợp để người dùng chủ động lựa chọn.
+#
+# Lưu ý:
+# - Đây là danh mục điều hướng cho prototype, KHÔNG phải danh sách chỉ định điều trị.
+# - Phân hạng/cấp quản lý có thể thay đổi; bản triển khai nghiên cứu chính thức nên
+#   đồng bộ định kỳ từ nguồn dữ liệu Bộ Y tế/website chính thức của bệnh viện.
+# - Có thêm alias tên tỉnh cũ để app vẫn hoạt động nếu dữ liệu địa giới cũ còn trong DB.
+
+MEDICAL_FACILITIES = {
+    "Hà Nội": [
+        {"name": "Bệnh viện Bạch Mai", "tier": "Hạng đặc biệt – tuyến Trung ương", "note": "Ưu tiên khi cần đánh giá chuyên sâu huyết học", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Bạch+Mai+Hà+Nội"},
+        {"name": "Bệnh viện Hữu nghị Việt Đức", "tier": "Bệnh viện tuyến Trung ương", "note": "Cơ sở chuyên sâu; phù hợp khi cần tuyến trên", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Hữu+nghị+Việt+Đức+Hà+Nội"},
+        {"name": "Bệnh viện Trung ương Quân đội 108", "tier": "Hạng đặc biệt – tuyến Trung ương", "note": "Cơ sở tuyến trên với nhiều chuyên khoa sâu", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Trung+ương+Quân+đội+108"},
+    ],
+    "Hồ Chí Minh": [
+        {"name": "Bệnh viện Chợ Rẫy", "tier": "Hạng đặc biệt – tuyến Trung ương", "note": "Ưu tiên khi cần đánh giá chuyên sâu huyết học", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Chợ+Rẫy+Hồ+Chí+Minh"},
+        {"name": "Bệnh viện Thống Nhất", "tier": "Hạng I – tuyến Trung ương", "note": "Bệnh viện đa khoa tuyến trên", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Thống+Nhất+Hồ+Chí+Minh"},
+        {"name": "Bệnh viện Nhân Dân 115", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến chuyên sâu", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Nhân+Dân+115+Hồ+Chí+Minh"},
+        {"name": "Bệnh viện Đại học Y Dược TP. Hồ Chí Minh", "tier": "Hạng I", "note": "Bệnh viện trường đại học tuyến chuyên sâu", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đại+học+Y+Dược+TP+Hồ+Chí+Minh"},
+    ],
+    "Đà Nẵng": [
+        {"name": "Bệnh viện C Đà Nẵng", "tier": "Bệnh viện tuyến Trung ương", "note": "Cơ sở tuyến Trung ương tại Đà Nẵng", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+C+Đà+Nẵng"},
+        {"name": "Bệnh viện Đà Nẵng", "tier": "Hạng I", "note": "Bệnh viện đa khoa lớn của thành phố", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đà+Nẵng"},
+        {"name": "Bệnh viện Đại học Y – Dược, Đại học Đà Nẵng", "tier": "Bệnh viện trường đại học", "note": "Có thể lựa chọn khi cần đánh giá chuyên khoa", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đại+học+Y+Dược+Đại+học+Đà+Nẵng"},
+    ],
+    "Thừa Thiên Huế": [],
+    "Huế": [
+        {"name": "Bệnh viện Trung ương Huế", "tier": "Hạng đặc biệt – tuyến Trung ương", "note": "Ưu tiên khi cần đánh giá chuyên sâu", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Trung+ương+Huế"},
+        {"name": "Bệnh viện Trường Đại học Y – Dược Huế", "tier": "Hạng I", "note": "Bệnh viện trường đại học tuyến chuyên sâu", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Trường+Đại+học+Y+Dược+Huế"},
+    ],
+    "Cần Thơ": [
+        {"name": "Bệnh viện Đa khoa Trung ương Cần Thơ", "tier": "Bệnh viện tuyến Trung ương", "note": "Ưu tiên khi cần tuyến chuyên sâu tại ĐBSCL", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+Trung+ương+Cần+Thơ"},
+        {"name": "Bệnh viện Đại học Y Dược Cần Thơ", "tier": "Hạng I", "note": "Bệnh viện trường đại học tuyến chuyên sâu", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đại+học+Y+Dược+Cần+Thơ"},
+    ],
+    "Thái Nguyên": [
+        {"name": "Bệnh viện Trung ương Thái Nguyên", "tier": "Hạng đặc biệt – tuyến Trung ương", "note": "Ưu tiên khi cần đánh giá chuyên sâu", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Trung+ương+Thái+Nguyên"},
+    ],
+    "Hải Phòng": [
+        {"name": "Bệnh viện Hữu nghị Việt Tiệp", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến chuyên sâu", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Hữu+nghị+Việt+Tiệp+Hải+Phòng"},
+    ],
+    "Quảng Ninh": [
+        {"name": "Bệnh viện Bãi Cháy", "tier": "Hạng I", "note": "Bệnh viện đa khoa lớn của tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Bãi+Cháy+Quảng+Ninh"},
+        {"name": "Bệnh viện Đa khoa tỉnh Quảng Ninh", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Quảng+Ninh"},
+    ],
+    "Thanh Hóa": [
+        {"name": "Bệnh viện Đa khoa tỉnh Thanh Hóa", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Thanh+Hóa"},
+    ],
+    "Nghệ An": [
+        {"name": "Bệnh viện Hữu nghị Đa khoa Nghệ An", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Hữu+nghị+Đa+khoa+Nghệ+An"},
+    ],
+    "Hà Tĩnh": [
+        {"name": "Bệnh viện Đa khoa tỉnh Hà Tĩnh", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Hà+Tĩnh"},
+    ],
+    "Khánh Hòa": [
+        {"name": "Bệnh viện Đa khoa tỉnh Khánh Hòa", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Khánh+Hòa"},
+    ],
+    "Đắk Lắk": [
+        {"name": "Bệnh viện Đa khoa vùng Tây Nguyên", "tier": "Hạng I", "note": "Cơ sở tuyến chuyên sâu khu vực Tây Nguyên", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+vùng+Tây+Nguyên"},
+    ],
+    "Lâm Đồng": [
+        {"name": "Bệnh viện Đa khoa tỉnh Lâm Đồng", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Lâm+Đồng"},
+    ],
+    "Quảng Ngãi": [
+        {"name": "Bệnh viện Đa khoa tỉnh Quảng Ngãi", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Quảng+Ngãi"},
+    ],
+    "Gia Lai": [
+        {"name": "Bệnh viện Đa khoa tỉnh Gia Lai", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Gia+Lai"},
+    ],
+    "Bắc Ninh": [
+        {"name": "Bệnh viện Đa khoa tỉnh Bắc Ninh", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Bắc+Ninh"},
+    ],
+    "Phú Thọ": [
+        {"name": "Bệnh viện Đa khoa tỉnh Phú Thọ", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Phú+Thọ"},
+    ],
+    "Lào Cai": [
+        {"name": "Bệnh viện Đa khoa tỉnh Lào Cai", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Lào+Cai"},
+    ],
+    "Hưng Yên": [
+        {"name": "Bệnh viện Đa khoa tỉnh Hưng Yên", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Hưng+Yên"},
+    ],
+    "Ninh Bình": [
+        {"name": "Bệnh viện Đa khoa tỉnh Ninh Bình", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Ninh+Bình"},
+    ],
+    "Tây Ninh": [
+        {"name": "Bệnh viện Đa khoa tỉnh Tây Ninh", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Tây+Ninh"},
+    ],
+    "Đồng Nai": [
+        {"name": "Bệnh viện Đa khoa Đồng Nai", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+Đồng+Nai"},
+    ],
+    "Vĩnh Long": [
+        {"name": "Bệnh viện Đa khoa tỉnh Vĩnh Long", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Vĩnh+Long"},
+    ],
+    "Đồng Tháp": [
+        {"name": "Bệnh viện Đa khoa Đồng Tháp", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+Đồng+Tháp"},
+    ],
+    "An Giang": [
+        {"name": "Bệnh viện Đa khoa khu vực An Giang", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh/khu vực", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+khu+vực+An+Giang"},
+    ],
+    "Cà Mau": [
+        {"name": "Bệnh viện Đa khoa tỉnh Cà Mau", "tier": "Hạng I", "note": "Bệnh viện đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Cà+Mau"},
+    ],
+}
+
+# Tên tỉnh cũ → tên tỉnh/thành dùng để tra danh mục cơ sở trong prototype.
+PROVINCE_FACILITY_ALIASES = {
+    "Thừa Thiên Huế": "Huế",
+    "Quảng Nam": "Đà Nẵng",
+    "Bình Định": "Gia Lai",
+    "Ninh Thuận": "Khánh Hòa",
+    "Phú Yên": "Đắk Lắk",
+    "Đắk Nông": "Lâm Đồng",
+    "Bình Thuận": "Lâm Đồng",
+    "Kon Tum": "Quảng Ngãi",
+    "Yên Bái": "Lào Cai",
+    "Bắc Kạn": "Thái Nguyên",
+    "Hòa Bình": "Phú Thọ",
+    "Vĩnh Phúc": "Phú Thọ",
+    "Hà Nam": "Ninh Bình",
+    "Nam Định": "Ninh Bình",
+    "Quảng Bình": "Quảng Trị",
+    "Bà Rịa - Vũng Tàu": "Hồ Chí Minh",
+    "Bình Dương": "Hồ Chí Minh",
+    "Long An": "Tây Ninh",
+    "Tiền Giang": "Đồng Tháp",
+    "Bến Tre": "Vĩnh Long",
+    "Trà Vinh": "Vĩnh Long",
+    "Sóc Trăng": "Cần Thơ",
+    "Hậu Giang": "Cần Thơ",
+    "Kiên Giang": "An Giang",
+}
+
+
+def recommended_facilities(province):
+    """Trả về 3–5 cơ sở ưu tiên theo tỉnh/thành hiện tại."""
+    province_key = PROVINCE_FACILITY_ALIASES.get(province, province)
+    facilities = MEDICAL_FACILITIES.get(province_key, [])
+    return facilities[:5]
 
 
 # ------------------------------------------------------------
@@ -2223,40 +2368,62 @@ if st.session_state.get(
             "🏥 CƠ SỞ Y TẾ GỢI Ý"
         )
 
-        if not GOOGLE_API_KEY:
+        facilities = recommended_facilities(patient["province"])
 
-            st.info(
-                "Chưa cấu hình Google Places API. "
-                "Hệ thống vẫn phân tích CBC nhưng chưa tự xếp hạng "
-                "3–5 cơ sở gần nhất."
-            )
+        if facilities:
 
-        else:
-
-            # Không có tọa độ tự động của người dùng trong phiên bản
-            # này, nên dùng chuỗi tìm kiếm địa danh trong Google Maps.
-            maps_query = (
-                f"Cơ sở y tế "
-                f"{patient['commune']}, "
-                f"{patient['province']}"
-            )
-
-            maps_url = (
-                "https://www.google.com/maps/search/?api=1&query="
-                + requests.utils.quote(
-                    maps_query
-                )
-            )
-
-            st.link_button(
-                "🗺️ Tìm cơ sở y tế gần nơi ở trên Google Maps",
-                maps_url,
+            st.success(
+                f"Đã tìm thấy {len(facilities)} cơ sở ưu tiên trong "
+                f"**{patient['province']}**."
             )
 
             st.caption(
-                "Khi triển khai Places API với tọa độ người dùng, "
-                "có thể tự động xếp hạng 3–5 cơ sở theo khoảng cách."
+                "Ưu tiên bệnh viện hạng I và bệnh viện tuyến Trung ương/hạng đặc biệt "
+                "đang có trong danh mục prototype của tỉnh/thành. "
+                "Khi đi khám, người bệnh nên hỏi trước khoa Huyết học/Truyền máu "
+                "và khả năng thực hiện xét nghiệm chuyên sâu."
             )
+
+            for i, facility in enumerate(facilities, start=1):
+                with st.container(border=True):
+                    st.markdown(
+                        f"### {i}. {facility['name']}"
+                    )
+                    st.write(
+                        f"**Phân loại:** {facility['tier']}"
+                    )
+                    st.write(
+                        f"**Gợi ý:** {facility['note']}"
+                    )
+                    st.link_button(
+                        "🗺️ Xem vị trí / chỉ đường",
+                        facility["maps"],
+                    )
+
+        else:
+
+            st.info(
+                f"Prototype chưa có danh mục bệnh viện ưu tiên cho **{patient['province']}**. "
+                "Bạn có thể dùng Google Maps để tìm bệnh viện hạng I hoặc cơ sở tuyến Trung ương "
+                "trong chính tỉnh/thành."
+            )
+
+            maps_query = (
+                f"bệnh viện hạng I bệnh viện Trung ương {patient['province']}"
+            )
+            maps_url = (
+                "https://www.google.com/maps/search/?api=1&query="
+                + requests.utils.quote(maps_query)
+            )
+            st.link_button(
+                "🗺️ Tìm bệnh viện tuyến trên trong tỉnh",
+                maps_url,
+            )
+
+        st.caption(
+            "Danh mục cơ sở dùng cho điều hướng prototype; cần cập nhật/đối soát định kỳ "
+            "với nguồn chính thức trước khi dùng trong nghiên cứu hoặc triển khai thực tế."
+        )
 
         # ----------------------------------------------------
         # WORD
