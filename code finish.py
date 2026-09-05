@@ -1378,7 +1378,7 @@ with st.sidebar:
 # DỮ LIỆU ĐỊA GIỚI HÀNH CHÍNH
 # ============================================================
 
-ADMIN_DATA_PATH = "data/vietnam_admin.json"
+ADMIN_DATA_PATH = str(Path("data") / "vietnam_admin.json")
 
 
 @st.cache_data(ttl=86400)
