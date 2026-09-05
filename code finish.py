@@ -2076,19 +2076,19 @@ if st.session_state.get(
             ] = hb_adjusted
 
             st.session_state[
-                "round2_mcv"
+                "round2_mcv_result"
             ] = mcv
 
             st.session_state[
-                "round2_mch"
+                "round2_mch_result"
             ] = mch
 
             st.session_state[
-                "round2_rbc"
+                "round2_rbc_result"
             ] = rbc
 
             st.session_state[
-                "round2_rdw"
+                "round2_rdw_result"
             ] = rdw
 
             st.session_state[
@@ -2291,16 +2291,16 @@ if st.session_state.get(
                     "round2_hb_adjusted"
                 ],
                 "mcv": st.session_state[
-                    "round2_mcv"
+                    "round2_mcv_result"
                 ],
                 "mch": st.session_state[
-                    "round2_mch"
+                    "round2_mch_result"
                 ],
                 "rbc": st.session_state[
-                    "round2_rbc"
+                    "round2_rbc_result"
                 ],
                 "rdw": st.session_state[
-                    "round2_rdw"
+                    "round2_rdw_result"
                 ],
                 "mentzer": st.session_state[
                     "round2_mentzer"
