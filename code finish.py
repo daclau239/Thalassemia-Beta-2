@@ -11,7 +11,7 @@ import streamlit as st
 from docx import Document
 
 # ============================================================
-# THALASSEMIA SCREENING - ĐẮC LÂU DỄ THƯƠNG
+# THALASSEMIA SCREENING V4.0
 # ============================================================
 #
 # Ý tưởng:
@@ -598,24 +598,24 @@ def hb_altitude_adjustment(
     elevation_m,
 ):
     """
-    WHO 2024 equation used as a prototype:
-      adjustment (g/L) =
-          0.0056384 * elevation
-          + 0.0000003 * elevation^2
+    WHO 2024 altitude adjustment for haemoglobin interpretation.
 
-    Convert g/L -> g/dL by /10.
+    Đây là hiệu chỉnh Hb theo độ cao để hỗ trợ diễn giải thiếu máu.
+    Không phải hệ số chẩn đoán Thalassemia và chưa phải công thức
+    được validation riêng cho quần thể Việt Nam.
+
+    adjustment (g/L) =
+        0.0056384 * elevation
+        + 0.0000003 * elevation^2
+
+    Hb_adjusted = Hb_observed - adjustment
     """
-
-    if (
-        elevation_m is None
-        or elevation_m <= 0
-    ):
+    if elevation_m is None or elevation_m <= 0:
         return 0.0
 
     adjustment_g_l = (
         0.0056384 * elevation_m
-        + 0.0000003
-        * elevation_m**2
+        + 0.0000003 * (elevation_m ** 2)
     )
 
     return adjustment_g_l / 10.0
@@ -2171,16 +2171,7 @@ if st.session_state.get(
             f"**Địa chỉ chi tiết:** {patient['current_address']}"
         )
 
-        location_query = ", ".join(
-            part
-            for part in [
-                patient["current_address"],
-                patient["commune"],
-                patient["province"],
-                "Việt Nam",
-            ]
-            if part
-        )
+        location_query = build_location_query(patient)
 
         if st.button(
             "📍 XÁC ĐỊNH TỌA ĐỘ + ĐỘ CAO",
@@ -2307,6 +2298,36 @@ if st.session_state.get(
                     f"{altitude_band(elevation)}\n\n"
                     f"📐 **Hiệu chỉnh Hb dự kiến:** "
                     f"-{adjustment:.2f} g/dL"
+                )
+
+
+                st.caption(
+                    "🔬 Nguồn dữ liệu: Google Geocoding + Google Elevation. "
+                    "Độ cao được lấy tại tọa độ của địa điểm cư trú đã xác định."
+                )
+
+                st.markdown("**Các biến dùng cho hiệu chỉnh Hb**")
+                loc_a, loc_b = st.columns(2)
+
+                with loc_a:
+                    st.write(f"• Latitude: `{geo['lat']:.6f}`")
+                    st.write(f"• Longitude: `{geo['lng']:.6f}`")
+
+                with loc_b:
+                    st.write(f"• Elevation: `{elevation:.0f} m`")
+                    st.write(
+                        f"• Hb adjustment: `-{adjustment:.2f} g/dL`"
+                    )
+
+                st.info(
+                    "Hb sau hiệu chỉnh = Hb thực đo − hiệu chỉnh theo độ cao. "
+                    "Giá trị này dùng để hỗ trợ diễn giải Hb; không thay đổi MCV, "
+                    "MCH, RBC hoặc Mentzer."
+                )
+
+                st.caption(
+                    "Công thức hiện tại là WHO 2024. Chưa coi đây là "
+                    "công thức hiệu chỉnh riêng đã được validation cho người Việt Nam."
                 )
 
                 if resolution:
