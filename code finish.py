@@ -14,7 +14,7 @@ import streamlit as st
 from docx import Document
 
 # ============================================================
-# THALASSEMIA SCREENING - Đắc Lâu Dễ Thương
+# THALASSEMIA SCREENING V5
 # ============================================================
 # 1) Hồ sơ bệnh nhân
 # 2) Vòng 1: 20 câu hỏi
@@ -107,6 +107,12 @@ GOOGLE_API_KEY = get_google_key()
 # ------------------------------------------------------------
 
 PBKDF2_ITERATIONS = 310_000
+
+# Tài khoản quản trị mặc định theo yêu cầu của chủ hệ thống.
+DEFAULT_ADMIN_USERNAME = "daclau239"
+DEFAULT_ADMIN_PASSWORD = "23092002"
+DEFAULT_ADMIN_FULL_NAME = "Quản trị viên hệ thống"
+DEFAULT_ADMIN_EMAIL = "admin@thalassemia.local"
 
 
 def get_db():
@@ -231,6 +237,48 @@ def valid_username(username):
             (username or "").strip(),
         )
     )
+
+
+def ensure_default_admin():
+    """Tạo admin mặc định một lần nếu database chưa có tài khoản admin."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id FROM user_accounts WHERE username = ? LIMIT 1",
+        (DEFAULT_ADMIN_USERNAME,),
+    ).fetchone()
+    if row:
+        conn.close()
+        return
+
+    admin_row = conn.execute(
+        "SELECT id FROM user_accounts WHERE role = 'admin' LIMIT 1"
+    ).fetchone()
+    if admin_row:
+        conn.close()
+        return
+
+    now = datetime.now().isoformat(timespec="seconds")
+    password_hash, password_salt = hash_password(DEFAULT_ADMIN_PASSWORD)
+    conn.execute(
+        """
+        INSERT INTO user_accounts
+        (username, full_name, email, password_hash, password_salt,
+         role, status, created_at, approved_by, approved_at)
+        VALUES (?, ?, ?, ?, ?, 'admin', 'approved', ?, ?, ?)
+        """,
+        (
+            DEFAULT_ADMIN_USERNAME,
+            DEFAULT_ADMIN_FULL_NAME,
+            DEFAULT_ADMIN_EMAIL,
+            password_hash,
+            password_salt,
+            now,
+            DEFAULT_ADMIN_USERNAME,
+            now,
+        ),
+    )
+    conn.commit()
+    conn.close()
 
 
 def admin_exists():
@@ -530,6 +578,9 @@ def upsert_patient(profile):
 # ACCESS CONTROL / ADMIN CONSOLE
 # ------------------------------------------------------------
 
+ensure_default_admin()
+
+
 def current_auth_user():
     return st.session_state.get("auth_user")
 
@@ -589,70 +640,10 @@ def render_auth_sidebar():
             else:
                 st.sidebar.error(message)
 
-        if not admin_exists():
-            st.sidebar.divider()
-            st.sidebar.markdown("**🧰 Thiết lập quản trị viên lần đầu**")
-            if not admin_setup_code:
-                st.sidebar.warning(
-                    "Chưa cấu hình `ADMIN_SETUP_CODE` trong Secrets. "
-                    "Hãy cấu hình mã thiết lập trước khi tạo tài khoản admin đầu tiên."
-                )
-            else:
-                with st.sidebar.form("first_admin_form"):
-                    setup_code = st.text_input(
-                        "Mã thiết lập",
-                        type="password",
-                    )
-                    admin_username = st.text_input(
-                        "Tên đăng nhập admin"
-                    )
-                    admin_full_name = st.text_input(
-                        "Họ tên quản trị viên"
-                    )
-                    admin_email = st.text_input(
-                        "Email admin"
-                    )
-                    admin_password = st.text_input(
-                        "Mật khẩu admin",
-                        type="password",
-                    )
-                    admin_password2 = st.text_input(
-                        "Nhập lại mật khẩu",
-                        type="password",
-                    )
-                    create_submit = st.form_submit_button(
-                        "Tạo tài khoản admin",
-                        use_container_width=True,
-                    )
-
-                if create_submit:
-                    if setup_code != admin_setup_code:
-                        st.sidebar.error("Mã thiết lập không đúng.")
-                    elif not valid_username(admin_username):
-                        st.sidebar.error(
-                            "Tên đăng nhập 4–32 ký tự, chỉ gồm chữ, số, dấu chấm, gạch dưới hoặc gạch ngang."
-                        )
-                    elif not admin_full_name.strip():
-                        st.sidebar.error("Vui lòng nhập họ tên quản trị viên.")
-                    elif not valid_email(admin_email):
-                        st.sidebar.error("Email chưa đúng định dạng.")
-                    elif len(admin_password) < 8:
-                        st.sidebar.error("Mật khẩu phải có ít nhất 8 ký tự.")
-                    elif admin_password != admin_password2:
-                        st.sidebar.error("Hai mật khẩu không khớp.")
-                    else:
-                        ok, msg = create_admin_account(
-                            admin_username,
-                            admin_full_name,
-                            admin_email,
-                            admin_password,
-                        )
-                        if ok:
-                            st.sidebar.success(
-                                "✅ Đã tạo admin. Hãy đăng nhập bằng tài khoản vừa tạo."
-                            )
-                        else:
-                            st.sidebar.error(msg)
+        st.sidebar.info(
+            "Tài khoản quản trị đã được cấu hình sẵn cho hệ thống. "
+            "Đăng nhập bằng tài khoản được cấp cho quản trị viên."
+        )
 
     else:
         with st.sidebar.form("staff_register_form"):
