@@ -459,6 +459,30 @@ def communes_for(province):
     )
 
 
+
+
+# ============================================================
+# LOCATION QUERY HELPER
+# ============================================================
+
+def build_location_query(patient):
+    """
+    Tạo chuỗi địa chỉ dùng cho Google Geocoding từ hồ sơ bệnh nhân.
+    Ưu tiên địa chỉ chi tiết + xã/phường + tỉnh/thành.
+    """
+    parts = [
+        patient.get("current_address", ""),
+        patient.get("commune", ""),
+        patient.get("province", ""),
+        "Việt Nam",
+    ]
+
+    return ", ".join(
+        str(part).strip()
+        for part in parts
+        if str(part).strip()
+    )
+
 # ============================================================
 # GOOGLE GEOCODING
 # ============================================================
