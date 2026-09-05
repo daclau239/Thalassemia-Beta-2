@@ -5,6 +5,8 @@ import math
 import os
 import re
 import sqlite3
+import hashlib
+import secrets
 from datetime import date, datetime, timedelta
 
 import requests
@@ -12,7 +14,7 @@ import streamlit as st
 from docx import Document
 
 # ============================================================
-# THALASSEMIA SCREENING V5
+# THALASSEMIA SCREENING - Đắc Lâu Dễ Thương
 # ============================================================
 # 1) Hồ sơ bệnh nhân
 # 2) Vòng 1: 20 câu hỏi
@@ -104,6 +106,9 @@ GOOGLE_API_KEY = get_google_key()
 # DATABASE
 # ------------------------------------------------------------
 
+PBKDF2_ITERATIONS = 310_000
+
+
 def get_db():
     conn = sqlite3.connect(
         DB_PATH,
@@ -129,8 +134,33 @@ def get_db():
         """
     )
 
+    # Tài khoản quản trị / người được phê duyệt.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            full_name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            password_salt TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('admin', 'staff')),
+            status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected', 'disabled')),
+            created_at TEXT NOT NULL,
+            approved_by TEXT,
+            approved_at TEXT,
+            last_login_at TEXT
+        )
+        """
+    )
+
     # Migrate prototype databases created before consent fields existed.
-    existing = {row[1] for row in conn.execute("PRAGMA table_info(patient_profiles)").fetchall()}
+    existing = {
+        row[1]
+        for row in conn.execute(
+            "PRAGMA table_info(patient_profiles)"
+        ).fetchall()
+    }
     migrations = [
         ("research_consent", "INTEGER NOT NULL DEFAULT 0"),
         ("consent_version", "TEXT"),
@@ -146,29 +176,248 @@ def get_db():
     return conn
 
 
-def normalize_phone(value):
-    digits = re.sub(
-        r"\D",
-        "",
-        value or "",
-    )
+def get_secret_value(*paths, env_name=""):
+    for path in paths:
+        try:
+            value = st.secrets
+            for part in path.split("."):
+                value = value[part]
+            if value:
+                return str(value).strip()
+        except Exception:
+            pass
 
-    if (
-        digits.startswith("84")
-        and len(digits) == 11
-    ):
-        digits = "0" + digits[2:]
-
-    return digits
+    if env_name:
+        return os.environ.get(env_name, "").strip()
+    return ""
 
 
-def valid_vietnam_phone(phone):
+def hash_password(password, salt_hex=None):
+    if salt_hex:
+        salt = bytes.fromhex(salt_hex)
+        salt_value = salt_hex
+    else:
+        salt = secrets.token_bytes(16)
+        salt_value = salt.hex()
+
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        PBKDF2_ITERATIONS,
+    ).hex()
+
+    return digest, salt_value
+
+
+def verify_password(password, stored_hash, stored_salt):
+    digest, _ = hash_password(password, stored_salt)
+    return secrets.compare_digest(digest, stored_hash)
+
+
+def valid_email(email):
     return bool(
         re.fullmatch(
-            r"0\d{9}",
-            phone,
+            r"[^@\s]+@[^@\s]+\.[^@\s]+",
+            (email or "").strip(),
         )
     )
+
+
+def valid_username(username):
+    return bool(
+        re.fullmatch(
+            r"[A-Za-z0-9_.-]{4,32}",
+            (username or "").strip(),
+        )
+    )
+
+
+def admin_exists():
+    conn = get_db()
+    row = conn.execute(
+        "SELECT 1 FROM user_accounts WHERE role = 'admin' LIMIT 1"
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def create_admin_account(username, full_name, email, password):
+    username = username.strip()
+    email = email.strip().lower()
+    now = datetime.now().isoformat(timespec="seconds")
+    password_hash, password_salt = hash_password(password)
+
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO user_accounts
+            (username, full_name, email, password_hash, password_salt,
+             role, status, created_at, approved_by, approved_at)
+            VALUES (?, ?, ?, ?, ?, 'admin', 'approved', ?, ?, ?)
+            """,
+            (
+                username,
+                full_name.strip(),
+                email,
+                password_hash,
+                password_salt,
+                now,
+                username,
+                now,
+            ),
+        )
+        conn.commit()
+        return True, ""
+    except sqlite3.IntegrityError as exc:
+        conn.rollback()
+        return False, f"Tài khoản/email đã tồn tại hoặc dữ liệu không hợp lệ: {exc}"
+    finally:
+        conn.close()
+
+
+def register_staff_account(username, full_name, email, password):
+    username = username.strip()
+    email = email.strip().lower()
+    now = datetime.now().isoformat(timespec="seconds")
+    password_hash, password_salt = hash_password(password)
+
+    conn = get_db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO user_accounts
+            (username, full_name, email, password_hash, password_salt,
+             role, status, created_at)
+            VALUES (?, ?, ?, ?, ?, 'staff', 'pending', ?)
+            """,
+            (
+                username,
+                full_name.strip(),
+                email,
+                password_hash,
+                password_salt,
+                now,
+            ),
+        )
+        conn.commit()
+        return True, ""
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        return False, "Tên đăng nhập hoặc email đã được sử dụng."
+    finally:
+        conn.close()
+
+
+def authenticate_user(login_value, password):
+    login_value = (login_value or "").strip().lower()
+    conn = get_db()
+    row = conn.execute(
+        """
+        SELECT id, username, full_name, email, password_hash,
+               password_salt, role, status
+        FROM user_accounts
+        WHERE lower(username) = ? OR lower(email) = ?
+        LIMIT 1
+        """,
+        (login_value, login_value),
+    ).fetchone()
+
+    if not row:
+        conn.close()
+        return None, "Sai tên đăng nhập/email hoặc mật khẩu."
+
+    if not verify_password(password, row[4], row[5]):
+        conn.close()
+        return None, "Sai tên đăng nhập/email hoặc mật khẩu."
+
+    if row[7] != "approved":
+        conn.close()
+        if row[7] == "pending":
+            return None, "Tài khoản đang chờ quản trị viên phê duyệt."
+        if row[7] == "disabled":
+            return None, "Tài khoản đã bị vô hiệu hóa."
+        return None, "Tài khoản chưa được phép truy cập."
+
+    now = datetime.now().isoformat(timespec="seconds")
+    conn.execute(
+        "UPDATE user_accounts SET last_login_at = ? WHERE id = ?",
+        (now, row[0]),
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        "id": row[0],
+        "username": row[1],
+        "full_name": row[2],
+        "email": row[3],
+        "role": row[6],
+        "status": row[7],
+    }, ""
+
+
+def list_user_accounts():
+    conn = get_db()
+    rows = conn.execute(
+        """
+        SELECT id, username, full_name, email, role, status,
+               created_at, approved_by, approved_at, last_login_at
+        FROM user_accounts
+        ORDER BY
+            CASE role WHEN 'admin' THEN 0 ELSE 1 END,
+            CASE status WHEN 'pending' THEN 0 ELSE 1 END,
+            created_at DESC
+        """
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def update_staff_status(user_id, status, approved_by):
+    if status not in {"approved", "rejected", "disabled", "pending"}:
+        raise ValueError("Trạng thái không hợp lệ.")
+
+    conn = get_db()
+    now = datetime.now().isoformat(timespec="seconds")
+    if status == "approved":
+        conn.execute(
+            """
+            UPDATE user_accounts
+            SET status = ?, approved_by = ?, approved_at = ?
+            WHERE id = ? AND role = 'staff'
+            """,
+            (status, approved_by, now, user_id),
+        )
+    else:
+        conn.execute(
+            """
+            UPDATE user_accounts
+            SET status = ?
+            WHERE id = ? AND role = 'staff'
+            """,
+            (status, user_id),
+        )
+    conn.commit()
+    conn.close()
+
+
+def list_patient_profiles_for_staff():
+    conn = get_db()
+    rows = conn.execute(
+        """
+        SELECT phone, full_name, birth_date, gender,
+               current_address, province, commune,
+               research_consent, consent_version, consent_at,
+               created_at, updated_at
+        FROM patient_profiles
+        WHERE research_consent = 1
+        ORDER BY updated_at DESC
+        """
+    ).fetchall()
+    conn.close()
+    return rows
 
 
 def phone_exists(phone):
@@ -275,6 +524,289 @@ def upsert_patient(profile):
     conn.close()
 
     return action
+
+
+# ------------------------------------------------------------
+# ACCESS CONTROL / ADMIN CONSOLE
+# ------------------------------------------------------------
+
+def current_auth_user():
+    return st.session_state.get("auth_user")
+
+
+def logout_user():
+    st.session_state.pop("auth_user", None)
+
+
+def render_auth_sidebar():
+    user = current_auth_user()
+    admin_setup_code = get_secret_value(
+        "admin.setup_code",
+        "ADMIN_SETUP_CODE",
+        env_name="ADMIN_SETUP_CODE",
+    )
+
+    st.sidebar.header("🔐 Quản trị hệ thống")
+
+    if user:
+        role_label = "Quản trị viên" if user["role"] == "admin" else "Nhân sự được duyệt"
+        st.sidebar.success(
+            f"Đang đăng nhập: **{user['full_name']}**\n\n{role_label}"
+        )
+        if st.sidebar.button("🚪 Đăng xuất", use_container_width=True):
+            logout_user()
+            st.rerun()
+        return True
+
+    auth_mode = st.sidebar.radio(
+        "",
+        ["Tài khoản quản trị", "Đăng ký nhân sự"],
+        key="auth_mode",
+    )
+
+    if auth_mode == "Tài khoản quản trị":
+        with st.sidebar.form("login_form"):
+            login_value = st.text_input(
+                "Tên đăng nhập hoặc email"
+            )
+            password = st.text_input(
+                "Mật khẩu",
+                type="password",
+            )
+            login_submit = st.form_submit_button(
+                "🔑 ĐĂNG NHẬP",
+                use_container_width=True,
+            )
+
+        if login_submit:
+            user_result, message = authenticate_user(
+                login_value,
+                password,
+            )
+            if user_result:
+                st.session_state["auth_user"] = user_result
+                st.rerun()
+            else:
+                st.sidebar.error(message)
+
+        if not admin_exists():
+            st.sidebar.divider()
+            st.sidebar.markdown("**🧰 Thiết lập quản trị viên lần đầu**")
+            if not admin_setup_code:
+                st.sidebar.warning(
+                    "Chưa cấu hình `ADMIN_SETUP_CODE` trong Secrets. "
+                    "Hãy cấu hình mã thiết lập trước khi tạo tài khoản admin đầu tiên."
+                )
+            else:
+                with st.sidebar.form("first_admin_form"):
+                    setup_code = st.text_input(
+                        "Mã thiết lập",
+                        type="password",
+                    )
+                    admin_username = st.text_input(
+                        "Tên đăng nhập admin"
+                    )
+                    admin_full_name = st.text_input(
+                        "Họ tên quản trị viên"
+                    )
+                    admin_email = st.text_input(
+                        "Email admin"
+                    )
+                    admin_password = st.text_input(
+                        "Mật khẩu admin",
+                        type="password",
+                    )
+                    admin_password2 = st.text_input(
+                        "Nhập lại mật khẩu",
+                        type="password",
+                    )
+                    create_submit = st.form_submit_button(
+                        "Tạo tài khoản admin",
+                        use_container_width=True,
+                    )
+
+                if create_submit:
+                    if setup_code != admin_setup_code:
+                        st.sidebar.error("Mã thiết lập không đúng.")
+                    elif not valid_username(admin_username):
+                        st.sidebar.error(
+                            "Tên đăng nhập 4–32 ký tự, chỉ gồm chữ, số, dấu chấm, gạch dưới hoặc gạch ngang."
+                        )
+                    elif not admin_full_name.strip():
+                        st.sidebar.error("Vui lòng nhập họ tên quản trị viên.")
+                    elif not valid_email(admin_email):
+                        st.sidebar.error("Email chưa đúng định dạng.")
+                    elif len(admin_password) < 8:
+                        st.sidebar.error("Mật khẩu phải có ít nhất 8 ký tự.")
+                    elif admin_password != admin_password2:
+                        st.sidebar.error("Hai mật khẩu không khớp.")
+                    else:
+                        ok, msg = create_admin_account(
+                            admin_username,
+                            admin_full_name,
+                            admin_email,
+                            admin_password,
+                        )
+                        if ok:
+                            st.sidebar.success(
+                                "✅ Đã tạo admin. Hãy đăng nhập bằng tài khoản vừa tạo."
+                            )
+                        else:
+                            st.sidebar.error(msg)
+
+    else:
+        with st.sidebar.form("staff_register_form"):
+            staff_username = st.text_input("Tên đăng nhập")
+            staff_full_name = st.text_input("Họ và tên")
+            staff_email = st.text_input("Email")
+            staff_password = st.text_input("Mật khẩu", type="password")
+            staff_password2 = st.text_input("Nhập lại mật khẩu", type="password")
+            register_submit = st.form_submit_button(
+                "📝 GỬI YÊU CẦU TẠO TÀI KHOẢN",
+                use_container_width=True,
+            )
+
+        if register_submit:
+            if not valid_username(staff_username):
+                st.sidebar.error("Tên đăng nhập 4–32 ký tự, không có khoảng trắng.")
+            elif not staff_full_name.strip():
+                st.sidebar.error("Vui lòng nhập họ và tên.")
+            elif not valid_email(staff_email):
+                st.sidebar.error("Email chưa đúng định dạng.")
+            elif len(staff_password) < 8:
+                st.sidebar.error("Mật khẩu phải có ít nhất 8 ký tự.")
+            elif staff_password != staff_password2:
+                st.sidebar.error("Hai mật khẩu không khớp.")
+            else:
+                ok, msg = register_staff_account(
+                    staff_username,
+                    staff_full_name,
+                    staff_email,
+                    staff_password,
+                )
+                if ok:
+                    st.sidebar.success(
+                        "✅ Đã gửi tài khoản. Quản trị viên phải phê duyệt trước khi đăng nhập."
+                    )
+                else:
+                    st.sidebar.error(msg)
+
+        st.sidebar.caption(
+            "Tài khoản nhân sự không được xem dữ liệu bệnh nhân cho đến khi quản trị viên phê duyệt."
+        )
+
+    return False
+
+
+def render_admin_console(user):
+    st.header("🛡️ QUẢN TRỊ HỆ THỐNG")
+    st.success(
+        f"Xin chào **{user['full_name']}** — quyền: "
+        f"{'Quản trị viên' if user['role'] == 'admin' else 'Nhân sự được duyệt'}"
+    )
+
+    patients = list_patient_profiles_for_staff()
+    users = list_user_accounts()
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Hồ sơ đã đồng ý", len(patients))
+    with c2:
+        pending_count = sum(1 for row in users if row[5] == "pending" and row[4] == "staff")
+        st.metric("Chờ phê duyệt", pending_count)
+    with c3:
+        staff_count = sum(1 for row in users if row[4] == "staff" and row[5] == "approved")
+        st.metric("Nhân sự được duyệt", staff_count)
+
+    if user["role"] == "admin":
+        st.subheader("👥 Phê duyệt tài khoản nhân sự")
+        pending_users = [row for row in users if row[4] == "staff" and row[5] == "pending"]
+        if not pending_users:
+            st.info("Hiện không có tài khoản nào đang chờ phê duyệt.")
+        else:
+            for row in pending_users:
+                with st.container(border=True):
+                    a, b, c = st.columns([2, 2, 1])
+                    with a:
+                        st.write(f"**{row[2]}**")
+                        st.caption(f"Username: {row[1]} · Email: {row[3]}")
+                    with b:
+                        st.caption(f"Đăng ký: {row[6]}")
+                    with c:
+                        b1, b2 = st.columns(2)
+                        with b1:
+                            if st.button("✅ Duyệt", key=f"approve_{row[0]}"):
+                                update_staff_status(row[0], "approved", user["username"])
+                                st.rerun()
+                        with b2:
+                            if st.button("❌ Từ chối", key=f"reject_{row[0]}"):
+                                update_staff_status(row[0], "rejected", user["username"])
+                                st.rerun()
+
+        st.subheader("⚙️ Tài khoản nhân sự")
+        staff_rows = [row for row in users if row[4] == "staff"]
+        for row in staff_rows:
+            with st.container(border=True):
+                s1, s2, s3 = st.columns([2, 2, 1])
+                with s1:
+                    st.write(f"**{row[2]}**")
+                    st.caption(f"{row[1]} · {row[3]}")
+                with s2:
+                    st.write(f"Trạng thái: **{row[5]}**")
+                with s3:
+                    if row[5] == "approved":
+                        if st.button("Vô hiệu hóa", key=f"disable_{row[0]}"):
+                            update_staff_status(row[0], "disabled", user["username"])
+                            st.rerun()
+                    elif row[5] in {"disabled", "rejected"}:
+                        if st.button("Mở lại", key=f"enable_{row[0]}"):
+                            update_staff_status(row[0], "approved", user["username"])
+                            st.rerun()
+
+    st.divider()
+    st.subheader("📋 THÔNG TIN KHÁCH HÀNG / NGƯỜI THAM GIA")
+    st.caption(
+        "🔒 Khu vực này chỉ hiển thị cho quản trị viên và tài khoản nhân sự đã được quản trị viên phê duyệt."
+    )
+
+    if not patients:
+        st.info("Chưa có hồ sơ nào đã đồng ý tham gia được lưu trong hệ thống.")
+        return
+
+    columns = [
+        "Số điện thoại",
+        "Họ tên",
+        "Ngày sinh",
+        "Giới tính",
+        "Địa chỉ hiện tại",
+        "Tỉnh/thành",
+        "Phường/xã/đặc khu",
+        "Đồng ý nghiên cứu",
+        "Phiên bản consent",
+        "Thời điểm đồng ý",
+        "Tạo lúc",
+        "Cập nhật lúc",
+    ]
+
+    table_rows = []
+    for row in patients:
+        table_rows.append([
+            row[0], row[1], row[2], row[3], row[4], row[5], row[6],
+            "Có" if row[7] else "Không", row[8] or "", row[9] or "", row[10], row[11],
+        ])
+
+    import pandas as pd
+    df = pd.DataFrame(table_rows, columns=columns)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+    csv_data = df.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "⬇️ Xuất danh sách khách hàng (CSV)",
+        csv_data,
+        file_name="thalassemia_patient_profiles.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
 
 
 # ------------------------------------------------------------
@@ -1366,43 +1898,34 @@ st.info(
 
 
 # ============================================================
-# SIDEBAR
+# ACCESS / SIDEBAR
 # ============================================================
 
 with st.sidebar:
-
-    st.header(
-        "⚙️ Trạng thái"
-    )
-
-    st.write(
-        "Google Places:"
-    )
+    st.header("⚙️ Trạng thái hệ thống")
 
     if GOOGLE_API_KEY:
-        st.success(
-            "Đã cấu hình API key"
-        )
+        st.success("Google Places: đã cấu hình")
     else:
-        st.warning(
-            "Chưa cấu hình API key"
-        )
+        st.warning("Google Places: chưa cấu hình API key")
 
     st.divider()
-
-    st.write(
-        "👤 Hồ sơ\n"
-        "↓\n"
-        "🟦 20 câu hỏi\n"
-        "↓\n"
-        "🔴 Nguy cơ cao?\n"
-        "↓\n"
-        "🟧 CBC + độ cao\n"
-        "↓\n"
-        "🧠 Phân tích\n"
-        "↓\n"
-        "🏥 Gợi ý cơ sở"
+    st.caption(
+        "👤 Hồ sơ → 🟦 Vòng 1 → 🔴 Nguy cơ cao → "
+        "🟧 Vòng 2 → 🧠 Phân tích → 🏥 Gợi ý cơ sở"
     )
+
+render_auth_sidebar()
+
+# ============================================================
+# ADMIN CONSOLE
+# ============================================================
+
+auth_user = current_auth_user()
+
+if auth_user:
+    render_admin_console(auth_user)
+    st.stop()
 
 
 # ============================================================
@@ -1411,6 +1934,10 @@ with st.sidebar:
 
 st.header(
     "👤 THÔNG TIN BỆNH NHÂN"
+)
+st.caption(
+    "Khu vực này dành cho người tham gia tự nhập thông tin của chính mình. "
+    "Danh sách hồ sơ của nhiều người chỉ được hiển thị trong khu vực quản trị có kiểm soát truy cập."
 )
 
 with st.container(border=True):
