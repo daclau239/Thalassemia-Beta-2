@@ -1279,7 +1279,7 @@ hãy mang kết quả đến nhân viên y tế và có thể nhập các chỉ 
             key="review_low_cbc",
         ):
 
-            if rbc <= 0:
+            if low_rbc_input <= 0:
 
                 st.error(
                     "RBC phải lớn hơn 0."
@@ -2455,7 +2455,7 @@ if st.session_state.get(
         use_container_width=True,
     ):
 
-        if rbc <= 0:
+        if rbc_input <= 0:
 
             st.error(
                 "RBC phải lớn hơn 0."
