@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 import requests
 import streamlit as st
 from docx import Document
+import xlsxwriter
 
 # ============================================================
 # THALASSEMIA SCREENING V5
@@ -156,6 +157,43 @@ def get_db():
             approved_by TEXT,
             approved_at TEXT,
             last_login_at TEXT
+        )
+        """
+    )
+
+    # Nhật ký từng lần sàng lọc: giữ lịch sử theo lượt, tách khỏi hồ sơ hiện tại.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS screening_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            phone TEXT NOT NULL,
+            screening_at TEXT NOT NULL,
+            entered_by_username TEXT,
+            entry_mode TEXT NOT NULL CHECK(entry_mode IN ('self', 'assisted')),
+            consent_version TEXT NOT NULL,
+            consent_at TEXT NOT NULL,
+            round1_score INTEGER NOT NULL,
+            round1_category TEXT NOT NULL,
+            round1_conclusion TEXT,
+            round1_reasons TEXT,
+            answers_json TEXT,
+            round2_completed INTEGER NOT NULL DEFAULT 0,
+            altitude_choice TEXT,
+            altitude_adjustment REAL,
+            hb REAL,
+            hb_adjusted REAL,
+            mcv REAL,
+            mch REAL,
+            rbc REAL,
+            rdw REAL,
+            mentzer REAL,
+            round2_score INTEGER,
+            round2_category TEXT,
+            round2_conclusion TEXT,
+            round2_reasons TEXT,
+            findings_json TEXT,
+            advice_json TEXT,
+            FOREIGN KEY(phone) REFERENCES patient_profiles(phone)
         )
         """
     )
@@ -574,6 +612,208 @@ def upsert_patient(profile):
     return action
 
 
+def create_screening_record(
+    patient,
+    answers,
+    score1,
+    category1,
+    conclusion1,
+    reasons1,
+    entry_mode,
+    entered_by_username=None,
+):
+    """Lưu một lượt sàng lọc sau khi hoàn thành Vòng 1."""
+    now = datetime.now().isoformat(timespec="seconds")
+    conn = get_db()
+    cur = conn.execute(
+        """
+        INSERT INTO screening_records (
+            phone, screening_at, entered_by_username, entry_mode,
+            consent_version, consent_at, round1_score, round1_category,
+            round1_conclusion, round1_reasons, answers_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            patient["phone"],
+            now,
+            entered_by_username,
+            entry_mode,
+            CONSENT_VERSION,
+            patient["consent_at"],
+            int(score1),
+            category1,
+            conclusion1,
+            json.dumps(reasons1, ensure_ascii=False),
+            json.dumps(answers, ensure_ascii=False),
+        ),
+    )
+    record_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return record_id
+
+
+def update_screening_round2(record_id, r2):
+    if not record_id:
+        return
+
+    conn = get_db()
+    conn.execute(
+        """
+        UPDATE screening_records
+        SET round2_completed = 1,
+            altitude_choice = ?,
+            altitude_adjustment = ?,
+            hb = ?,
+            hb_adjusted = ?,
+            mcv = ?,
+            mch = ?,
+            rbc = ?,
+            rdw = ?,
+            mentzer = ?,
+            round2_score = ?,
+            round2_category = ?,
+            round2_conclusion = ?,
+            round2_reasons = ?,
+            findings_json = ?,
+            advice_json = ?
+        WHERE id = ?
+        """,
+        (
+            r2["altitude_choice"],
+            r2["adjustment"],
+            r2["hb"],
+            r2["hb_adjusted"],
+            r2["mcv"],
+            r2["mch"],
+            r2["rbc"],
+            r2["rdw"],
+            r2["mentzer"],
+            r2["score"],
+            r2["category"],
+            r2["conclusion"],
+            json.dumps(r2["reasons"], ensure_ascii=False),
+            json.dumps(r2["findings"], ensure_ascii=False),
+            json.dumps(r2["advice"], ensure_ascii=False),
+            int(record_id),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def list_screening_records_for_staff():
+    conn = get_db()
+    rows = conn.execute(
+        """
+        SELECT
+            s.id, s.screening_at, s.entered_by_username, s.entry_mode,
+            p.phone, p.full_name, p.birth_date, p.gender,
+            p.current_address, p.province, p.commune,
+            s.consent_version, s.consent_at,
+            s.round1_score, s.round1_category,
+            s.round2_completed, s.altitude_choice, s.altitude_adjustment,
+            s.hb, s.hb_adjusted, s.mcv, s.mch, s.rbc, s.rdw, s.mentzer,
+            s.round2_score, s.round2_category, s.round2_conclusion,
+            s.round1_conclusion
+        FROM screening_records s
+        JOIN patient_profiles p ON p.phone = s.phone
+        WHERE p.research_consent = 1
+        ORDER BY s.screening_at DESC
+        """
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def export_screening_xlsx(patient_rows, screening_rows):
+    """Tạo một file Excel nhiều sheet, không lưu file tạm trên server."""
+    output = io.BytesIO()
+    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+
+    header_fmt = workbook.add_format({
+        "bold": True,
+        "bg_color": "#D9EAF7",
+        "border": 1,
+        "align": "center",
+        "valign": "vcenter",
+        "text_wrap": True,
+    })
+    cell_fmt = workbook.add_format({"border": 1, "valign": "top"})
+    date_fmt = workbook.add_format({"border": 1, "num_format": "dd/mm/yyyy hh:mm"})
+
+    # Sheet 1: hồ sơ hiện tại
+    ws = workbook.add_worksheet("Ho_so_nguoi_tham_gia")
+    patient_headers = [
+        "Số điện thoại", "Họ và tên", "Ngày sinh", "Giới tính",
+        "Địa chỉ hiện tại", "Tỉnh/thành", "Phường/xã/đặc khu",
+        "Đồng ý nghiên cứu", "Phiên bản consent", "Thời điểm đồng ý",
+        "Tạo lúc", "Cập nhật lúc",
+    ]
+    for c, h in enumerate(patient_headers):
+        ws.write(0, c, h, header_fmt)
+    for r, row in enumerate(patient_rows, start=1):
+        values = [
+            row[0], row[1], row[2], row[3], row[4], row[5], row[6],
+            "Có" if row[7] else "Không", row[8] or "", row[9] or "", row[10], row[11],
+        ]
+        for c, value in enumerate(values):
+            fmt = date_fmt if c in (9, 10, 11) and isinstance(value, datetime) else cell_fmt
+            ws.write(r, c, value, fmt)
+
+    ws.freeze_panes(1, 0)
+    widths = [15, 24, 13, 12, 32, 20, 26, 16, 25, 21, 21, 21]
+    for c, w in enumerate(widths):
+        ws.set_column(c, c, w)
+    ws.autofilter(0, 0, max(len(patient_rows), 1), len(patient_headers)-1)
+
+    # Sheet 2: lịch sử sàng lọc
+    ws2 = workbook.add_worksheet("Lich_su_sang_loc")
+    screening_headers = [
+        "ID lượt sàng lọc", "Thời điểm", "Người nhập", "Hình thức nhập",
+        "Số điện thoại", "Họ và tên", "Ngày sinh", "Giới tính",
+        "Địa chỉ", "Tỉnh/thành", "Phường/xã/đặc khu", "Phiên bản consent",
+        "Thời điểm đồng ý", "Điểm Vòng 1", "Nguy cơ Vòng 1",
+        "Đã hoàn thành Vòng 2", "Khoảng độ cao", "Hiệu chỉnh Hb (g/dL)",
+        "Hb (g/dL)", "Hb sau hiệu chỉnh (g/dL)", "MCV (fL)", "MCH (pg)",
+        "RBC (T/L)", "RDW-CV (%)", "Mentzer Index", "Điểm CBC",
+        "Nguy cơ Vòng 2", "Kết luận Vòng 2", "Kết luận Vòng 1",
+    ]
+    for c, h in enumerate(screening_headers):
+        ws2.write(0, c, h, header_fmt)
+
+    for r, row in enumerate(screening_rows, start=1):
+        values = [
+            row[0], row[1], row[2] or "",
+            "Tự nhập" if row[3] == "self" else "Nhập giúp người tham gia",
+            row[4], row[5], row[6], row[7], row[8], row[9], row[10],
+            row[11], row[12], row[13], row[14],
+            "Có" if row[15] else "Chưa", row[16] or "", row[17] if row[17] is not None else "",
+            row[18] if row[18] is not None else "", row[19] if row[19] is not None else "",
+            row[20] if row[20] is not None else "", row[21] if row[21] is not None else "",
+            row[22] if row[22] is not None else "", row[23] if row[23] is not None else "",
+            row[24] if row[24] is not None else "", row[25] if row[25] is not None else "",
+            row[26] or "", row[27] or "", row[28] or "",
+        ]
+        for c, value in enumerate(values):
+            fmt = date_fmt if c in (1, 12) and isinstance(value, datetime) else cell_fmt
+            ws2.write(r, c, value, fmt)
+
+    ws2.freeze_panes(1, 0)
+    for c in range(len(screening_headers)):
+        ws2.set_column(c, c, 20)
+    ws2.set_column(4, 4, 15)
+    ws2.set_column(5, 5, 24)
+    ws2.set_column(8, 8, 32)
+    ws2.set_column(9, 10, 22)
+    ws2.set_column(27, 28, 38)
+    ws2.autofilter(0, 0, max(len(screening_rows), 1), len(screening_headers)-1)
+
+    workbook.close()
+    output.seek(0)
+    return output
+
+
 # ------------------------------------------------------------
 # ACCESS CONTROL / ADMIN CONSOLE
 # ------------------------------------------------------------
@@ -591,23 +831,40 @@ def logout_user():
 
 def render_auth_sidebar():
     user = current_auth_user()
-    admin_setup_code = get_secret_value(
-        "admin.setup_code",
-        "ADMIN_SETUP_CODE",
-        env_name="ADMIN_SETUP_CODE",
-    )
 
-    st.sidebar.header("🔐 Quản trị hệ thống")
+    st.sidebar.header("🔐 TÀI KHOẢN & QUYỀN TRUY CẬP")
 
     if user:
         role_label = "Quản trị viên" if user["role"] == "admin" else "Nhân sự được duyệt"
         st.sidebar.success(
             f"Đang đăng nhập: **{user['full_name']}**\n\n{role_label}"
         )
+
+        if user["role"] == "admin":
+            page = st.sidebar.radio(
+                "Khu vực làm việc",
+                ["📝 Nhập sàng lọc", "🛡️ Quản trị hệ thống"],
+                key="auth_page_admin",
+            )
+        else:
+            page = "📝 Nhập sàng lọc"
+            st.sidebar.info(
+                "Bạn có thể nhập hồ sơ/sàng lọc giúp người tham gia. "
+                "Danh sách hồ sơ chỉ xem được ở khu vực quản trị có quyền."
+            )
+
+        st.session_state["auth_page"] = page
+
         if st.sidebar.button("🚪 Đăng xuất", use_container_width=True):
             logout_user()
+            st.session_state.pop("auth_page", None)
             st.rerun()
-        return True
+        return
+
+    st.sidebar.caption(
+        "Người tham gia có thể tự nhập hồ sơ.\n"
+        "Quản trị viên/nhân sự được duyệt đăng nhập để quản lý hoặc nhập giúp người tham gia."
+    )
 
     auth_mode = st.sidebar.radio(
         "",
@@ -617,25 +874,18 @@ def render_auth_sidebar():
 
     if auth_mode == "Tài khoản quản trị":
         with st.sidebar.form("login_form"):
-            login_value = st.text_input(
-                "Tên đăng nhập hoặc email"
-            )
-            password = st.text_input(
-                "Mật khẩu",
-                type="password",
-            )
+            login_value = st.text_input("Tên đăng nhập hoặc email")
+            password = st.text_input("Mật khẩu", type="password")
             login_submit = st.form_submit_button(
                 "🔑 ĐĂNG NHẬP",
                 use_container_width=True,
             )
 
         if login_submit:
-            user_result, message = authenticate_user(
-                login_value,
-                password,
-            )
+            user_result, message = authenticate_user(login_value, password)
             if user_result:
                 st.session_state["auth_user"] = user_result
+                st.session_state["auth_page"] = "📝 Nhập sàng lọc"
                 st.rerun()
             else:
                 st.sidebar.error(message)
@@ -644,7 +894,6 @@ def render_auth_sidebar():
             "Tài khoản quản trị đã được cấu hình sẵn cho hệ thống. "
             "Đăng nhập bằng tài khoản được cấp cho quản trị viên."
         )
-
     else:
         with st.sidebar.form("staff_register_form"):
             staff_username = st.text_input("Tên đăng nhập")
@@ -670,10 +919,7 @@ def render_auth_sidebar():
                 st.sidebar.error("Hai mật khẩu không khớp.")
             else:
                 ok, msg = register_staff_account(
-                    staff_username,
-                    staff_full_name,
-                    staff_email,
-                    staff_password,
+                    staff_username, staff_full_name, staff_email, staff_password
                 )
                 if ok:
                     st.sidebar.success(
@@ -683,10 +929,8 @@ def render_auth_sidebar():
                     st.sidebar.error(msg)
 
         st.sidebar.caption(
-            "Tài khoản nhân sự không được xem dữ liệu bệnh nhân cho đến khi quản trị viên phê duyệt."
+            "Tài khoản nhân sự không được xem dữ liệu người tham gia cho đến khi quản trị viên phê duyệt."
         )
-
-    return False
 
 
 def render_admin_console(user):
@@ -698,8 +942,9 @@ def render_admin_console(user):
 
     patients = list_patient_profiles_for_staff()
     users = list_user_accounts()
+    screening_rows = list_screening_records_for_staff()
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("Hồ sơ đã đồng ý", len(patients))
     with c2:
@@ -708,6 +953,8 @@ def render_admin_console(user):
     with c3:
         staff_count = sum(1 for row in users if row[4] == "staff" and row[5] == "approved")
         st.metric("Nhân sự được duyệt", staff_count)
+    with c4:
+        st.metric("Lượt sàng lọc đã lưu", len(screening_rows))
 
     if user["role"] == "admin":
         st.subheader("👥 Phê duyệt tài khoản nhân sự")
@@ -755,49 +1002,94 @@ def render_admin_console(user):
                             st.rerun()
 
     st.divider()
-    st.subheader("📋 THÔNG TIN KHÁCH HÀNG / NGƯỜI THAM GIA")
+    st.subheader("📊 DỮ LIỆU NGƯỜI THAM GIA — DẠNG BẢNG")
     st.caption(
-        "🔒 Khu vực này chỉ hiển thị cho quản trị viên và tài khoản nhân sự đã được quản trị viên phê duyệt."
+        "🔒 Chỉ quản trị viên và nhân sự đã được quản trị viên phê duyệt mới xem được dữ liệu này. "
+        "Dữ liệu gồm hồ sơ hiện tại và lịch sử từng lượt sàng lọc đã đồng ý."
     )
 
-    if not patients:
-        st.info("Chưa có hồ sơ nào đã đồng ý tham gia được lưu trong hệ thống.")
-        return
+    tab1, tab2 = st.tabs(["👤 Hồ sơ hiện tại", "🧪 Lịch sử sàng lọc"])
 
-    columns = [
-        "Số điện thoại",
-        "Họ tên",
-        "Ngày sinh",
-        "Giới tính",
-        "Địa chỉ hiện tại",
-        "Tỉnh/thành",
-        "Phường/xã/đặc khu",
-        "Đồng ý nghiên cứu",
-        "Phiên bản consent",
-        "Thời điểm đồng ý",
-        "Tạo lúc",
-        "Cập nhật lúc",
-    ]
+    with tab1:
+        patient_columns = [
+            "Số điện thoại", "Họ tên", "Ngày sinh", "Giới tính",
+            "Địa chỉ hiện tại", "Tỉnh/thành", "Phường/xã/đặc khu",
+            "Đồng ý nghiên cứu", "Phiên bản consent", "Thời điểm đồng ý",
+            "Tạo lúc", "Cập nhật lúc",
+        ]
+        patient_table = []
+        for row in patients:
+            patient_table.append({
+                "Số điện thoại": row[0],
+                "Họ tên": row[1],
+                "Ngày sinh": row[2],
+                "Giới tính": row[3],
+                "Địa chỉ hiện tại": row[4],
+                "Tỉnh/thành": row[5],
+                "Phường/xã/đặc khu": row[6],
+                "Đồng ý nghiên cứu": "Có" if row[7] else "Không",
+                "Phiên bản consent": row[8] or "",
+                "Thời điểm đồng ý": row[9] or "",
+                "Tạo lúc": row[10],
+                "Cập nhật lúc": row[11],
+            })
+        if patient_table:
+            st.dataframe(patient_table, use_container_width=True, hide_index=True)
+        else:
+            st.info("Chưa có hồ sơ nào đã đồng ý tham gia.")
 
-    table_rows = []
-    for row in patients:
-        table_rows.append([
-            row[0], row[1], row[2], row[3], row[4], row[5], row[6],
-            "Có" if row[7] else "Không", row[8] or "", row[9] or "", row[10], row[11],
-        ])
+    with tab2:
+        screening_columns = [
+            "ID", "Thời điểm", "Người nhập", "Hình thức nhập", "Số điện thoại",
+            "Họ tên", "Tỉnh/thành", "Phường/xã/đặc khu", "Điểm Vòng 1",
+            "Nguy cơ Vòng 1", "Vòng 2", "Độ cao", "Hb", "Hb sau hiệu chỉnh",
+            "MCV", "MCH", "RBC", "RDW", "Mentzer", "Điểm CBC",
+            "Nguy cơ Vòng 2", "Kết luận",
+        ]
+        screening_table = []
+        for row in screening_rows:
+            screening_table.append({
+                "ID": row[0],
+                "Thời điểm": row[1],
+                "Người nhập": row[2] or "",
+                "Hình thức nhập": "Tự nhập" if row[3] == "self" else "Nhập giúp người tham gia",
+                "Số điện thoại": row[4],
+                "Họ tên": row[5],
+                "Tỉnh/thành": row[9],
+                "Phường/xã/đặc khu": row[10],
+                "Điểm Vòng 1": row[13],
+                "Nguy cơ Vòng 1": row[14],
+                "Vòng 2": "Có" if row[15] else "Chưa",
+                "Độ cao": row[16] or "",
+                "Hb": row[18] if row[18] is not None else "",
+                "Hb sau hiệu chỉnh": row[19] if row[19] is not None else "",
+                "MCV": row[20] if row[20] is not None else "",
+                "MCH": row[21] if row[21] is not None else "",
+                "RBC": row[22] if row[22] is not None else "",
+                "RDW": row[23] if row[23] is not None else "",
+                "Mentzer": row[24] if row[24] is not None else "",
+                "Điểm CBC": row[25] if row[25] is not None else "",
+                "Nguy cơ Vòng 2": row[26] or "",
+                "Kết luận": row[27] or row[28] or "",
+            })
+        if screening_table:
+            st.dataframe(screening_table, use_container_width=True, hide_index=True)
+        else:
+            st.info("Chưa có lượt sàng lọc nào được lưu.")
 
-    import pandas as pd
-    df = pd.DataFrame(table_rows, columns=columns)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-
-    csv_data = df.to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        "⬇️ Xuất danh sách khách hàng (CSV)",
-        csv_data,
-        file_name="thalassemia_patient_profiles.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
+    if patients or screening_rows:
+        excel_data = export_screening_xlsx(patients, screening_rows)
+        st.download_button(
+            "📊 XUẤT DỮ LIỆU EXCEL (.xlsx)",
+            data=excel_data.getvalue(),
+            file_name=f"Thalassemia_du_lieu_{date.today().isoformat()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+        st.caption(
+            "File Excel gồm 2 sheet: Hồ sơ hiện tại và Lịch sử sàng lọc. "
+            "Không xuất mật khẩu/tài khoản nhân sự."
+        )
 
 
 # ------------------------------------------------------------
@@ -875,6 +1167,7 @@ def safe_filename(text):
 
 
 def reset_results():
+    st.session_state.pop("screening_id", None)
     for key in list(st.session_state.keys()):
         if (
             key.startswith("round1_")
@@ -1893,12 +2186,12 @@ st.info(
 # ============================================================
 
 with st.sidebar:
-    st.header("⚙️ Trạng thái hệ thống")
+    st.header("⚙️ Trạng thái kỹ thuật")
 
     if GOOGLE_API_KEY:
         st.success("Google Places: đã cấu hình")
     else:
-        st.warning("Google Places: chưa cấu hình API key")
+        st.caption("Google Places: chưa cấu hình API key — hệ thống vẫn có danh mục cơ sở ưu tiên theo tỉnh/thành.")
 
     st.divider()
     st.caption(
@@ -1914,10 +2207,17 @@ render_auth_sidebar()
 
 auth_user = current_auth_user()
 
-if auth_user:
+if auth_user and st.session_state.get("auth_page") == "🛡️ Quản trị hệ thống":
     render_admin_console(auth_user)
     st.stop()
 
+operator_mode = auth_user is not None
+operator_username = auth_user["username"] if auth_user else None
+
+if operator_mode:
+    st.success(
+        f"👩‍🔬 **Chế độ nhập giúp người tham gia** — thao tác đang được ghi nhận bởi **{auth_user['full_name']}** (#{auth_user['username']})."
+    )
 
 # ============================================================
 # PATIENT PROFILE
@@ -1927,8 +2227,13 @@ st.header(
     "👤 THÔNG TIN BỆNH NHÂN"
 )
 st.caption(
-    "Khu vực này dành cho người tham gia tự nhập thông tin của chính mình. "
-    "Danh sách hồ sơ của nhiều người chỉ được hiển thị trong khu vực quản trị có kiểm soát truy cập."
+    "Khu vực này dùng để nhập hồ sơ người tham gia. "
+    + (
+        "Bạn đang ở chế độ **nhập giúp người tham gia**; dữ liệu sẽ ghi nhận tài khoản nhân sự đang đăng nhập."
+        if operator_mode
+        else "Người tham gia có thể tự nhập thông tin của chính mình."
+    )
+    + " Danh sách hồ sơ của nhiều người chỉ được hiển thị trong khu vực quản trị có kiểm soát truy cập."
 )
 
 with st.container(border=True):
@@ -2047,10 +2352,17 @@ with st.container(border=True):
         )
 
     st.markdown("### 🔐 Đồng ý tham gia sàng lọc và nghiên cứu")
-    st.info(
-        "Để tiếp tục, người tham gia cần đọc và đồng ý với nội dung dưới đây. "
-        "Nếu không đồng ý, hệ thống sẽ **không thực hiện sàng lọc và không lưu hồ sơ/thông tin sức khỏe**."
-    )
+    if operator_mode:
+        st.info(
+            "Bạn đang nhập giúp người tham gia. Chỉ tiếp tục khi người tham gia đã được giải thích "
+            "nội dung, đồng ý cho nghiên cứu sinh sử dụng dữ liệu theo mục đích nghiên cứu/sàng lọc, "
+            "và bạn có cơ sở hợp lý để ghi nhận sự đồng ý đó."
+        )
+    else:
+        st.info(
+            "Để tiếp tục, người tham gia cần đọc và đồng ý với nội dung dưới đây. "
+            "Nếu không đồng ý, hệ thống sẽ **không thực hiện sàng lọc và không lưu hồ sơ/thông tin sức khỏe**."
+        )
     with st.container(border=True):
         st.markdown(
             "**Tôi đồng ý cho nghiên cứu sinh sử dụng thông tin cá nhân, "
@@ -2064,9 +2376,14 @@ with st.container(border=True):
             "Tôi có thể dừng tham gia bằng cách không tiếp tục sử dụng hệ thống."
         )
         research_consent = st.checkbox(
-            "✅ Tôi đã đọc, hiểu và đồng ý tham gia.",
+            "✅ Tôi đã đọc, hiểu và đồng ý tham gia." if not operator_mode
+            else "✅ Tôi xác nhận người tham gia đã đọc/được giải thích và đã đồng ý.",
             key="research_consent",
         )
+        if operator_mode:
+            st.caption(
+                f"Người nhập: {auth_user['full_name']} ({auth_user['username']})"
+            )
         st.caption(
             f"Phiên bản nội dung chấp thuận: {CONSENT_VERSION}"
         )
@@ -2151,6 +2468,8 @@ if st.button(
                 birth_date
             ),
             "consent_at": datetime.now().isoformat(timespec="seconds"),
+            "entry_mode": "assisted" if operator_mode else "self",
+            "entered_by_username": operator_username,
         }
 
         action = upsert_patient(
@@ -2427,6 +2746,19 @@ if st.button(
     st.session_state[
         "round1_reasons"
     ] = reasons1
+
+    # Lưu một lượt sàng lọc hoàn chỉnh Vòng 1. Nếu có tài khoản đăng nhập,
+    # ghi nhận người nhập là nhân sự/ quản trị viên đang thực hiện thao tác.
+    st.session_state["screening_id"] = create_screening_record(
+        patient=patient,
+        answers=answers,
+        score1=score1,
+        category1=category1,
+        conclusion1=conclusion1,
+        reasons1=reasons1,
+        entry_mode="assisted" if operator_mode else "self",
+        entered_by_username=operator_username,
+    )
 
     st.session_state[
         "round1_category"
@@ -2804,6 +3136,27 @@ if st.session_state.get(
             st.session_state[
                 "round2_advice"
             ] = advice
+
+            update_screening_round2(
+                st.session_state.get("screening_id"),
+                {
+                    "altitude_choice": st.session_state["round2_altitude_choice"],
+                    "adjustment": adjustment,
+                    "hb": hb,
+                    "hb_adjusted": hb_adjusted,
+                    "mcv": mcv,
+                    "mch": mch,
+                    "rbc": rbc,
+                    "rdw": rdw,
+                    "mentzer": mentzer,
+                    "score": score2,
+                    "category": category2,
+                    "conclusion": conclusion2,
+                    "reasons": reasons2,
+                    "findings": findings,
+                    "advice": advice,
+                },
+            )
 
             st.session_state[
                 "round2_completed"
