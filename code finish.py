@@ -1,45 +1,63 @@
 import io
 import math
-from datetime import date
+import re
+import sqlite3
+from datetime import date, datetime, timedelta
 
 import requests
 import streamlit as st
 from docx import Document
 
 # ============================================================
-# THALASSEMIA SCREENING V3.1
+# THALASSEMIA SCREENING V3.3
+# ============================================================
+# FLOW:
+#   HỒ SƠ BỆNH NHÂN
+#       ↓
+#   VÒNG 1 — 20 câu hỏi
+#       ↓
+#   ┌───────────────┬────────────────┐
+#   ↓               ↓                ↓
+# THẤP          TRUNG BÌNH           CAO
+#   ↓               ↓                ↓
+# Theo dõi        Theo dõi /       MỞ VÒNG 2
+# định kỳ         nhân viên y tế       ↓
+# + nếu CBC      có thể cân nhắc     Xã/phường
+# bất thường     CBC                  ↓
+# nhập CBC                           Google Geocoding
+#                                       ↓
+#                                   Elevation
+#                                       ↓
+#                                      CBC
+#                                       ↓
+#                                Hb hiệu chỉnh + Mentzer
+#                                       ↓
+#                               Gợi ý 3–5 cơ sở y tế
 #
-# VÒNG 1:
-#   20 câu hỏi sàng lọc nguy cơ ban đầu.
-#   Chưa yêu cầu CBC.
-#
-# VÒNG 2:
-#   Chỉ mở khi Vòng 1 đạt ngưỡng NGUY CƠ CAO.
-#   Nhập nơi cư trú -> Geocoding -> Elevation -> CBC
-#   -> Hb hiệu chỉnh độ cao -> Mentzer/CBC score
-#   -> đề xuất 3–5 cơ sở y tế gần/phù hợp.
+# HỒ SƠ:
+#   - Số điện thoại là khóa duy nhất.
+#   - Nếu nhập lại cùng số, thông tin mới nhất ghi đè hồ sơ cũ.
 #
 # LƯU Ý:
-#   - Risk score là PROTOTYPE, chưa validation trên quần thể Việt Nam.
-#   - Không dùng để chẩn đoán hoặc tự điều trị.
-#   - WHO 2024: hiệu chỉnh Hb theo độ cao bằng:
-#       adjustment (g/L) = 0.0056384*elevation
-#                             + 0.0000003*elevation^2
-#     và trừ adjustment khỏi Hb quan sát.
-#   - Google dùng để xác định địa điểm/độ cao/tìm cơ sở.
+#   - Điểm nguy cơ là PROTOTYPE, chưa validation trên quần thể Việt Nam.
+#   - Không dùng kết quả để chẩn đoán hoặc tự điều trị.
+#   - Câu 19–20 về khả năng tiếp cận xét nghiệm KHÔNG cộng điểm nguy cơ.
+#   - Khuyến nghị "theo dõi hàng tháng" trong giao diện chỉ là lịch nhắc
+#     prototype, không phải chỉ định y khoa bắt buộc cho mọi người nguy cơ thấp.
+#   - Công thức hiệu chỉnh Hb theo độ cao cần được xác nhận theo guideline
+#     và thiết kế nghiên cứu chính thức trước khi triển khai lâm sàng.
 #
-# Cài:
+# CÀI:
 #   pip install streamlit python-docx requests
 #
 # .streamlit/secrets.toml:
-#
 # [google]
 # maps_api_key = "YOUR_GOOGLE_MAPS_API_KEY"
 #
-# Google Cloud cần bật:
-#   - Geocoding API
-#   - Elevation API
-#   - Places API (New)
+# GOOGLE CLOUD:
+#   Geocoding API
+#   Elevation API
+#   Places API (New)
 # ============================================================
 
 st.set_page_config(
@@ -48,8 +66,14 @@ st.set_page_config(
     layout="wide",
 )
 
+DB_PATH = "thalassemia_patients.db"
+ROUND1_MAX_SCORE = 20
+ROUND1_HIGH_THRESHOLD = 8
+FOLLOWUP_DAYS = 30
+
+
 # ============================================================
-# HÀM TIỆN ÍCH
+# GOOGLE
 # ============================================================
 
 def get_google_key():
@@ -57,7 +81,6 @@ def get_google_key():
         return st.secrets["google"]["maps_api_key"]
     except Exception:
         pass
-
     try:
         return st.secrets["GOOGLE_MAPS_API_KEY"]
     except Exception:
@@ -66,153 +89,244 @@ def get_google_key():
 
 GOOGLE_API_KEY = get_google_key()
 
-ROUND1_HIGH_THRESHOLD = 8
-ROUND1_MAX_SCORE = 20
 
+# ============================================================
+# DATABASE — PHONE UNIQUE + LAST ENTRY WINS
+# ============================================================
+
+def db():
+    conn = sqlite3.connect(
+        DB_PATH,
+        check_same_thread=False,
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS patient_profiles (
+            phone TEXT PRIMARY KEY,
+            full_name TEXT NOT NULL,
+            birth_date TEXT NOT NULL,
+            gender TEXT NOT NULL,
+            current_address TEXT NOT NULL,
+            province TEXT NOT NULL,
+            district TEXT,
+            commune TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.commit()
+    return conn
+
+
+def normalize_phone(value):
+    digits = re.sub(r"\D", "", value or "")
+    if digits.startswith("84") and len(digits) == 11:
+        digits = "0" + digits[2:]
+    return digits
+
+
+def valid_vn_phone(phone):
+    return bool(re.fullmatch(r"0\d{9}", phone))
+
+
+def patient_exists(phone):
+    conn = db()
+    row = conn.execute(
+        "SELECT 1 FROM patient_profiles WHERE phone = ?",
+        (phone,),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def upsert_patient(profile):
+    conn = db()
+    now = datetime.now().isoformat(timespec="seconds")
+
+    exists = patient_exists(profile["phone"])
+
+    if exists:
+        conn.execute(
+            """
+            UPDATE patient_profiles
+            SET
+                full_name = ?,
+                birth_date = ?,
+                gender = ?,
+                current_address = ?,
+                province = ?,
+                district = ?,
+                commune = ?,
+                updated_at = ?
+            WHERE phone = ?
+            """,
+            (
+                profile["full_name"],
+                profile["birth_date"],
+                profile["gender"],
+                profile["current_address"],
+                profile["province"],
+                profile["district"],
+                profile["commune"],
+                now,
+                profile["phone"],
+            ),
+        )
+        action = "updated"
+    else:
+        conn.execute(
+            """
+            INSERT INTO patient_profiles
+            (
+                phone,
+                full_name,
+                birth_date,
+                gender,
+                current_address,
+                province,
+                district,
+                commune,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                profile["phone"],
+                profile["full_name"],
+                profile["birth_date"],
+                profile["gender"],
+                profile["current_address"],
+                profile["province"],
+                profile["district"],
+                profile["commune"],
+                now,
+                now,
+            ),
+        )
+        action = "inserted"
+
+    conn.commit()
+    conn.close()
+    return action
+
+
+# ============================================================
+# UTILITY
+# ============================================================
 
 def safe_filename(text):
-    text = text.strip()
-    cleaned = "".join(
-        c if c.isalnum() or c in " _-" else "_"
-        for c in text
+    text = (text or "").strip()
+    text = re.sub(
+        r"[^0-9A-Za-zÀ-ỹĐđ _-]",
+        "_",
+        text,
     )
-    return cleaned or "nguoi_sang_loc"
+    return text.strip(" _") or "nguoi_sang_loc"
+
+
+def calculate_age(birth_date):
+    if birth_date is None:
+        return None
+
+    today = date.today()
+    return (
+        today.year
+        - birth_date.year
+        - (
+            (today.month, today.day)
+            < (birth_date.month, birth_date.day)
+        )
+    )
 
 
 def reset_round2():
-    keys = [
-        "round2_unlocked",
-        "geo",
-        "elevation",
-        "elevation_resolution",
-        "round2_score",
-        "round2_category",
-        "round2_mentzer",
-        "round2_conclusion",
-        "round2_reasons",
-        "round2_hb",
-        "round2_hb_adjusted",
-        "round2_altitude_adjustment",
-        "round2_mcv",
-        "round2_mch",
-        "round2_rbc",
-        "round2_rdw",
-        "round2_dia_diem",
-    ]
-
-    for key in keys:
-        st.session_state.pop(key, None)
+    for key in list(st.session_state.keys()):
+        if (
+            key.startswith("round2_")
+            or key.startswith("location_")
+            or key.startswith("medical_")
+        ):
+            del st.session_state[key]
 
 
 # ============================================================
-# VÒNG 1 — 20 CÂU HỎI
+# VÒNG 1 — 20 QUESTIONS
 # ============================================================
 
-def calculate_round1_score(answers):
+def round1_score(answers):
     """
     PROTOTYPE.
-    Điểm chỉ dùng để quyết định có mở Vòng 2 hay không.
-    Không phải thang điểm chẩn đoán đã được validation.
+    Q1-Q18 = yếu tố nguy cơ.
+    Q19-Q20 = tiếp cận y tế, KHÔNG cộng điểm.
     """
 
     score = 0
     reasons = []
 
-    # Q1 — gia đình chẩn đoán Thalassemia
-    if answers["q1"] == "Có":
-        score += 3
-        reasons.append("Có người thân/dòng họ mắc Thalassemia")
+    weights = {
+        "q1": 3,
+        "q2": 3,
+        "q3": 1,
+        "q4": 2,
+        "q5": 2,
+        "q6": 1,
+        "q7": 2,
+        "q8": 1,
+        "q9_suspected": 2,
+        "q9_carrier": 4,
+        "q10": 2,
+        "q11": 1,
+        "q12": 2,
+        "q13": 1,
+        "q14": 1,
+        "q15": 1,
+        "q16": 1,
+        "q17": 2,
+        "q18": 1,
+    }
 
-    # Q2 — gia đình mang gen
-    if answers["q2"] == "Có":
-        score += 3
-        reasons.append("Có người thân/dòng họ mang gen Thalassemia/hemoglobinopathy")
+    labels = {
+        "q1": "Có người thân/dòng họ mắc Thalassemia",
+        "q2": "Có người thân/dòng họ mang gen Thalassemia/hemoglobinopathy",
+        "q3": "Cha/mẹ từng xét nghiệm Thalassemia/hemoglobinopathy",
+        "q4": "Anh/chị/em từng thiếu máu hoặc hồng cầu nhỏ",
+        "q5": "Gia đình có trẻ từng truyền máu nhiều lần/định kỳ",
+        "q6": "Từng được thông báo thiếu máu",
+        "q7": "Từng được thông báo MCV thấp/hồng cầu nhỏ",
+        "q8": "Từng được thông báo MCH thấp/hồng cầu nhược sắc",
+        "q10": "Từng được chẩn đoán HbE/hemoglobinopathy khác",
+        "q11": "Bản thân từng truyền máu nhiều lần/định kỳ",
+        "q12": "Thiếu máu kéo dài từ nhỏ/tuổi thiếu niên",
+        "q13": "Mệt mỏi/giảm sức hoạt động",
+        "q14": "Hoa mắt/chóng mặt không rõ nguyên nhân",
+        "q15": "Da/niêm nhợt",
+        "q16": "Vàng da/vàng mắt không rõ nguyên nhân",
+        "q17": "Từng được ghi nhận lách to/gan lách to",
+        "q18": "Biến chứng liên quan bệnh huyết học mạn",
+    }
 
-    # Q3 — cha/mẹ từng xét nghiệm
-    if answers["q3"] == "Có":
-        score += 1
-        reasons.append("Cha/mẹ từng được xét nghiệm Thalassemia/hemoglobinopathy")
+    for key in [
+        "q1", "q2", "q3", "q4", "q5",
+        "q6", "q7", "q8", "q10",
+        "q11", "q12", "q13", "q14",
+        "q15", "q16", "q17", "q18",
+    ]:
+        if answers.get(key) == "Có":
+            score += weights[key]
+            reasons.append(labels[key])
 
-    # Q4 — anh chị em có thiếu máu/hồng cầu nhỏ
-    if answers["q4"] == "Có":
-        score += 2
-        reasons.append("Anh/chị/em từng được chẩn đoán thiếu máu hoặc hồng cầu nhỏ")
-
-    # Q5 — trẻ truyền máu định kỳ
-    if answers["q5"] == "Có":
-        score += 2
-        reasons.append("Gia đình có trẻ từng truyền máu nhiều lần/định kỳ")
-
-    # Q6 — bản thân thiếu máu
-    if answers["q6"] == "Có":
-        score += 1
-        reasons.append("Từng được thông báo thiếu máu")
-
-    # Q7 — MCV thấp
-    if answers["q7"] == "Có":
-        score += 2
-        reasons.append("Từng được thông báo MCV thấp/hồng cầu nhỏ")
-
-    # Q8 — MCH thấp
-    if answers["q8"] == "Có":
-        score += 1
-        reasons.append("Từng được thông báo MCH thấp/hồng cầu nhược sắc")
-
-    # Q9 — xét nghiệm thal
-    if answers["q9"] == "Đã nghi ngờ":
-        score += 2
-        reasons.append("Từng có kết quả nghi ngờ Thalassemia/hemoglobinopathy")
-    elif answers["q9"] == "Đã xác định mang gen":
-        score += 4
-        reasons.append("Từng được xác định mang gen")
-
-    # Q10 — HbE/hemoglobinopathy
-    if answers["q10"] == "Có":
-        score += 2
-        reasons.append("Từng được chẩn đoán HbE hoặc hemoglobinopathy khác")
-
-    # Q11 — truyền máu
-    if answers["q11"] == "Có":
-        score += 1
-        reasons.append("Bản thân từng truyền máu nhiều lần/định kỳ")
-
-    # Q12 — thiếu máu kéo dài từ nhỏ
-    if answers["q12"] == "Có":
-        score += 2
-        reasons.append("Có tiền sử thiếu máu kéo dài từ nhỏ/tuổi thiếu niên")
-
-    # Q13 — mệt mỏi
-    if answers["q13"] == "Có":
-        score += 1
-        reasons.append("Có triệu chứng mệt mỏi/giảm sức hoạt động")
-
-    # Q14 — chóng mặt
-    if answers["q14"] == "Có":
-        score += 1
-        reasons.append("Có triệu chứng hoa mắt/chóng mặt không rõ nguyên nhân")
-
-    # Q15 — da niêm nhợt
-    if answers["q15"] == "Có":
-        score += 1
-        reasons.append("Từng được nhận xét da/niêm nhợt")
-
-    # Q16 — vàng da
-    if answers["q16"] == "Có":
-        score += 1
-        reasons.append("Từng có vàng da/vàng mắt không rõ nguyên nhân")
-
-    # Q17 — lách to
-    if answers["q17"] == "Có":
-        score += 2
-        reasons.append("Từng được ghi nhận lách to/gan lách to")
-
-    # Q18 — chậm phát triển / biến chứng (câu thăm dò)
-    if answers["q18"] == "Có":
-        score += 1
-        reasons.append("Từng được bác sĩ lưu ý biến chứng liên quan bệnh huyết học mạn")
-
-    # Q19/Q20 KHÔNG cộng điểm nguy cơ bệnh.
-    # Chúng được dùng trong Vòng 2 để hiểu khả năng tiếp cận y tế.
+    if answers.get("q9") == "Đã nghi ngờ":
+        score += weights["q9_suspected"]
+        reasons.append(
+            "Từng có kết quả nghi ngờ Thalassemia/hemoglobinopathy"
+        )
+    elif answers.get("q9") == "Đã xác định mang gen":
+        score += weights["q9_carrier"]
+        reasons.append(
+            "Từng được xác định mang gen"
+        )
 
     return min(score, ROUND1_MAX_SCORE), reasons
 
@@ -223,14 +337,12 @@ def round1_category(score):
             "CAO",
             "Có đủ yếu tố sàng lọc ban đầu để chuyển sang Vòng 2.",
         )
-
     if score >= 4:
         return (
             "TRUNG BÌNH",
-            "Có một số yếu tố đáng lưu ý nhưng chưa đạt ngưỡng mở "
-            "Vòng 2 trong prototype hiện tại.",
+            "Có một số yếu tố đáng lưu ý nhưng chưa đạt ngưỡng mở Vòng 2 "
+            "trong prototype hiện tại.",
         )
-
     return (
         "THẤP",
         "Chưa ghi nhận nhiều yếu tố nguy cơ qua bộ câu hỏi ban đầu.",
@@ -247,7 +359,6 @@ def google_geocode(address, api_key):
         return None
 
     url = "https://maps.googleapis.com/maps/api/geocode/json"
-
     params = {
         "address": address,
         "key": api_key,
@@ -256,34 +367,38 @@ def google_geocode(address, api_key):
     }
 
     try:
-        response = requests.get(
+        r = requests.get(
             url,
             params=params,
             timeout=12,
         )
-        response.raise_for_status()
+        r.raise_for_status()
+        data = r.json()
 
-        data = response.json()
-
-        if data.get("status") != "OK" or not data.get("results"):
+        if (
+            data.get("status") != "OK"
+            or not data.get("results")
+        ):
             return None
 
         result = data["results"][0]
         location = result["geometry"]["location"]
 
         components = {}
-
-        for component in result.get(
+        for comp in result.get(
             "address_components",
             [],
         ):
-            for component_type in component.get(
+            for comp_type in comp.get(
                 "types",
                 [],
             ):
                 components.setdefault(
-                    component_type,
-                    component.get("long_name", ""),
+                    comp_type,
+                    comp.get(
+                        "long_name",
+                        "",
+                    ),
                 )
 
         return {
@@ -291,8 +406,12 @@ def google_geocode(address, api_key):
                 "formatted_address",
                 address,
             ),
-            "lat": float(location["lat"]),
-            "lng": float(location["lng"]),
+            "lat": float(
+                location["lat"]
+            ),
+            "lng": float(
+                location["lng"]
+            ),
             "place_id": result.get(
                 "place_id",
                 "",
@@ -309,40 +428,46 @@ def google_geocode(address, api_key):
 # ============================================================
 
 @st.cache_data(ttl=86400)
-def google_elevation(lat, lng, api_key):
+def google_elevation(
+    lat,
+    lng,
+    api_key,
+):
     if not api_key:
         return None
 
     url = "https://maps.googleapis.com/maps/api/elevation/json"
-
     params = {
         "locations": f"{lat},{lng}",
         "key": api_key,
     }
 
     try:
-        response = requests.get(
+        r = requests.get(
             url,
             params=params,
             timeout=12,
         )
-        response.raise_for_status()
+        r.raise_for_status()
+        data = r.json()
 
-        data = response.json()
-
-        if data.get("status") != "OK" or not data.get(
-            "results"
+        if (
+            data.get("status") != "OK"
+            or not data.get("results")
         ):
             return None
 
-        result = data["results"][0]
+        item = data["results"][0]
 
         return {
             "elevation": float(
-                result["elevation"]
+                item["elevation"]
             ),
             "resolution": float(
-                result.get("resolution", 0)
+                item.get(
+                    "resolution",
+                    0,
+                )
             ),
         }
 
@@ -351,27 +476,19 @@ def google_elevation(lat, lng, api_key):
 
 
 # ============================================================
-# WHO 2024 — HIỆU CHỈNH HB THEO ĐỘ CAO
+# WHO 2024 — Hb ALTITUDE ADJUSTMENT
 # ============================================================
 
-def who_2024_hb_adjustment_g_dl(elevation_m):
-    """
-    WHO 2024:
-      adjustment (g/L) =
-          0.0056384 * elevation
-          + 0.0000003 * elevation^2
-
-    Hb adjusted = Hb observed - adjustment
-
-    1 g/dL = 10 g/L.
-    """
-
-    if elevation_m is None or elevation_m <= 0:
+def hb_altitude_adjustment(elevation_m):
+    if (
+        elevation_m is None
+        or elevation_m <= 0
+    ):
         return 0.0
 
     adjustment_g_l = (
         0.0056384 * elevation_m
-        + 0.0000003 * (elevation_m ** 2)
+        + 0.0000003 * elevation_m**2
     )
 
     return adjustment_g_l / 10.0
@@ -380,30 +497,24 @@ def who_2024_hb_adjustment_g_dl(elevation_m):
 def altitude_band(elevation_m):
     if elevation_m is None:
         return "Chưa xác định"
-
     if elevation_m < 500:
         return "<500 m"
-
     if elevation_m < 1000:
         return "500–999 m"
-
     if elevation_m < 1500:
         return "1.000–1.499 m"
-
     if elevation_m < 2000:
         return "1.500–1.999 m"
-
     if elevation_m < 2500:
         return "2.000–2.499 m"
-
     return "≥2.500 m"
 
 
 # ============================================================
-# VÒNG 2 — CBC
+# ROUND 2 CBC
 # ============================================================
 
-def calculate_round2_score(
+def round2_score(
     mcv,
     mch,
     rbc,
@@ -414,28 +525,42 @@ def calculate_round2_score(
 
     if mcv < 70:
         score += 3
-        reasons.append("MCV rất thấp (<70 fL)")
+        reasons.append(
+            "MCV rất thấp (<70 fL)"
+        )
     elif mcv < 75:
         score += 2
-        reasons.append("MCV giảm rõ (70–74,9 fL)")
+        reasons.append(
+            "MCV giảm rõ (70–74,9 fL)"
+        )
     elif mcv < 80:
         score += 1
-        reasons.append("MCV giảm (75–79,9 fL)")
+        reasons.append(
+            "MCV giảm (75–79,9 fL)"
+        )
 
     if mch < 24:
         score += 2
-        reasons.append("MCH thấp (<24 pg)")
+        reasons.append(
+            "MCH thấp (<24 pg)"
+        )
     elif mch < 27:
         score += 1
-        reasons.append("MCH giảm (24–26,9 pg)")
+        reasons.append(
+            "MCH giảm (24–26,9 pg)"
+        )
 
     if mcv < 80:
         if rbc >= 5.5:
             score += 2
-            reasons.append("RBC tương đối cao khi MCV thấp")
+            reasons.append(
+                "RBC tương đối cao khi MCV thấp"
+            )
         elif rbc >= 5.0:
             score += 1
-            reasons.append("RBC tương đối cao khi MCV thấp")
+            reasons.append(
+                "RBC tương đối cao khi MCV thấp"
+            )
 
     mentzer = (
         mcv / rbc
@@ -443,24 +568,41 @@ def calculate_round2_score(
         else None
     )
 
-    if mentzer is not None and mcv < 80:
+    if (
+        mentzer is not None
+        and mcv < 80
+    ):
         if mentzer < 13:
             score += 2
-            reasons.append("Mentzer Index <13")
+            reasons.append(
+                "Mentzer Index <13"
+            )
         elif mentzer < 14:
             score += 1
-            reasons.append("Mentzer Index 13–13,9")
+            reasons.append(
+                "Mentzer Index 13–13,9"
+            )
 
     if rdw > 15:
         reasons.append(
             "RDW tăng — cần lưu ý thiếu sắt/nguồn microcytosis khác"
         )
 
-    return score, mentzer, reasons
+    return (
+        score,
+        mentzer,
+        reasons,
+    )
 
 
-def round2_category(score, mcv):
-    if mcv >= 80 and score <= 2:
+def round2_category(
+    score,
+    mcv,
+):
+    if (
+        mcv >= 80
+        and score <= 2
+    ):
         return (
             "THẤP",
             "CBC hiện tại chưa cho thấy mẫu hình hồng cầu nhỏ rõ.",
@@ -469,21 +611,22 @@ def round2_category(score, mcv):
     if score <= 3:
         return (
             "THẤP",
-            "Nguy cơ sàng lọc từ CBC hiện tại thấp; không loại trừ hoàn toàn "
-            "Thalassemia.",
+            "Nguy cơ sàng lọc từ CBC hiện tại thấp; không loại trừ "
+            "hoàn toàn Thalassemia.",
         )
 
     if score <= 6:
         return (
             "TRUNG BÌNH",
-            "Có đặc điểm hồng cầu nhỏ/nhược sắc. Nên đánh giá tình trạng thiếu sắt "
-            "và các nguyên nhân khác.",
+            "Có đặc điểm hồng cầu nhỏ/nhược sắc. Nên đánh giá "
+            "tình trạng thiếu sắt và các nguyên nhân khác.",
         )
 
     if score <= 9:
         return (
             "CAO",
-            "Mẫu hình CBC gợi ý cần đánh giá hemoglobinopathy bằng HPLC/điện di Hb.",
+            "Mẫu hình CBC gợi ý cần đánh giá hemoglobinopathy "
+            "bằng HPLC/điện di Hb.",
         )
 
     return (
@@ -493,15 +636,21 @@ def round2_category(score, mcv):
 
 
 # ============================================================
-# GOOGLE PLACES NEW — CƠ SỞ Y TẾ
+# MEDICAL FACILITIES
 # ============================================================
 
 @st.cache_data(ttl=3600)
-def google_nearby_medical(lat, lng, api_key):
+def nearby_medical(
+    lat,
+    lng,
+    api_key,
+):
     if not api_key:
         return []
 
-    url = "https://places.googleapis.com/v1/places:searchNearby"
+    url = (
+        "https://places.googleapis.com/v1/places:searchNearby"
+    )
 
     headers = {
         "Content-Type": "application/json",
@@ -538,18 +687,17 @@ def google_nearby_medical(lat, lng, api_key):
     }
 
     try:
-        response = requests.post(
+        r = requests.post(
             url,
             headers=headers,
             json=payload,
             timeout=15,
         )
-        response.raise_for_status()
-
-        data = response.json()
-
-        return data.get("places", [])
-
+        r.raise_for_status()
+        return r.json().get(
+            "places",
+            [],
+        )
     except Exception:
         return []
 
@@ -560,7 +708,7 @@ def haversine_km(
     lat2,
     lon2,
 ):
-    earth_radius = 6371.0
+    earth = 6371.0
 
     p1 = math.radians(lat1)
     p2 = math.radians(lat2)
@@ -581,42 +729,40 @@ def haversine_km(
 
     return (
         2
-        * earth_radius
-        * math.asin(math.sqrt(a))
+        * earth
+        * math.asin(
+            math.sqrt(a)
+        )
     )
 
 
-def rank_medical_facilities(
+def rank_facilities(
     places,
     origin_lat,
     origin_lng,
 ):
-    candidates = []
+    result = []
 
     for place in places:
-        location = place.get(
+        loc = place.get(
             "location",
             {},
         )
 
-        lat2 = location.get(
+        lat = loc.get(
             "latitude"
         )
-        lng2 = location.get(
+        lng = loc.get(
             "longitude"
         )
 
-        if lat2 is None or lng2 is None:
+        if (
+            lat is None
+            or lng is None
+        ):
             continue
 
-        distance = haversine_km(
-            origin_lat,
-            origin_lng,
-            lat2,
-            lng2,
-        )
-
-        candidates.append(
+        result.append(
             {
                 "name": place.get(
                     "displayName",
@@ -629,7 +775,12 @@ def rank_medical_facilities(
                     "formattedAddress",
                     "Chưa có địa chỉ",
                 ),
-                "distance": distance,
+                "distance": haversine_km(
+                    origin_lat,
+                    origin_lng,
+                    lat,
+                    lng,
+                ),
                 "rating": place.get(
                     "rating"
                 ),
@@ -639,89 +790,176 @@ def rank_medical_facilities(
                 "maps_uri": place.get(
                     "googleMapsUri"
                 ),
-                "primary_type": place.get(
-                    "primaryType",
-                    "",
-                ),
             }
         )
 
-    # Ưu tiên gần trước; điểm đánh giá chỉ là thông tin phụ.
-    candidates.sort(
-        key=lambda item: item["distance"]
+    result.sort(
+        key=lambda x: x["distance"]
     )
 
-    return candidates[:5]
+    return result[:5]
 
 
 # ============================================================
-# ANEMIA CONTEXT
+# LOW RISK PANEL
 # ============================================================
 
-def anemia_interpretation(
-    hb_adjusted,
-    sex,
-    age_years,
-):
-    """
-    Chỉ dành cho diễn giải thiếu máu, không phải score Thalassemia.
-    Người >=15 tuổi, không mang thai:
-      nam <13 g/dL
-      nữ <12 g/dL
-    """
-
-    if age_years is None or age_years < 15:
-        return (
-            "Phiên bản hiện tại chưa tự động áp ngưỡng Hb người trưởng thành "
-            "cho trẻ <15 tuổi."
-        )
-
-    if sex == "Nam":
-        cutoff = 13.0
-    elif sex == "Nữ":
-        cutoff = 12.0
-    else:
-        return (
-            "Cần đánh giá ngưỡng Hb theo nhóm đối tượng cụ thể."
-        )
-
-    if hb_adjusted < cutoff:
-        return (
-            f"Hb sau hiệu chỉnh {hb_adjusted:.1f} g/dL thấp hơn "
-            f"ngưỡng {cutoff:.1f} g/dL đang sử dụng."
-        )
-
-    return (
-        f"Hb sau hiệu chỉnh {hb_adjusted:.1f} g/dL chưa thấp hơn "
-        f"ngưỡng {cutoff:.1f} g/dL đang sử dụng."
+def render_low_risk_panel():
+    st.success(
+        "🟢 **NGUY CƠ SÀNG LỌC BAN ĐẦU: THẤP**"
     )
 
+    st.markdown(
+        """
+### 📅 Theo dõi sức khỏe
+
+Hiện tại bộ câu hỏi chưa ghi nhận nhiều yếu tố nguy cơ rõ ràng.
+Bạn nên tiếp tục theo dõi tình trạng sức khỏe và khám sức khỏe
+định kỳ theo hướng dẫn của cơ sở y tế.
+
+Trong **prototype**, hệ thống đặt một mốc nhắc xem xét lại sau
+khoảng **30 ngày**. Đây là chức năng theo dõi của ứng dụng, **không
+phải chỉ định bắt buộc rằng mọi người nguy cơ thấp phải khám hàng tháng**.
+
+### 🩸 Khi nào nên kiểm tra lại?
+
+Nếu trong thời gian theo dõi xuất hiện bất thường như mệt mỏi kéo dài,
+da/niêm nhợt, chóng mặt, vàng da/vàng mắt, hoặc đã có kết quả CBC
+bất thường, hãy đưa kết quả cho nhân viên y tế và có thể nhập CBC
+vào phần bên dưới để hệ thống **sàng lọc lại**, thay vì tự kết luận bệnh.
+"""
+    )
+
+    next_date = date.today() + timedelta(
+        days=FOLLOWUP_DAYS
+    )
+
+    st.info(
+        f"🗓️ **Mốc nhắc prototype:** "
+        f"{next_date.strftime('%d/%m/%Y')}"
+    )
+
+    with st.expander(
+        "🩸 Nhập CBC nếu lần xét nghiệm sau có bất thường",
+        expanded=False,
+    ):
+
+        st.caption(
+            "Phần này dành cho người Vòng 1 nguy cơ thấp nhưng sau đó "
+            "có CBC bất thường. Không dùng riêng CBC để chẩn đoán."
+        )
+
+        c1, c2, c3, c4 = st.columns(4)
+
+        with c1:
+            hb = st.number_input(
+                "Hb (g/dL)",
+                3.0,
+                25.0,
+                13.0,
+                0.1,
+                key="low_hb",
+            )
+
+        with c2:
+            mcv = st.number_input(
+                "MCV (fL)",
+                30.0,
+                150.0,
+                85.0,
+                0.1,
+                key="low_mcv",
+            )
+
+        with c3:
+            mch = st.number_input(
+                "MCH (pg)",
+                10.0,
+                50.0,
+                29.0,
+                0.1,
+                key="low_mch",
+            )
+
+        with c4:
+            rbc = st.number_input(
+                "RBC (T/L)",
+                1.0,
+                10.0,
+                4.8,
+                0.1,
+                key="low_rbc",
+            )
+
+        rdw = st.number_input(
+            "RDW-CV (%)",
+            5.0,
+            40.0,
+            13.0,
+            0.1,
+            key="low_rdw",
+        )
+
+        if st.button(
+            "🔎 XEM XÉT CBC",
+            key="low_cbc_review",
+        ):
+            if rbc <= 0:
+                st.error(
+                    "RBC phải lớn hơn 0."
+                )
+            else:
+                score, mentzer, reasons = (
+                    round2_score(
+                        mcv,
+                        mch,
+                        rbc,
+                        rdw,
+                    )
+                )
+
+                category, conclusion = (
+                    round2_category(
+                        score,
+                        mcv,
+                    )
+                )
+
+                st.metric(
+                    "Mentzer Index",
+                    f"{mentzer:.2f}",
+                )
+
+                if category == "THẤP":
+                    st.success(
+                        f"🟢 **CBC: {category}** — {conclusion}"
+                    )
+                elif category == "TRUNG BÌNH":
+                    st.warning(
+                        f"🟡 **CBC: {category}** — {conclusion}"
+                    )
+                else:
+                    st.error(
+                        f"🟠 **CBC: {category}** — {conclusion}"
+                    )
+
+                if reasons:
+                    for reason in reasons:
+                        st.write(
+                            f"• {reason}"
+                        )
+
 
 # ============================================================
-# WORD REPORT
+# WORD
 # ============================================================
 
-def create_word_report(
-    ho_ten,
-    ngay_sinh,
-    gioi_tinh,
-    round1_score,
-    round1_category_text,
-    round1_reasons,
-    dia_diem,
-    elevation,
-    hb,
-    hb_adjusted,
-    altitude_adjustment,
-    mcv,
-    mch,
-    rbc,
-    rdw,
-    mentzer,
-    round2_score,
-    round2_category_text,
-    round2_reasons,
-    conclusion,
+def create_word(
+    patient,
+    r1_score,
+    r1_category,
+    r1_reasons,
+    r2=None,
 ):
     doc = Document()
 
@@ -736,125 +974,144 @@ def create_word_report(
     )
 
     doc.add_paragraph(
-        "Đây là công cụ hỗ trợ sàng lọc. Kết quả không thay thế "
-        "chẩn đoán hoặc chỉ định của nhân viên y tế."
+        "Công cụ hỗ trợ sàng lọc. Không thay thế chẩn đoán "
+        "hoặc chỉ định của nhân viên y tế."
     )
 
     doc.add_heading(
-        "I. Thông tin hành chính",
+        "I. THÔNG TIN NGƯỜI ĐƯỢC SÀNG LỌC",
         level=2,
     )
-    doc.add_paragraph(
-        f"Họ và tên: {ho_ten}"
-    )
-    doc.add_paragraph(
-        f"Ngày sinh: {ngay_sinh}"
-    )
-    doc.add_paragraph(
-        f"Giới tính: {gioi_tinh}"
-    )
+
+    fields = [
+        ("Họ và tên", patient["full_name"]),
+        ("Ngày sinh", patient["birth_date"]),
+        ("Tuổi", str(patient["age"])),
+        ("Giới tính", patient["gender"]),
+        ("Số điện thoại", patient["phone"]),
+        ("Nơi ở hiện tại", patient["current_address"]),
+        ("Tỉnh/thành phố", patient["province"]),
+        ("Quận/huyện/thị xã", patient["district"] or "—"),
+        ("Xã/phường/thị trấn", patient["commune"]),
+    ]
+
+    for label, value in fields:
+        doc.add_paragraph(
+            f"{label}: {value}"
+        )
 
     doc.add_heading(
-        "II. Vòng 1 — Sàng lọc bằng bộ câu hỏi",
+        "II. VÒNG 1 — BỘ 20 CÂU HỎI",
         level=2,
     )
+
     doc.add_paragraph(
-        f"Điểm Vòng 1: {round1_score}/{ROUND1_MAX_SCORE}"
-    )
-    doc.add_paragraph(
-        f"Mức nguy cơ: {round1_category_text}"
+        f"Điểm Vòng 1: {r1_score}/{ROUND1_MAX_SCORE}"
     )
 
-    if round1_reasons:
+    doc.add_paragraph(
+        f"Mức nguy cơ: {r1_category}"
+    )
+
+    if r1_reasons:
         doc.add_paragraph(
             "Các yếu tố đáng chú ý:"
         )
-        for reason in round1_reasons:
+        for item in r1_reasons:
             doc.add_paragraph(
-                f"- {reason}"
+                f"- {item}"
             )
 
-    doc.add_heading(
-        "III. Vòng 2 — CBC và vị trí cư trú",
-        level=2,
-    )
-
-    doc.add_paragraph(
-        f"Nơi cư trú được xác định: {dia_diem}"
-    )
-
-    if elevation is not None:
-        doc.add_paragraph(
-            f"Độ cao ước tính: {elevation:.0f} m"
+    if r2 is not None:
+        doc.add_heading(
+            "III. VÒNG 2 — CBC + ĐỘ CAO",
+            level=2,
         )
+
+        doc.add_paragraph(
+            f"Địa điểm Google xác định: {r2['geo_address']}"
+        )
+
+        if r2["elevation"] is not None:
+            doc.add_paragraph(
+                f"Độ cao: {r2['elevation']:.0f} m"
+            )
+
+        doc.add_paragraph(
+            f"Hb thực đo: {r2['hb']:.1f} g/dL"
+        )
+
+        doc.add_paragraph(
+            f"Hiệu chỉnh Hb: -{r2['adjustment']:.2f} g/dL"
+        )
+
+        doc.add_paragraph(
+            f"Hb sau hiệu chỉnh: {r2['hb_adjusted']:.1f} g/dL"
+        )
+
+        doc.add_paragraph(
+            f"MCV: {r2['mcv']:.1f} fL"
+        )
+
+        doc.add_paragraph(
+            f"MCH: {r2['mch']:.1f} pg"
+        )
+
+        doc.add_paragraph(
+            f"RBC: {r2['rbc']:.2f} T/L"
+        )
+
+        doc.add_paragraph(
+            f"RDW-CV: {r2['rdw']:.1f}%"
+        )
+
+        doc.add_paragraph(
+            f"Mentzer Index: {r2['mentzer']:.2f}"
+        )
+
+        doc.add_heading(
+            "IV. KẾT QUẢ VÒNG 2",
+            level=2,
+        )
+
+        doc.add_paragraph(
+            f"Điểm CBC prototype: {r2['score']}"
+        )
+
+        doc.add_paragraph(
+            f"Mức nguy cơ: {r2['category']}"
+        )
+
+        doc.add_paragraph(
+            f"Nhận định: {r2['conclusion']}"
+        )
+
     else:
-        doc.add_paragraph(
-            "Độ cao: chưa xác định"
+        doc.add_heading(
+            "III. THEO DÕI",
+            level=2,
         )
 
-    doc.add_paragraph(
-        f"Hb thực đo: {hb:.1f} g/dL"
-    )
-    doc.add_paragraph(
-        f"Hiệu chỉnh Hb theo độ cao: "
-        f"-{altitude_adjustment:.2f} g/dL"
-    )
-    doc.add_paragraph(
-        f"Hb sau hiệu chỉnh: "
-        f"{hb_adjusted:.1f} g/dL"
-    )
-
-    doc.add_paragraph(
-        f"MCV: {mcv:.1f} fL"
-    )
-    doc.add_paragraph(
-        f"MCH: {mch:.1f} pg"
-    )
-    doc.add_paragraph(
-        f"RBC: {rbc:.2f} T/L"
-    )
-    doc.add_paragraph(
-        f"RDW-CV: {rdw:.1f}%"
-    )
-    doc.add_paragraph(
-        f"Mentzer Index: {mentzer:.2f}"
-    )
+        doc.add_paragraph(
+            "Kết quả Vòng 1 chưa mở Vòng 2. "
+            "Theo dõi sức khỏe và đánh giá lại nếu xuất hiện "
+            "triệu chứng hoặc CBC bất thường."
+        )
 
     doc.add_heading(
-        "IV. Kết quả Vòng 2",
+        "V. LƯU Ý",
         level=2,
     )
-    doc.add_paragraph(
-        f"Điểm CBC prototype: {round2_score}"
-    )
-    doc.add_paragraph(
-        f"Mức nguy cơ Vòng 2: {round2_category_text}"
-    )
-
-    if round2_reasons:
-        for reason in round2_reasons:
-            doc.add_paragraph(
-                f"- {reason}"
-            )
 
     doc.add_paragraph(
-        f"Nhận định: {conclusion}"
+        "Điểm số trong prototype chưa được validation trên "
+        "quần thể người Việt Nam."
     )
 
-    doc.add_heading(
-        "V. Khuyến nghị",
-        level=2,
-    )
-    doc.add_paragraph(
-        "Tùy kết quả sàng lọc, có thể cân nhắc Ferritin/đánh giá sắt, "
-        "HPLC hoặc điện di hemoglobin và xét nghiệm phân tử theo chỉ định."
-    )
-
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-
-    return buffer
+    output = io.BytesIO()
+    doc.save(output)
+    output.seek(0)
+    return output
 
 
 # ============================================================
@@ -866,70 +1123,280 @@ st.title(
 )
 
 st.write(
-    "Mục tiêu: sàng lọc ban đầu tại tuyến cơ sở, "
-    "chỉ chuyển sang đánh giá CBC chuyên sâu khi Vòng 1 "
-    "xác định nguy cơ cao, sau đó hỗ trợ điều hướng tới "
-    "cơ sở y tế phù hợp gần nơi cư trú."
+    "Hồ sơ bệnh nhân → Vòng 1 gồm 20 câu hỏi → "
+    "chỉ nguy cơ cao mới mở Vòng 2 → CBC + độ cao → "
+    "đánh giá và gợi ý cơ sở y tế."
 )
 
 with st.expander(
-    "ℹ️ Lưu ý về bản chất của hệ thống",
+    "ℹ️ Nguyên tắc",
     expanded=False,
 ):
     st.write(
-        "Hệ thống là prototype nghiên cứu và không được dùng để "
-        "khẳng định người bệnh có hoặc không có Thalassemia."
+        "Mục tiêu là hỗ trợ sàng lọc ban đầu tại tuyến cơ sở, "
+        "đặc biệt cho người ở khu vực khó tiếp cận xét nghiệm chuyên sâu."
     )
     st.write(
-        "Risk score cần được validation trên dữ liệu người Việt Nam "
-        "trước khi sử dụng trong nghiên cứu lâm sàng."
+        "Risk score là prototype nghiên cứu, chưa được validation "
+        "và không dùng để tự chẩn đoán."
     )
+
 
 # ============================================================
 # SIDEBAR
 # ============================================================
 
 with st.sidebar:
-    st.header("⚙️ Trạng thái hệ thống")
+    st.header("⚙️ Hệ thống")
 
     if GOOGLE_API_KEY:
         st.success(
-            "Google Maps API đã được cấu hình."
+            "Google Maps API: đã cấu hình"
         )
     else:
         st.warning(
-            "Chưa cấu hình Google Maps API. "
-            "Bạn vẫn có thể chạy Vòng 1 và nhập CBC ở Vòng 2, "
-            "nhưng không tự động lấy được độ cao/cơ sở y tế."
+            "Google Maps API: chưa cấu hình"
         )
 
     st.divider()
 
     st.write(
-        "**Luồng:**\n\n"
-        "Vòng 1 → nguy cơ cao → Vòng 2 → CBC + độ cao → "
-        "phân tầng → cơ sở y tế"
+        "👤 Hồ sơ\n"
+        "↓\n"
+        "🟦 Vòng 1 — 20 câu\n"
+        "↓\n"
+        "🔴 Nguy cơ cao?\n"
+        "↓\n"
+        "🟧 Vòng 2 — CBC + độ cao\n"
+        "↓\n"
+        "🏥 Cơ sở y tế"
     )
 
 
 # ============================================================
-# VÒNG 1
+# PATIENT PROFILE
 # ============================================================
 
 st.header(
-    "🟦 VÒNG 1 — BỘ CÂU HỎI SÀNG LỌC BAN ĐẦU"
+    "👤 THÔNG TIN NGƯỜI ĐƯỢC SÀNG LỌC"
+)
+
+st.write(
+    "Thông tin bệnh nhân được nhập trước khi bắt đầu Vòng 1. "
+    "Số điện thoại là mã hồ sơ duy nhất."
+)
+
+with st.container(border=True):
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        full_name = st.text_input(
+            "Họ và tên *",
+            placeholder="Nguyễn Văn A",
+        )
+
+        birth_date = st.date_input(
+            "Ngày sinh *",
+            value=date(
+                2000,
+                1,
+                1,
+            ),
+            min_value=date(
+                1900,
+                1,
+                1,
+            ),
+            max_value=date.today(),
+            format="DD/MM/YYYY",
+        )
+
+    with c2:
+        phone_raw = st.text_input(
+            "Số điện thoại *",
+            placeholder="09xxxxxxxx",
+            help=(
+                "Mỗi số điện thoại chỉ có một hồ sơ. "
+                "Nhập lại số này sẽ cập nhật bằng thông tin mới nhất."
+            ),
+        )
+
+        gender = st.selectbox(
+            "Giới tính *",
+            [
+                "Nam",
+                "Nữ",
+                "Khác",
+            ],
+        )
+
+    with c3:
+        current_address = st.text_input(
+            "Nơi ở hiện tại *",
+            placeholder="Thôn/tổ, đường...",
+        )
+
+        province = st.text_input(
+            "Tỉnh / thành phố *",
+            placeholder="Ví dụ: Đà Nẵng",
+        )
+
+    c4, c5 = st.columns(2)
+
+    with c4:
+        district = st.text_input(
+            "Quận / huyện / thị xã",
+            placeholder="Ví dụ: Hòa Vang",
+        )
+
+    with c5:
+        commune = st.text_input(
+            "Xã / phường / thị trấn *",
+            placeholder="Ví dụ: Hòa Phong",
+        )
+
+
+phone = normalize_phone(phone_raw)
+
+if phone and valid_vn_phone(phone):
+
+    if patient_exists(phone):
+        st.warning(
+            "📌 **Số điện thoại này đã tồn tại.** "
+            "Khi lưu, hồ sơ sẽ được cập nhật và **lần nhập sau cùng "
+            "sẽ ghi đè thông tin cũ**."
+        )
+
+if st.button(
+    "💾 LƯU / CẬP NHẬT HỒ SƠ",
+    type="secondary",
+):
+
+    if not full_name.strip():
+        st.error(
+            "Vui lòng nhập họ và tên."
+        )
+
+    elif not valid_vn_phone(phone):
+        st.error(
+            "Số điện thoại phải là số Việt Nam 10 chữ số, "
+            "ví dụ 09xxxxxxxx."
+        )
+
+    elif not current_address.strip():
+        st.error(
+            "Vui lòng nhập nơi ở hiện tại."
+        )
+
+    elif not province.strip():
+        st.error(
+            "Vui lòng nhập tỉnh/thành phố."
+        )
+
+    elif not commune.strip():
+        st.error(
+            "Vui lòng nhập xã/phường/thị trấn."
+        )
+
+    else:
+
+        profile = {
+            "phone": phone,
+            "full_name": full_name.strip(),
+            "birth_date": birth_date.isoformat(),
+            "gender": gender,
+            "current_address": current_address.strip(),
+            "province": province.strip(),
+            "district": district.strip(),
+            "commune": commune.strip(),
+        }
+
+        action = upsert_patient(
+            profile
+        )
+
+        st.session_state[
+            "patient_profile"
+        ] = profile
+
+        st.session_state[
+            "patient_age"
+        ] = calculate_age(
+            birth_date
+        )
+
+        # Reset results because profile has changed.
+        for key in list(
+            st.session_state.keys()
+        ):
+            if (
+                key.startswith("round1_")
+                or key.startswith("round2_")
+                or key.startswith("location_")
+                or key.startswith("medical_")
+            ):
+                del st.session_state[key]
+
+        st.session_state[
+            "profile_saved"
+        ] = True
+
+        if action == "updated":
+            st.success(
+                "✅ Hồ sơ đã được **cập nhật bằng lần nhập sau cùng**. "
+                "Số điện thoại vẫn chỉ tương ứng với một hồ sơ."
+            )
+        else:
+            st.success(
+                "✅ Đã tạo hồ sơ bệnh nhân."
+            )
+
+
+patient = st.session_state.get(
+    "patient_profile"
+)
+
+if not patient:
+    st.info(
+        "👆 Hãy lưu hồ sơ bệnh nhân trước khi bắt đầu Vòng 1."
+    )
+    st.stop()
+
+patient_age = calculate_age(
+    date.fromisoformat(
+        patient["birth_date"]
+    )
+)
+
+st.success(
+    f"✅ Hồ sơ đang xử lý: **{patient['full_name']}** · "
+    f"{patient_age} tuổi · {patient['phone']} · "
+    f"{patient['commune']}, {patient['province']}"
+)
+
+
+# ============================================================
+# ROUND 1
+# ============================================================
+
+st.divider()
+
+st.header(
+    "🟦 VÒNG 1 — 20 CÂU HỎI SÀNG LỌC BAN ĐẦU"
 )
 
 st.info(
-    "Vòng 1 **không yêu cầu CBC**. Người dùng trả lời bộ câu hỏi trước. "
-    "Chỉ khi đạt ngưỡng nguy cơ cao, Vòng 2 mới xuất hiện."
+    "Vòng 1 chưa yêu cầu CBC. Câu 19–20 chỉ nhằm đánh giá "
+    "khả năng tiếp cận xét nghiệm và **không được cộng vào điểm nguy cơ**."
 )
 
-# ------------------------------------------------------------
-# A. GIA ĐÌNH
-# ------------------------------------------------------------
+# -------------------------
+# A
+# -------------------------
 
 with st.container(border=True):
+
     st.subheader(
         "A. Tiền sử gia đình"
     )
@@ -937,34 +1404,40 @@ with st.container(border=True):
     q1 = st.radio(
         "1. Trong gia đình/dòng họ có người từng được chẩn đoán Thalassemia không?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q2 = st.radio(
         "2. Trong gia đình/dòng họ có người từng được thông báo mang gen Thalassemia/hemoglobinopathy không?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q3 = st.radio(
         "3. Cha hoặc mẹ bạn có từng được xét nghiệm Thalassemia/hemoglobinopathy không?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q4 = st.radio(
-        "4. Anh/chị/em ruột của bạn có từng được chẩn đoán thiếu máu hoặc hồng cầu nhỏ không?",
+        "4. Anh/chị/em ruột có từng được chẩn đoán thiếu máu hoặc hồng cầu nhỏ không?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q5 = st.radio(
-        "5. Gia đình có trẻ từng phải truyền máu nhiều lần hoặc định kỳ không?",
+        "5. Gia đình có trẻ từng phải truyền máu nhiều lần hoặc truyền máu định kỳ không?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
 
-# ------------------------------------------------------------
-# B. BẢN THÂN
-# ------------------------------------------------------------
+# -------------------------
+# B
+# -------------------------
 
 with st.container(border=True):
+
     st.subheader(
         "B. Tiền sử bản thân"
     )
@@ -972,16 +1445,19 @@ with st.container(border=True):
     q6 = st.radio(
         "6. Bạn từng được nhân viên y tế thông báo bị thiếu máu chưa?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q7 = st.radio(
         "7. Bạn từng được thông báo MCV thấp/hồng cầu nhỏ chưa?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q8 = st.radio(
         "8. Bạn từng được thông báo MCH thấp/hồng cầu nhược sắc chưa?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q9 = st.selectbox(
@@ -998,64 +1474,75 @@ with st.container(border=True):
     q10 = st.radio(
         "10. Bạn từng được chẩn đoán HbE hoặc một hemoglobinopathy khác chưa?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q11 = st.radio(
         "11. Bản thân bạn từng truyền máu nhiều lần hoặc truyền máu định kỳ chưa?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q12 = st.radio(
         "12. Bạn có tiền sử thiếu máu kéo dài từ nhỏ hoặc từ tuổi thiếu niên không?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
 
-# ------------------------------------------------------------
-# C. DẤU HIỆU HỖ TRỢ
-# ------------------------------------------------------------
+# -------------------------
+# C
+# -------------------------
 
 with st.container(border=True):
+
     st.subheader(
-        "C. Dấu hiệu và tiền sử lâm sàng hỗ trợ"
+        "C. Dấu hiệu hỗ trợ"
     )
 
     q13 = st.radio(
         "13. Bạn có thường xuyên mệt mỏi hoặc giảm khả năng hoạt động không?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q14 = st.radio(
         "14. Bạn có thường xuyên hoa mắt/chóng mặt không rõ nguyên nhân không?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q15 = st.radio(
         "15. Bạn từng được nhận xét da hoặc niêm mạc nhợt hơn bình thường chưa?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q16 = st.radio(
         "16. Bạn từng có vàng da/vàng mắt không rõ nguyên nhân chưa?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q17 = st.radio(
         "17. Bạn từng được bác sĩ ghi nhận lách to hoặc gan lách to chưa?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q18 = st.radio(
         "18. Bạn từng được bác sĩ lưu ý có biến chứng liên quan bệnh huyết học mạn chưa?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
 
-# ------------------------------------------------------------
-# D. TIẾP CẬN XÉT NGHIỆM — KHÔNG CỘNG ĐIỂM
-# ------------------------------------------------------------
+# -------------------------
+# D — ACCESS, ZERO SCORE
+# -------------------------
 
 with st.container(border=True):
+
     st.subheader(
         "D. Khả năng tiếp cận xét nghiệm"
     )
@@ -1063,21 +1550,23 @@ with st.container(border=True):
     q19 = st.radio(
         "19. Bạn hiện có kết quả CBC trong vòng 6–12 tháng gần đây không?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
     q20 = st.radio(
-        "20. Bạn có gặp khó khăn khi đi đến cơ sở có xét nghiệm chuyên sâu "
+        "20. Bạn có gặp khó khăn khi đến cơ sở có xét nghiệm chuyên sâu "
         "do khoảng cách, chi phí hoặc thời gian di chuyển không?",
         ["Không", "Có", "Không biết"],
+        horizontal=True,
     )
 
-    st.caption(
-        "Câu 19–20 không được cộng vào nguy cơ Thalassemia. "
-        "Chúng phục vụ bước điều hướng và tiếp cận y tế."
+    st.info(
+        "ℹ️ **Q19 và Q20 = 0 điểm.** "
+        "Hai câu này không phản ánh nguy cơ mắc Thalassemia. "
+        "Chúng chỉ giúp hệ thống hiểu khả năng tiếp cận y tế để hỗ trợ "
+        "điều hướng ở các bước sau."
     )
 
-
-st.divider()
 
 if st.button(
     "🔎 ĐÁNH GIÁ VÒNG 1",
@@ -1108,147 +1597,135 @@ if st.button(
         "q20": q20,
     }
 
-    score1, reasons1 = (
-        calculate_round1_score(
-            answers
-        )
+    score, reasons = round1_score(
+        answers
     )
 
-    category1, conclusion1 = (
-        round1_category(
-            score1
-        )
+    category, conclusion = round1_category(
+        score
     )
 
     st.session_state[
         "round1_score"
-    ] = score1
+    ] = score
 
     st.session_state[
         "round1_reasons"
-    ] = reasons1
+    ] = reasons
 
     st.session_state[
         "round1_category"
-    ] = category1
+    ] = category
 
     st.session_state[
         "round1_conclusion"
-    ] = conclusion1
+    ] = conclusion
 
-    # Tính lại Vòng 1 -> xóa toàn bộ Vòng 2 cũ.
+    st.session_state[
+        "round1_completed"
+    ] = True
+
     reset_round2()
 
 
 # ============================================================
-# KẾT QUẢ VÒNG 1
+# ROUND 1 RESULT
 # ============================================================
 
-if "round1_score" in st.session_state:
+if st.session_state.get(
+    "round1_completed",
+    False,
+):
 
     st.subheader(
         "📋 KẾT QUẢ VÒNG 1"
     )
 
-    score1 = st.session_state[
+    score = st.session_state[
         "round1_score"
     ]
-    category1 = st.session_state[
+
+    category = st.session_state[
         "round1_category"
     ]
-    conclusion1 = st.session_state[
+
+    conclusion = st.session_state[
         "round1_conclusion"
     ]
-    reasons1 = st.session_state[
+
+    reasons = st.session_state[
         "round1_reasons"
     ]
 
-    a1, a2 = st.columns(2)
+    m1, m2 = st.columns(2)
 
-    with a1:
+    with m1:
         st.metric(
             "Điểm Vòng 1",
-            f"{score1}/{ROUND1_MAX_SCORE}",
+            f"{score}/{ROUND1_MAX_SCORE}",
         )
 
-    with a2:
+    with m2:
         st.metric(
             "Ngưỡng mở Vòng 2",
-            f"≥{ROUND1_HIGH_THRESHOLD}",
+            f"≥ {ROUND1_HIGH_THRESHOLD}",
         )
 
-    if category1 == "CAO":
+    if category == "CAO":
 
         st.error(
             f"🔴 **NGUY CƠ VÒNG 1: CAO**\n\n"
-            f"{conclusion1}"
+            f"{conclusion}"
         )
 
-        if reasons1:
+        if reasons:
             with st.expander(
                 "🔎 Các yếu tố đáng chú ý",
                 expanded=True,
             ):
-                for reason in reasons1:
+                for reason in reasons:
                     st.write(
                         f"• {reason}"
                     )
-
-        st.success(
-            "✅ Vòng 2 đã được mở. "
-            "Bây giờ mới cần nhập địa điểm cư trú và CBC."
-        )
 
         st.session_state[
             "round2_unlocked"
         ] = True
 
-    elif category1 == "TRUNG BÌNH":
+        st.success(
+            "✅ **Vòng 2 đã được mở.** "
+            "Bây giờ mới cần thực hiện đánh giá CBC và vị trí cư trú."
+        )
+
+    elif category == "TRUNG BÌNH":
 
         st.warning(
             f"🟡 **NGUY CƠ VÒNG 1: TRUNG BÌNH**\n\n"
-            f"{conclusion1}"
+            f"{conclusion}"
         )
 
-        if reasons1:
+        if reasons:
             with st.expander(
                 "🔎 Các yếu tố đáng chú ý",
                 expanded=False,
             ):
-                for reason in reasons1:
+                for reason in reasons:
                     st.write(
                         f"• {reason}"
                     )
 
         st.info(
-            "Prototype hiện tại chưa tự động mở Vòng 2 "
-            "ở mức nguy cơ trung bình."
+            "Prototype chưa tự động mở Vòng 2 ở mức trung bình. "
+            "Nhân viên y tế có thể cân nhắc đánh giá thêm tùy trường hợp."
         )
 
     else:
 
-        st.success(
-            f"🟢 **NGUY CƠ VÒNG 1: THẤP**\n\n"
-            f"{conclusion1}"
-        )
-
-        if reasons1:
-            with st.expander(
-                "🔎 Các yếu tố đáng chú ý",
-                expanded=False,
-            ):
-                for reason in reasons1:
-                    st.write(
-                        f"• {reason}"
-                    )
-
-        st.info(
-            "Chưa cần chuyển sang Vòng 2 trong prototype."
-        )
+        render_low_risk_panel()
 
 
 # ============================================================
-# VÒNG 2 — CHỈ CHẠY KHI VÒNG 1 CAO
+# ROUND 2
 # ============================================================
 
 if st.session_state.get(
@@ -1259,146 +1736,108 @@ if st.session_state.get(
     st.divider()
 
     st.header(
-        "🟧 VÒNG 2 — CBC + ĐỊA ĐIỂM + ĐỘ CAO"
+        "🟧 VÒNG 2 — THÔNG SỐ HUYẾT HỌC + ĐỘ CAO"
     )
 
     st.info(
-        "Vòng 2 chỉ xuất hiện sau khi Vòng 1 đạt ngưỡng nguy cơ cao."
+        "Vòng 2 chỉ mở sau khi Vòng 1 đạt ngưỡng nguy cơ cao."
     )
 
     # --------------------------------------------------------
-    # 1. THÔNG TIN
+    # PATIENT SUMMARY
     # --------------------------------------------------------
 
     with st.container(border=True):
 
         st.subheader(
-            "1. Thông tin người được sàng lọc"
+            "1. Hồ sơ bệnh nhân"
         )
 
-        c1, c2, c3 = st.columns(3)
+        info1, info2, info3 = st.columns(3)
 
-        with c1:
-            ho_ten = st.text_input(
-                "Họ và tên",
-                value="Nguyễn Văn A",
+        with info1:
+            st.write(
+                f"**Họ và tên:** {patient['full_name']}"
+            )
+            st.write(
+                f"**Tuổi:** {patient_age}"
             )
 
-        with c2:
-            ngay_sinh = st.date_input(
-                "Ngày sinh",
-                value=date(
-                    2000,
-                    1,
-                    1,
-                ),
-                min_value=date(
-                    1900,
-                    1,
-                    1,
-                ),
-                max_value=date.today(),
-                format="DD/MM/YYYY",
+        with info2:
+            st.write(
+                f"**Số điện thoại:** {patient['phone']}"
+            )
+            st.write(
+                f"**Giới tính:** {patient['gender']}"
             )
 
-        with c3:
-            gioi_tinh = st.selectbox(
-                "Giới tính",
-                ["Nam", "Nữ", "Khác"],
+        with info3:
+            st.write(
+                f"**Xã/phường:** {patient['commune']}"
+            )
+            st.write(
+                f"**Tỉnh/thành:** {patient['province']}"
             )
 
     # --------------------------------------------------------
-    # 2. ĐỊA ĐIỂM
+    # LOCATION
     # --------------------------------------------------------
 
     with st.container(border=True):
 
         st.subheader(
-            "2. Chọn nơi đang sinh sống"
+            "2. Phân tích vị trí cư trú và độ cao"
         )
 
         st.write(
-            "Người dùng chọn **xã/phường/thị trấn + huyện/quận + tỉnh/thành**. "
-            "Hệ thống tự xác định tọa độ và độ cao địa hình."
+            "Hệ thống sử dụng địa chỉ trong hồ sơ bệnh nhân để xác định "
+            "tọa độ. Sau đó lấy độ cao địa hình từ tọa độ; người dùng "
+            "không cần tự biết độ cao nơi mình sống."
         )
 
-        loc1, loc2 = st.columns(2)
+        location_query = ", ".join(
+            part
+            for part in [
+                patient["current_address"],
+                patient["commune"],
+                patient["district"],
+                patient["province"],
+                "Việt Nam",
+            ]
+            if part
+        )
 
-        with loc1:
-            tinh = st.text_input(
-                "Tỉnh / thành phố",
-                value="Đà Nẵng",
-            )
-
-            huyen = st.text_input(
-                "Huyện / quận / thị xã",
-                value="",
-            )
-
-        with loc2:
-            xa = st.text_input(
-                "Xã / phường / thị trấn",
-                value="",
-            )
-
-            dia_chi_bo_sung = st.text_input(
-                "Địa chỉ bổ sung (nếu cần)",
-                value="",
-            )
+        st.caption(
+            f"🔎 Truy vấn vị trí: {location_query}"
+        )
 
         if st.button(
-            "📍 XÁC ĐỊNH XÃ + TỌA ĐỘ + ĐỘ CAO",
+            "📍 PHÂN TÍCH XÃ/PHƯỜNG → TỌA ĐỘ → ĐỘ CAO",
             type="secondary",
         ):
 
             if not GOOGLE_API_KEY:
+
                 st.error(
-                    "Chưa cấu hình GOOGLE_MAPS_API_KEY."
+                    "Chưa cấu hình Google Maps API key."
                 )
+
             else:
 
-                parts = []
-
-                if dia_chi_bo_sung.strip():
-                    parts.append(
-                        dia_chi_bo_sung.strip()
-                    )
-
-                if xa.strip():
-                    parts.append(
-                        xa.strip()
-                    )
-
-                if huyen.strip():
-                    parts.append(
-                        huyen.strip()
-                    )
-
-                if tinh.strip():
-                    parts.append(
-                        tinh.strip()
-                    )
-
-                parts.append(
-                    "Việt Nam"
-                )
-
-                query = ", ".join(
-                    parts
-                )
-
                 geo = google_geocode(
-                    query,
+                    location_query,
                     GOOGLE_API_KEY,
                 )
 
                 if not geo:
+
                     st.error(
                         "Không xác định được địa điểm. "
-                        "Hãy nhập rõ xã/phường + huyện/quận + tỉnh/thành."
+                        "Hãy kiểm tra lại xã/phường, huyện và tỉnh."
                     )
 
                 else:
+
                     elev = google_elevation(
                         geo["lat"],
                         geo["lng"],
@@ -1406,113 +1845,113 @@ if st.session_state.get(
                     )
 
                     st.session_state[
-                        "geo"
+                        "location_geo"
                     ] = geo
 
                     if elev:
+
                         st.session_state[
-                            "elevation"
+                            "location_elevation"
                         ] = elev[
                             "elevation"
                         ]
 
                         st.session_state[
-                            "elevation_resolution"
+                            "location_resolution"
                         ] = elev[
                             "resolution"
                         ]
 
                     else:
+
                         st.session_state[
-                            "elevation"
+                            "location_elevation"
                         ] = None
 
                         st.session_state[
-                            "elevation_resolution"
+                            "location_resolution"
                         ] = None
 
         geo = st.session_state.get(
-            "geo"
+            "location_geo"
         )
 
         elevation = st.session_state.get(
-            "elevation"
+            "location_elevation"
         )
 
-        elevation_resolution = (
-            st.session_state.get(
-                "elevation_resolution"
-            )
+        resolution = st.session_state.get(
+            "location_resolution"
         )
 
         if geo:
 
             st.success(
-                f"📍 **Địa điểm:** "
+                f"📍 **Google xác định:** "
                 f"{geo['formatted_address']}"
             )
 
-            g1, g2 = st.columns(2)
+            a, b, c = st.columns(3)
 
-            with g1:
+            with a:
                 st.metric(
-                    "Vĩ độ",
+                    "Latitude",
                     f"{geo['lat']:.6f}",
                 )
 
-            with g2:
+            with b:
                 st.metric(
-                    "Kinh độ",
+                    "Longitude",
                     f"{geo['lng']:.6f}",
                 )
+
+            with c:
+                if elevation is not None:
+                    st.metric(
+                        "Độ cao",
+                        f"{elevation:.0f} m",
+                    )
+                else:
+                    st.metric(
+                        "Độ cao",
+                        "Chưa có",
+                    )
 
             if elevation is not None:
 
                 adjustment = (
-                    who_2024_hb_adjustment_g_dl(
+                    hb_altitude_adjustment(
                         elevation
                     )
                 )
 
                 st.info(
-                    f"⛰️ **Độ cao:** "
-                    f"{elevation:.0f} m\n\n"
+                    f"⛰️ **Phân tầng độ cao:** "
+                    f"{altitude_band(elevation)}\n\n"
                     f"📐 **Hiệu chỉnh Hb dự kiến:** "
-                    f"-{adjustment:.2f} g/dL\n\n"
-                    f"📊 **Phân tầng độ cao:** "
-                    f"{altitude_band(elevation)}"
+                    f"-{adjustment:.2f} g/dL"
                 )
 
-                if elevation_resolution:
+                if resolution:
                     st.caption(
-                        f"Resolution dữ liệu địa hình: "
-                        f"{elevation_resolution:.0f} m."
+                        f"Độ phân giải dữ liệu elevation: "
+                        f"{resolution:.0f} m."
                     )
 
                 if elevation >= 2500:
                     st.warning(
-                        "Độ cao ≥2.500 m: cần thận trọng khi diễn giải Hb. "
-                        "WHO lưu ý mức độ không chắc chắn cao hơn ở độ cao lớn."
+                        "Độ cao ≥2.500 m: cần thận trọng khi áp dụng "
+                        "hiệu chỉnh Hb trong phiên bản nghiên cứu chính thức."
                     )
 
-                st.caption(
-                    "Độ cao được lấy tự động từ tọa độ địa điểm; "
-                    "người dùng không cần tự nhập độ cao."
-                )
-
-            else:
-                st.warning(
-                    "Đã xác định địa điểm nhưng chưa lấy được độ cao."
-                )
-
     # --------------------------------------------------------
-    # 3. CBC
+    # CBC
     # --------------------------------------------------------
 
     with st.container(border=True):
 
         st.subheader(
-            "3. Nhập chỉ số CBC"
+            "3. Công thức máu (CBC)"
         )
 
         b1, b2, b3, b4, b5 = st.columns(5)
@@ -1520,55 +1959,50 @@ if st.session_state.get(
         with b1:
             hb = st.number_input(
                 "Hb (g/dL)",
-                min_value=3.0,
-                max_value=25.0,
-                value=13.0,
-                step=0.1,
+                3.0,
+                25.0,
+                13.0,
+                0.1,
             )
 
         with b2:
             mcv = st.number_input(
                 "MCV (fL)",
-                min_value=30.0,
-                max_value=150.0,
-                value=85.0,
-                step=0.1,
+                30.0,
+                150.0,
+                85.0,
+                0.1,
             )
 
         with b3:
             mch = st.number_input(
                 "MCH (pg)",
-                min_value=10.0,
-                max_value=50.0,
-                value=29.0,
-                step=0.1,
+                10.0,
+                50.0,
+                29.0,
+                0.1,
             )
 
         with b4:
             rbc = st.number_input(
                 "RBC (T/L)",
-                min_value=1.0,
-                max_value=10.0,
-                value=4.8,
-                step=0.1,
+                1.0,
+                10.0,
+                4.8,
+                0.1,
             )
 
         with b5:
             rdw = st.number_input(
                 "RDW-CV (%)",
-                min_value=5.0,
-                max_value=40.0,
-                value=13.0,
-                step=0.1,
+                5.0,
+                40.0,
+                13.0,
+                0.1,
             )
 
-        st.caption(
-            "CBC là dữ liệu đầu vào quan trọng của Vòng 2. "
-            "MCH/RDW được dùng hỗ trợ diễn giải, không dùng đơn độc để chẩn đoán."
-        )
-
     # --------------------------------------------------------
-    # 4. ANALYSIS
+    # ANALYZE ROUND 2
     # --------------------------------------------------------
 
     if st.button(
@@ -1581,186 +2015,179 @@ if st.session_state.get(
             st.error(
                 "RBC phải lớn hơn 0."
             )
-            st.stop()
+        else:
 
-        elevation = st.session_state.get(
-            "elevation"
-        )
-
-        if elevation is None:
-            altitude_adjustment = 0.0
-            hb_adjusted = hb
-
-            st.warning(
-                "Chưa lấy được độ cao; Hb giữ nguyên và không hiệu chỉnh."
+            elevation = st.session_state.get(
+                "location_elevation"
             )
 
-        else:
-            altitude_adjustment = (
-                who_2024_hb_adjustment_g_dl(
-                    elevation
+            if elevation is None:
+
+                adjustment = 0.0
+                hb_adjusted = hb
+
+                st.warning(
+                    "Chưa lấy được độ cao. Hb được giữ nguyên và không hiệu chỉnh."
+                )
+
+            else:
+
+                adjustment = (
+                    hb_altitude_adjustment(
+                        elevation
+                    )
+                )
+
+                hb_adjusted = (
+                    hb - adjustment
+                )
+
+            score2, mentzer, reasons2 = (
+                round2_score(
+                    mcv,
+                    mch,
+                    rbc,
+                    rdw,
                 )
             )
 
-            hb_adjusted = (
-                hb - altitude_adjustment
+            category2, conclusion2 = (
+                round2_category(
+                    score2,
+                    mcv,
+                )
             )
 
-        score2, mentzer, reasons2 = (
-            calculate_round2_score(
-                mcv=mcv,
-                mch=mch,
-                rbc=rbc,
-                rdw=rdw,
-            )
-        )
+            st.session_state[
+                "round2_score_value"
+            ] = score2
 
-        category2, conclusion2 = (
-            round2_category(
-                score2,
-                mcv,
-            )
-        )
+            st.session_state[
+                "round2_mentzer_value"
+            ] = mentzer
 
-        st.session_state[
-            "round2_score"
-        ] = score2
+            st.session_state[
+                "round2_category_value"
+            ] = category2
 
-        st.session_state[
-            "round2_category"
-        ] = category2
+            st.session_state[
+                "round2_conclusion_value"
+            ] = conclusion2
 
-        st.session_state[
-            "round2_mentzer"
-        ] = mentzer
+            st.session_state[
+                "round2_reasons_value"
+            ] = reasons2
 
-        st.session_state[
-            "round2_conclusion"
-        ] = conclusion2
+            st.session_state[
+                "round2_hb_value"
+            ] = hb
 
-        st.session_state[
-            "round2_reasons"
-        ] = reasons2
+            st.session_state[
+                "round2_hb_adjusted_value"
+            ] = hb_adjusted
 
-        st.session_state[
-            "round2_hb"
-        ] = hb
+            st.session_state[
+                "round2_adjustment_value"
+            ] = adjustment
 
-        st.session_state[
-            "round2_hb_adjusted"
-        ] = hb_adjusted
+            st.session_state[
+                "round2_mcv_value"
+            ] = mcv
 
-        st.session_state[
-            "round2_altitude_adjustment"
-        ] = altitude_adjustment
+            st.session_state[
+                "round2_mch_value"
+            ] = mch
 
-        st.session_state[
-            "round2_mcv"
-        ] = mcv
+            st.session_state[
+                "round2_rbc_value"
+            ] = rbc
 
-        st.session_state[
-            "round2_mch"
-        ] = mch
+            st.session_state[
+                "round2_rdw_value"
+            ] = rdw
 
-        st.session_state[
-            "round2_rbc"
-        ] = rbc
-
-        st.session_state[
-            "round2_rdw"
-        ] = rdw
-
-        st.session_state[
-            "round2_dia_diem"
-        ] = (
-            geo[
-                "formatted_address"
-            ]
-            if geo
-            else "Chưa xác định"
-        )
+            st.session_state[
+                "round2_completed"
+            ] = True
 
     # --------------------------------------------------------
-    # 5. DISPLAY RESULT
+    # RESULTS
     # --------------------------------------------------------
 
-    if "round2_score" in st.session_state:
+    if st.session_state.get(
+        "round2_completed",
+        False,
+    ):
 
         st.subheader(
             "📊 KẾT QUẢ VÒNG 2"
         )
 
-        rr1, rr2, rr3, rr4 = st.columns(4)
+        r1, r2, r3, r4 = st.columns(4)
 
-        with rr1:
+        with r1:
             st.metric(
                 "Mentzer Index",
-                f"{st.session_state['round2_mentzer']:.2f}",
+                f"{st.session_state['round2_mentzer_value']:.2f}",
             )
 
-        with rr2:
+        with r2:
             st.metric(
                 "Điểm CBC",
                 str(
                     st.session_state[
-                        "round2_score"
+                        "round2_score_value"
                     ]
                 ),
             )
 
-        with rr3:
+        with r3:
             st.metric(
                 "Hb thực đo",
-                f"{st.session_state['round2_hb']:.1f} g/dL",
+                f"{st.session_state['round2_hb_value']:.1f} g/dL",
             )
 
-        with rr4:
+        with r4:
             st.metric(
-                "Hb sau hiệu chỉnh",
-                f"{st.session_state['round2_hb_adjusted']:.1f} g/dL",
+                "Hb hiệu chỉnh",
+                f"{st.session_state['round2_hb_adjusted_value']:.1f} g/dL",
             )
 
         category2 = st.session_state[
-            "round2_category"
+            "round2_category_value"
         ]
 
         conclusion2 = st.session_state[
-            "round2_conclusion"
+            "round2_conclusion_value"
         ]
 
         reasons2 = st.session_state[
-            "round2_reasons"
+            "round2_reasons_value"
         ]
 
         if category2 == "THẤP":
-
             st.success(
                 f"🟢 **NGUY CƠ VÒNG 2: {category2}**\n\n"
                 f"{conclusion2}"
             )
-
         elif category2 == "TRUNG BÌNH":
-
             st.warning(
                 f"🟡 **NGUY CƠ VÒNG 2: {category2}**\n\n"
                 f"{conclusion2}"
             )
-
         elif category2 == "CAO":
-
             st.error(
                 f"🟠 **NGUY CƠ VÒNG 2: {category2}**\n\n"
                 f"{conclusion2}"
             )
-
         else:
-
             st.error(
                 f"🔴 **NGUY CƠ VÒNG 2: {category2}**\n\n"
                 f"{conclusion2}"
             )
 
         if reasons2:
+
             with st.expander(
                 "🔎 Các yếu tố từ CBC",
                 expanded=True,
@@ -1770,116 +2197,114 @@ if st.session_state.get(
                         f"• {reason}"
                     )
 
-        # Hb context
-        if ngay_sinh:
+        # Hb interpretation
+        hb_adj = st.session_state[
+            "round2_hb_adjusted_value"
+        ]
 
-            today = date.today()
+        if patient_age is not None:
 
-            age_years = (
-                today.year
-                - ngay_sinh.year
-                - (
-                    (
-                        today.month,
-                        today.day,
-                    )
-                    < (
-                        ngay_sinh.month,
-                        ngay_sinh.day,
-                    )
+            if (
+                patient_age >= 15
+                and patient["gender"] in [
+                    "Nam",
+                    "Nữ",
+                ]
+            ):
+
+                cutoff = (
+                    13.0
+                    if patient["gender"] == "Nam"
+                    else 12.0
                 )
-            )
 
-        else:
-            age_years = None
+                if hb_adj < cutoff:
+                    st.info(
+                        f"🩸 Hb sau hiệu chỉnh thấp hơn "
+                        f"ngưỡng {cutoff:.1f} g/dL đang dùng cho nhóm này."
+                    )
+                else:
+                    st.info(
+                        f"🩸 Hb sau hiệu chỉnh chưa thấp hơn "
+                        f"ngưỡng {cutoff:.1f} g/dL đang dùng cho nhóm này."
+                    )
 
-        st.info(
-            anemia_interpretation(
-                st.session_state[
-                    "round2_hb_adjusted"
-                ],
-                gioi_tinh,
-                age_years,
-            )
-        )
-
-        # ----------------------------------------------------
-        # 6. NEXT STEP
-        # ----------------------------------------------------
-
+        # Next step
         st.subheader(
-            "🧭 Bước tiếp theo"
+            "🧭 Khuyến nghị bước tiếp theo"
         )
 
         if category2 == "THẤP":
 
             st.info(
-                "Chưa ghi nhận mẫu hình CBC mạnh gợi ý Thalassemia. "
-                "Nếu có tiền sử hoặc chỉ định lâm sàng đặc biệt, vẫn cần đánh giá."
+                "CBC hiện tại chưa cho thấy mẫu hình mạnh gợi ý Thalassemia. "
+                "Nếu vẫn có tiền sử hoặc chỉ định lâm sàng, cần được nhân viên y tế "
+                "đánh giá thêm."
             )
 
         elif category2 == "TRUNG BÌNH":
 
             st.warning(
-                "Ưu tiên đánh giá nguyên nhân hồng cầu nhỏ, đặc biệt tình trạng "
-                "thiếu sắt; cân nhắc Ferritin. Nếu vẫn nghi ngờ, có thể đánh giá "
-                "HPLC/điện di Hb."
+                "Nên đánh giá nguyên nhân hồng cầu nhỏ, đặc biệt tình trạng thiếu sắt "
+                "và cân nhắc xét nghiệm phù hợp. Nếu vẫn nghi ngờ, có thể cần "
+                "HPLC/điện di hemoglobin."
             )
 
         else:
 
             st.error(
                 "Nên được đánh giá tại cơ sở có khả năng thực hiện "
-                "HPLC/điện di Hb. Xét nghiệm phân tử có thể được cân nhắc "
-                "theo chỉ định chuyên môn."
+                "HPLC/điện di hemoglobin. Xét nghiệm phân tử có thể được "
+                "cân nhắc theo chỉ định chuyên môn."
             )
 
         # ----------------------------------------------------
-        # 7. CƠ SỞ Y TẾ
+        # MEDICAL FACILITIES
         # ----------------------------------------------------
 
         st.subheader(
-            "🏥 GỢI Ý CƠ SỞ Y TẾ GẦN NƠI CƯ TRÚ"
+            "🏥 CƠ SỞ Y TẾ GẦN NƠI Ở HIỆN TẠI"
         )
 
-        if not geo:
+        if geo is None:
 
             st.warning(
-                "Chưa có tọa độ. Hãy xác định vị trí ở mục 2."
+                "Hãy xác định tọa độ/độ cao trước khi tìm cơ sở."
             )
 
         elif not GOOGLE_API_KEY:
 
             st.warning(
-                "Chưa có Google Places API."
+                "Chưa cấu hình Google Places API."
             )
 
         else:
 
-            places = google_nearby_medical(
+            places = nearby_medical(
                 geo["lat"],
                 geo["lng"],
                 GOOGLE_API_KEY,
             )
 
-            candidates = rank_medical_facilities(
-                places=places,
-                origin_lat=geo["lat"],
-                origin_lng=geo["lng"],
+            candidates = rank_facilities(
+                places,
+                geo["lat"],
+                geo["lng"],
             )
 
             if not candidates:
 
                 st.info(
-                    "Không tìm thấy cơ sở y tế trong bán kính 50 km "
+                    "Không tìm thấy cơ sở trong phạm vi 50 km "
                     "theo truy vấn hiện tại."
                 )
 
             else:
 
                 st.write(
-                    "Hệ thống ưu tiên tối đa **5 cơ sở gần nhất**. "
-                    "Thông tin trên Google không tự xác nhận khả năng HPLC/điện di/gen."
+                    "Hệ thống ưu tiên **3–5 cơ sở gần nhất**. "
+                    "Thông tin Google Maps không tự xác nhận "
+                    "cơ sở có HPLC/điện di/gen."
                 )
 
                 for index, facility in enumerate(
@@ -1904,22 +2329,24 @@ if st.session_state.get(
                             f"**{facility['distance']:.1f} km**"
                         )
 
-                        if facility["rating"] is not None:
+                        if facility[
+                            "rating"
+                        ] is not None:
 
-                            rating_text = (
+                            rating = (
                                 f"⭐ {facility['rating']:.1f}"
                             )
 
                             if facility[
                                 "rating_count"
                             ]:
-                                rating_text += (
+                                rating += (
                                     f" "
                                     f"({facility['rating_count']:,} đánh giá)"
                                 )
 
                             st.write(
-                                rating_text
+                                rating
                             )
 
                         if facility[
@@ -1933,84 +2360,87 @@ if st.session_state.get(
                             )
 
                         st.caption(
-                            "Nên gọi xác nhận trước về dịch vụ "
-                            "HPLC/điện di Hb, Ferritin hoặc xét nghiệm gen."
+                            "Nên xác nhận trước về Ferritin, HPLC/"
+                            "điện di Hb và xét nghiệm gen."
                         )
 
         # ----------------------------------------------------
-        # 8. WORD
+        # WORD
         # ----------------------------------------------------
 
         st.subheader(
-            "📄 XUẤT PHIẾU"
+            "📄 PHIẾU KẾT QUẢ"
         )
 
-        report = create_word_report(
-            ho_ten=ho_ten,
-            ngay_sinh=str(
-                ngay_sinh
-            ),
-            gioi_tinh=gioi_tinh,
-            round1_score=st.session_state[
+        geo_address = (
+            geo["formatted_address"]
+            if geo
+            else patient["current_address"]
+        )
+
+        r2_data = {
+            "geo_address": geo_address,
+            "elevation": elevation,
+            "hb": st.session_state[
+                "round2_hb_value"
+            ],
+            "adjustment": st.session_state[
+                "round2_adjustment_value"
+            ],
+            "hb_adjusted": st.session_state[
+                "round2_hb_adjusted_value"
+            ],
+            "mcv": st.session_state[
+                "round2_mcv_value"
+            ],
+            "mch": st.session_state[
+                "round2_mch_value"
+            ],
+            "rbc": st.session_state[
+                "round2_rbc_value"
+            ],
+            "rdw": st.session_state[
+                "round2_rdw_value"
+            ],
+            "mentzer": st.session_state[
+                "round2_mentzer_value"
+            ],
+            "score": st.session_state[
+                "round2_score_value"
+            ],
+            "category": st.session_state[
+                "round2_category_value"
+            ],
+            "conclusion": st.session_state[
+                "round2_conclusion_value"
+            ],
+        }
+
+        patient_for_word = {
+            **patient,
+            "age": patient_age,
+        }
+
+        report = create_word(
+            patient=patient_for_word,
+            r1_score=st.session_state[
                 "round1_score"
             ],
-            round1_category_text=st.session_state[
+            r1_category=st.session_state[
                 "round1_category"
             ],
-            round1_reasons=st.session_state[
+            r1_reasons=st.session_state[
                 "round1_reasons"
             ],
-            dia_diem=st.session_state.get(
-                "round2_dia_diem",
-                "Chưa xác định",
-            ),
-            elevation=st.session_state.get(
-                "elevation"
-            ),
-            hb=st.session_state[
-                "round2_hb"
-            ],
-            hb_adjusted=st.session_state[
-                "round2_hb_adjusted"
-            ],
-            altitude_adjustment=st.session_state[
-                "round2_altitude_adjustment"
-            ],
-            mcv=st.session_state[
-                "round2_mcv"
-            ],
-            mch=st.session_state[
-                "round2_mch"
-            ],
-            rbc=st.session_state[
-                "round2_rbc"
-            ],
-            rdw=st.session_state[
-                "round2_rdw"
-            ],
-            mentzer=st.session_state[
-                "round2_mentzer"
-            ],
-            round2_score=st.session_state[
-                "round2_score"
-            ],
-            round2_category_text=st.session_state[
-                "round2_category"
-            ],
-            round2_reasons=st.session_state[
-                "round2_reasons"
-            ],
-            conclusion=st.session_state[
-                "round2_conclusion"
-            ],
+            r2=r2_data,
         )
 
         st.download_button(
-            label="📥 Tải phiếu kết quả Word",
+            label="📥 TẢI PHIẾU WORD",
             data=report,
             file_name=(
                 "Phieu_Thalassemia_"
-                f"{safe_filename(ho_ten)}.docx"
+                f"{safe_filename(patient['full_name'])}.docx"
             ),
             mime=(
                 "application/vnd.openxmlformats-officedocument."
@@ -2027,7 +2457,7 @@ if st.session_state.get(
 st.divider()
 
 st.caption(
-    "THALASSEMIA SCREENING V3.1 — PROTOTYPE NGHIÊN CỨU. "
-    "Các ngưỡng điểm cần được validation trên dữ liệu người Việt Nam "
-    "trước khi sử dụng trong nghiên cứu/triển khai thực tế."
+    "THALASSEMIA SCREENING V3.3 — PROTOTYPE NGHIÊN CỨU. "
+    "Các trọng số/ngưỡng cần được validation trên dữ liệu người Việt Nam "
+    "trước khi dùng trong nghiên cứu lâm sàng hoặc triển khai thực tế."
 )
