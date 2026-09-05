@@ -423,6 +423,193 @@ def google_geocode(address, api_key):
         return None
 
 
+
+# ============================================================
+# GOOGLE PLACES AUTOCOMPLETE — CHỌN XÃ/PHƯỜNG
+# ============================================================
+
+@st.cache_data(ttl=3600)
+def google_region_predictions(
+    input_text,
+    api_key,
+):
+    """
+    Tìm các địa danh/vùng hành chính để người dùng CHỌN.
+    Dùng Places API (New) Autocomplete với type collection (regions).
+    """
+    if not api_key or not input_text.strip():
+        return []
+
+    url = "https://places.googleapis.com/v1/places:autocomplete"
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": (
+            "suggestions.placePrediction.placeId,"
+            "suggestions.placePrediction.text.text,"
+            "suggestions.placePrediction.structuredFormat.mainText.text,"
+            "suggestions.placePrediction.structuredFormat.secondaryText.text"
+        ),
+    }
+
+    payload = {
+        "input": input_text,
+        "includedPrimaryTypes": ["(regions)"],
+        "includedRegionCodes": ["vn"],
+        "languageCode": "vi",
+        "regionCode": "vn",
+    }
+
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=12,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        suggestions = []
+
+        for item in data.get("suggestions", []):
+            prediction = item.get(
+                "placePrediction"
+            )
+
+            if not prediction:
+                continue
+
+            text_obj = prediction.get(
+                "text",
+                {}
+            )
+
+            display = text_obj.get(
+                "text",
+                ""
+            )
+
+            main_text = prediction.get(
+                "structuredFormat",
+                {},
+            ).get(
+                "mainText",
+                {},
+            ).get(
+                "text",
+                "",
+            )
+
+            secondary_text = prediction.get(
+                "structuredFormat",
+                {},
+            ).get(
+                "secondaryText",
+                {},
+            ).get(
+                "text",
+                "",
+            )
+
+            if display:
+                suggestions.append(
+                    {
+                        "display": display,
+                        "main": main_text or display,
+                        "secondary": secondary_text,
+                        "place_id": prediction.get(
+                            "placeId",
+                            "",
+                        ),
+                    }
+                )
+
+        return suggestions[:10]
+
+    except Exception:
+        return []
+
+
+def google_place_geocode(place_id, api_key):
+    """
+    Dùng Geocoding API với place_id đã được người dùng chọn.
+    Điều này giúp lấy đúng tọa độ của lựa chọn đó.
+    """
+    if not api_key or not place_id:
+        return None
+
+    url = (
+        "https://maps.googleapis.com/maps/api/geocode/json"
+    )
+
+    params = {
+        "place_id": place_id,
+        "key": api_key,
+        "language": "vi",
+        "region": "vn",
+    }
+
+    try:
+        response = requests.get(
+            url,
+            params=params,
+            timeout=12,
+        )
+        response.raise_for_status()
+
+        data = response.json()
+
+        if (
+            data.get("status") != "OK"
+            or not data.get("results")
+        ):
+            return None
+
+        result = data["results"][0]
+        location = result["geometry"]["location"]
+
+        components = {}
+
+        for component in result.get(
+            "address_components",
+            [],
+        ):
+            for component_type in component.get(
+                "types",
+                [],
+            ):
+                components.setdefault(
+                    component_type,
+                    component.get(
+                        "long_name",
+                        "",
+                    ),
+                )
+
+        return {
+            "formatted_address": result.get(
+                "formatted_address",
+                "",
+            ),
+            "lat": float(
+                location["lat"]
+            ),
+            "lng": float(
+                location["lng"]
+            ),
+            "place_id": result.get(
+                "place_id",
+                place_id,
+            ),
+            "components": components,
+        }
+
+    except Exception:
+        return None
+
+
 # ============================================================
 # GOOGLE ELEVATION
 # ============================================================
@@ -1780,85 +1967,186 @@ if st.session_state.get(
             )
 
     # --------------------------------------------------------
-    # LOCATION
+    # LOCATION — NGƯỜI DÙNG PHẢI CHỌN XÃ/PHƯỜNG
     # --------------------------------------------------------
 
     with st.container(border=True):
 
         st.subheader(
-            "2. Phân tích vị trí cư trú và độ cao"
+            "2. Chọn nơi đang sinh sống"
         )
 
         st.write(
-            "Hệ thống sử dụng địa chỉ trong hồ sơ bệnh nhân để xác định "
-            "tọa độ. Sau đó lấy độ cao địa hình từ tọa độ; người dùng "
-            "không cần tự biết độ cao nơi mình sống."
+            "Người dùng phải **chọn xã/phường/đặc khu từ danh sách gợi ý**. "
+            "Hệ thống không tự đoán xã/phường từ một chuỗi địa chỉ mơ hồ."
         )
 
-        location_query = ", ".join(
-            part
-            for part in [
-                patient["current_address"],
-                patient["commune"],
-                patient["district"],
-                patient["province"],
-                "Việt Nam",
-            ]
-            if part
-        )
+        l1, l2 = st.columns(2)
 
-        st.caption(
-            f"🔎 Truy vấn vị trí: {location_query}"
-        )
+        with l1:
+            province_input = st.text_input(
+                "Tỉnh / thành phố *",
+                value=patient["province"],
+                key="location_province_input",
+            )
+
+            district_input = st.text_input(
+                "Quận / huyện / thị xã",
+                value=patient["district"],
+                key="location_district_input",
+            )
+
+        with l2:
+            commune_search = st.text_input(
+                "Tìm xã / phường / đặc khu *",
+                value=patient["commune"],
+                key="commune_search_input",
+                placeholder="Ví dụ: Hòa Phong",
+                help=(
+                    "Nhập tên hoặc một phần tên xã/phường, sau đó "
+                    "bấm 'Tìm xã/phường' để chọn."
+                ),
+            )
+
+            extra_address = st.text_input(
+                "Thôn/tổ/đường/địa chỉ chi tiết (nếu có)",
+                value=patient["current_address"],
+                key="location_extra_address",
+            )
 
         if st.button(
-            "📍 PHÂN TÍCH XÃ/PHƯỜNG → TỌA ĐỘ → ĐỘ CAO",
+            "🔎 TÌM XÃ / PHƯỜNG ĐỂ CHỌN",
+            key="search_commune_button",
             type="secondary",
         ):
 
             if not GOOGLE_API_KEY:
-
                 st.error(
                     "Chưa cấu hình Google Maps API key."
                 )
 
+            elif not province_input.strip():
+                st.error(
+                    "Vui lòng nhập tỉnh/thành phố trước."
+                )
+
+            elif not commune_search.strip():
+                st.error(
+                    "Vui lòng nhập từ khóa xã/phường."
+                )
+
             else:
 
-                geo = google_geocode(
-                    location_query,
+                region_query = ", ".join(
+                    part
+                    for part in [
+                        commune_search.strip(),
+                        district_input.strip(),
+                        province_input.strip(),
+                        "Việt Nam",
+                    ]
+                    if part
+                )
+
+                predictions = google_region_predictions(
+                    region_query,
                     GOOGLE_API_KEY,
                 )
 
-                if not geo:
+                if not predictions:
+                    st.warning(
+                        "Không tìm thấy xã/phường phù hợp. "
+                        "Hãy thử tên đầy đủ hoặc bỏ bớt địa chỉ chi tiết."
+                    )
+                    st.session_state[
+                        "location_predictions"
+                    ] = []
+                else:
+                    st.session_state[
+                        "location_predictions"
+                    ] = predictions
+
+        predictions = st.session_state.get(
+            "location_predictions",
+            [],
+        )
+
+        if predictions:
+
+            st.markdown(
+                "### 📍 Chọn đúng xã/phường"
+            )
+
+            option_map = {
+                (
+                    f"{item['main']}"
+                    + (
+                        f" — {item['secondary']}"
+                        if item["secondary"]
+                        else ""
+                    )
+                    + f" | {item['display']}"
+                ): item
+                for item in predictions
+            }
+
+            selected_label = st.selectbox(
+                "Danh sách xã/phường tìm được",
+                list(option_map.keys()),
+                key="selected_commune_prediction",
+            )
+
+            selected_prediction = option_map[
+                selected_label
+            ]
+
+            if st.button(
+                "✅ XÁC NHẬN XÃ/PHƯỜNG NÀY",
+                key="confirm_commune_button",
+                type="primary",
+            ):
+
+                selected_geo = google_place_geocode(
+                    selected_prediction["place_id"],
+                    GOOGLE_API_KEY,
+                )
+
+                if not selected_geo:
 
                     st.error(
-                        "Không xác định được địa điểm. "
-                        "Hãy kiểm tra lại xã/phường, huyện và tỉnh."
+                        "Không lấy được tọa độ của xã/phường đã chọn."
                     )
 
                 else:
 
-                    elev = google_elevation(
-                        geo["lat"],
-                        geo["lng"],
+                    st.session_state[
+                        "location_geo"
+                    ] = selected_geo
+
+                    st.session_state[
+                        "location_selected_commune"
+                    ] = selected_prediction[
+                        "display"
+                    ]
+
+                    # Lấy độ cao chính xác theo tọa độ của lựa chọn.
+                    elevation_result = google_elevation(
+                        selected_geo["lat"],
+                        selected_geo["lng"],
                         GOOGLE_API_KEY,
                     )
 
-                    st.session_state[
-                        "location_geo"
-                    ] = geo
-
-                    if elev:
+                    if elevation_result:
 
                         st.session_state[
                             "location_elevation"
-                        ] = elev[
+                        ] = elevation_result[
                             "elevation"
                         ]
 
                         st.session_state[
                             "location_resolution"
-                        ] = elev[
+                        ] = elevation_result[
                             "resolution"
                         ]
 
@@ -1872,6 +2160,10 @@ if st.session_state.get(
                             "location_resolution"
                         ] = None
 
+                    st.success(
+                        "✅ Đã xác nhận địa điểm cư trú."
+                    )
+
         geo = st.session_state.get(
             "location_geo"
         )
@@ -1884,28 +2176,37 @@ if st.session_state.get(
             "location_resolution"
         )
 
+        selected_commune = st.session_state.get(
+            "location_selected_commune"
+        )
+
+        if selected_commune:
+            st.info(
+                f"**Xã/phường đã chọn:** {selected_commune}"
+            )
+
         if geo:
 
             st.success(
-                f"📍 **Google xác định:** "
+                f"📍 **Địa điểm được xác định:** "
                 f"{geo['formatted_address']}"
             )
 
-            a, b, c = st.columns(3)
+            g1, g2, g3 = st.columns(3)
 
-            with a:
+            with g1:
                 st.metric(
-                    "Latitude",
+                    "Vĩ độ",
                     f"{geo['lat']:.6f}",
                 )
 
-            with b:
+            with g2:
                 st.metric(
-                    "Longitude",
+                    "Kinh độ",
                     f"{geo['lng']:.6f}",
                 )
 
-            with c:
+            with g3:
                 if elevation is not None:
                     st.metric(
                         "Độ cao",
@@ -1943,6 +2244,17 @@ if st.session_state.get(
                         "Độ cao ≥2.500 m: cần thận trọng khi áp dụng "
                         "hiệu chỉnh Hb trong phiên bản nghiên cứu chính thức."
                     )
+
+                st.caption(
+                    "Độ cao được lấy từ **xã/phường mà người dùng đã chọn**, "
+                    "sau đó truy vấn theo tọa độ của lựa chọn đó."
+                )
+
+        else:
+            st.warning(
+                "Chưa có xã/phường được xác nhận. "
+                "Hãy tìm và chọn một địa điểm trước khi phân tích CBC."
+            )
 
     # --------------------------------------------------------
     # CBC
@@ -2014,6 +2326,11 @@ if st.session_state.get(
         if rbc <= 0:
             st.error(
                 "RBC phải lớn hơn 0."
+            )
+        elif st.session_state.get("location_geo") is None:
+            st.error(
+                "Vui lòng tìm và **chọn xác nhận một xã/phường** "
+                "ở Vòng 2 trước khi phân tích CBC."
             )
         else:
 
