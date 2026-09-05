@@ -12,7 +12,6 @@ from datetime import date, datetime, timedelta
 import requests
 import streamlit as st
 from docx import Document
-import xlsxwriter
 
 # ============================================================
 # THALASSEMIA SCREENING V5
@@ -728,6 +727,13 @@ def list_screening_records_for_staff():
 
 def export_screening_xlsx(patient_rows, screening_rows):
     """Tạo một file Excel nhiều sheet, không lưu file tạm trên server."""
+    try:
+        import xlsxwriter
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Thiếu thư viện XlsxWriter. Hãy thêm `XlsxWriter>=3.2` vào requirements.txt rồi redeploy ứng dụng."
+        ) from exc
+
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {"in_memory": True})
 
