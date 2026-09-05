@@ -10,7 +10,7 @@ import streamlit as st
 from docx import Document
 
 # ============================================================
-# THALASSEMIA SCREENING V4.0
+# THALASSEMIA SCREENING - ĐẮC LÂU DỄ THƯƠNG
 # ============================================================
 #
 # Ý tưởng:
