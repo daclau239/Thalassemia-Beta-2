@@ -2,6 +2,7 @@ import io
 import math
 import re
 import sqlite3
+from pathlib import Path
 from datetime import date, datetime, timedelta
 
 import requests
@@ -1347,19 +1348,127 @@ with st.sidebar:
 
     st.divider()
 
+    if Path(ADMIN_DATA_PATH).exists():
+        st.success(
+            "Địa giới: data/vietnam_admin.json"
+        )
+    else:
+        st.warning(
+            "Địa giới: đang dùng dữ liệu mẫu. "
+            "Hãy bổ sung data/vietnam_admin.json trước khi triển khai."
+        )
+
+    st.divider()
+
     st.write(
-        "👤 Hồ sơ\n"
+        "👤 Hồ sơ + chọn địa giới\n"
         "↓\n"
         "🟦 Vòng 1 — 20 câu\n"
         "↓\n"
         "🔴 Nguy cơ cao?\n"
         "↓\n"
-        "🟧 Vòng 2 — CBC + độ cao\n"
+        "🟧 Vòng 2 — tọa độ + độ cao + CBC\n"
         "↓\n"
         "🏥 Cơ sở y tế"
     )
 
 
+
+# ============================================================
+# DỮ LIỆU ĐỊA GIỚI HÀNH CHÍNH
+# ============================================================
+
+ADMIN_DATA_PATH = "data/vietnam_admin.json"
+
+
+@st.cache_data(ttl=86400)
+def load_admin_data():
+    """
+    Cấu trúc JSON:
+    {
+      "Tỉnh/Thành phố": {
+        "Quận/Huyện": ["Xã/Phường/Đặc khu", ...]
+      }
+    }
+
+    Dùng file JSON riêng để dễ cập nhật theo danh mục hành chính hiện hành.
+    Nếu chưa có file, app dùng dữ liệu mẫu nhỏ để chạy thử.
+    """
+    import json
+
+    file_path = Path(ADMIN_DATA_PATH)
+
+    if not file_path.exists():
+        return {
+            "Đà Nẵng": {
+                "Hòa Vang": [
+                    "Hòa Phong",
+                    "Hòa Phú",
+                    "Hòa Sơn",
+                    "Hòa Tiến",
+                ],
+                "Ngũ Hành Sơn": [
+                    "Mỹ An",
+                    "Khuê Mỹ",
+                    "Hòa Hải",
+                    "Hòa Quý",
+                ],
+            }
+        }
+
+    try:
+        with file_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        if not isinstance(data, dict):
+            raise ValueError("Dữ liệu địa giới phải là JSON object.")
+
+        return data
+    except Exception as exc:
+        st.warning(
+            f"Không đọc được {ADMIN_DATA_PATH}: {exc}. "
+            "Ứng dụng đang dùng dữ liệu mẫu."
+        )
+        return {
+            "Đà Nẵng": {
+                "Hòa Vang": [
+                    "Hòa Phong",
+                    "Hòa Phú",
+                    "Hòa Sơn",
+                    "Hòa Tiến",
+                ]
+            }
+        }
+
+
+ADMIN_DATA = load_admin_data()
+
+
+def admin_provinces():
+    return sorted(
+        ADMIN_DATA.keys(),
+        key=lambda x: x.lower(),
+    )
+
+
+def admin_districts(province):
+    return sorted(
+        ADMIN_DATA.get(province, {}).keys(),
+        key=lambda x: x.lower(),
+    )
+
+
+def admin_communes(province, district):
+    return sorted(
+        ADMIN_DATA.get(province, {}).get(
+            district,
+            [],
+        ),
+        key=lambda x: x.lower(),
+    )
+
+
+# ============================================================
 # ============================================================
 # PATIENT PROFILE
 # ============================================================
@@ -1369,7 +1478,7 @@ st.header(
 )
 
 st.write(
-    "Thông tin bệnh nhân được nhập trước khi bắt đầu Vòng 1. "
+    "Nhập hồ sơ bệnh nhân trước khi bắt đầu Vòng 1. "
     "Số điện thoại là mã hồ sơ duy nhất."
 )
 
@@ -1385,16 +1494,8 @@ with st.container(border=True):
 
         birth_date = st.date_input(
             "Ngày sinh *",
-            value=date(
-                2000,
-                1,
-                1,
-            ),
-            min_value=date(
-                1900,
-                1,
-                1,
-            ),
+            value=date(2000, 1, 1),
+            min_value=date(1900, 1, 1),
             max_value=date.today(),
             format="DD/MM/YYYY",
         )
@@ -1405,55 +1506,105 @@ with st.container(border=True):
             placeholder="09xxxxxxxx",
             help=(
                 "Mỗi số điện thoại chỉ có một hồ sơ. "
-                "Nhập lại số này sẽ cập nhật bằng thông tin mới nhất."
+                "Nhập lại cùng số sẽ ghi nhận lần nhập mới nhất."
             ),
         )
 
         gender = st.selectbox(
             "Giới tính *",
-            [
-                "Nam",
-                "Nữ",
-                "Khác",
-            ],
+            ["Nam", "Nữ", "Khác"],
         )
 
     with c3:
         current_address = st.text_input(
-            "Nơi ở hiện tại *",
-            placeholder="Thôn/tổ, đường...",
+            "Địa chỉ chi tiết hiện tại *",
+            placeholder="Thôn/tổ/số nhà/đường...",
         )
 
-        province = st.text_input(
-            "Tỉnh / thành phố *",
-            placeholder="Ví dụ: Đà Nẵng",
-        )
+    st.subheader(
+        "📍 Địa giới hành chính hiện tại"
+    )
 
-    c4, c5 = st.columns(2)
+    st.caption(
+        "Bệnh nhân **chọn trực tiếp từ danh sách**, không cần tự gõ "
+        "tên xã/phường. Danh sách được liên kết theo cấp địa giới."
+    )
 
-    with c4:
-        district = st.text_input(
-            "Quận / huyện / thị xã",
-            placeholder="Ví dụ: Hòa Vang",
-        )
+    provinces = admin_provinces()
 
-    with c5:
-        commune = st.text_input(
-            "Xã / phường / thị trấn *",
-            placeholder="Ví dụ: Hòa Phong",
+    selected_province = st.selectbox(
+        "Tỉnh / thành phố *",
+        provinces,
+        key="profile_province",
+    )
+
+    districts = admin_districts(
+        selected_province
+    )
+
+    district_options = (
+        ["— Chọn quận/huyện —"]
+        + districts
+    )
+
+    selected_district = st.selectbox(
+        "Quận / huyện / thị xã",
+        district_options,
+        key="profile_district",
+    )
+
+    district_value = (
+        ""
+        if selected_district
+        == "— Chọn quận/huyện —"
+        else selected_district
+    )
+
+    communes = admin_communes(
+        selected_province,
+        district_value,
+    )
+
+    commune_options = (
+        ["— Chọn phường/xã/đặc khu —"]
+        + communes
+    )
+
+    selected_commune = st.selectbox(
+        "Phường / xã / đặc khu *",
+        commune_options,
+        key="profile_commune",
+    )
+
+    commune_value = (
+        ""
+        if selected_commune
+        == "— Chọn phường/xã/đặc khu —"
+        else selected_commune
+    )
+
+    if (
+        selected_province
+        and commune_value
+    ):
+        st.success(
+            "📍 Địa điểm hành chính đã chọn: "
+            f"**{commune_value}, "
+            f"{district_value + ', ' if district_value else ''}"
+            f"{selected_province}**"
         )
 
 
 phone = normalize_phone(phone_raw)
 
 if phone and valid_vn_phone(phone):
-
     if patient_exists(phone):
         st.warning(
-            "📌 **Số điện thoại này đã tồn tại.** "
-            "Khi lưu, hồ sơ sẽ được cập nhật và **lần nhập sau cùng "
-            "sẽ ghi đè thông tin cũ**."
+            "📌 **Số điện thoại này đã có hồ sơ.** "
+            "Khi lưu, thông tin mới sẽ ghi đè hồ sơ cũ "
+            "và được ghi nhận là lần nhập sau cùng."
         )
+
 
 if st.button(
     "💾 LƯU / CẬP NHẬT HỒ SƠ",
@@ -1467,23 +1618,22 @@ if st.button(
 
     elif not valid_vn_phone(phone):
         st.error(
-            "Số điện thoại phải là số Việt Nam 10 chữ số, "
-            "ví dụ 09xxxxxxxx."
+            "Số điện thoại phải là số Việt Nam 10 chữ số."
         )
 
     elif not current_address.strip():
         st.error(
-            "Vui lòng nhập nơi ở hiện tại."
+            "Vui lòng nhập địa chỉ hiện tại."
         )
 
-    elif not province.strip():
+    elif not selected_province:
         st.error(
-            "Vui lòng nhập tỉnh/thành phố."
+            "Vui lòng chọn tỉnh/thành phố."
         )
 
-    elif not commune.strip():
+    elif not commune_value:
         st.error(
-            "Vui lòng nhập xã/phường/thị trấn."
+            "Vui lòng chọn phường/xã/đặc khu."
         )
 
     else:
@@ -1494,14 +1644,12 @@ if st.button(
             "birth_date": birth_date.isoformat(),
             "gender": gender,
             "current_address": current_address.strip(),
-            "province": province.strip(),
-            "district": district.strip(),
-            "commune": commune.strip(),
+            "province": selected_province,
+            "district": district_value,
+            "commune": commune_value,
         }
 
-        action = upsert_patient(
-            profile
-        )
+        action = upsert_patient(profile)
 
         st.session_state[
             "patient_profile"
@@ -1513,7 +1661,7 @@ if st.button(
             birth_date
         )
 
-        # Reset results because profile has changed.
+        # Lưu hồ sơ mới -> xóa kết quả sàng lọc cũ.
         for key in list(
             st.session_state.keys()
         ):
@@ -1525,45 +1673,21 @@ if st.button(
             ):
                 del st.session_state[key]
 
-        st.session_state[
-            "profile_saved"
-        ] = True
-
         if action == "updated":
             st.success(
-                "✅ Hồ sơ đã được **cập nhật bằng lần nhập sau cùng**. "
-                "Số điện thoại vẫn chỉ tương ứng với một hồ sơ."
+                "✅ Hồ sơ đã được cập nhật bằng **lần nhập sau cùng**. "
+                "Số điện thoại vẫn chỉ có một hồ sơ."
             )
         else:
             st.success(
                 "✅ Đã tạo hồ sơ bệnh nhân."
             )
 
-
 patient = st.session_state.get(
     "patient_profile"
 )
 
-if not patient:
-    st.info(
-        "👆 Hãy lưu hồ sơ bệnh nhân trước khi bắt đầu Vòng 1."
-    )
-    st.stop()
 
-patient_age = calculate_age(
-    date.fromisoformat(
-        patient["birth_date"]
-    )
-)
-
-st.success(
-    f"✅ Hồ sơ đang xử lý: **{patient['full_name']}** · "
-    f"{patient_age} tuổi · {patient['phone']} · "
-    f"{patient['commune']}, {patient['province']}"
-)
-
-
-# ============================================================
 # ROUND 1
 # ============================================================
 
