@@ -1,5 +1,6 @@
 
 import io
+import json
 import math
 import os
 import re
@@ -11,7 +12,7 @@ import streamlit as st
 from docx import Document
 
 # ============================================================
-# THALASSEMIA SCREENING - design by daclau at phan chau trinh university
+# THALASSEMIA SCREENING V5
 # ============================================================
 # 1) Hồ sơ bệnh nhân
 # 2) Vòng 1: 20 câu hỏi
@@ -46,6 +47,9 @@ st.set_page_config(
 )
 
 DB_PATH = "thalassemia_patients.db"
+CONSENT_VERSION = "THAL-RS-CONSENT-v1-2026-09-05"
+ADMIN_DATA_URL = "https://raw.githubusercontent.com/open-admin-data/vietnam-administrative-divisions/main/data/hierarchy.json"
+ADMIN_DATA_SOURCE_URL = "https://github.com/open-admin-data/vietnam-administrative-divisions"
 
 ROUND1_MAX_SCORE = 20
 ROUND1_HIGH_THRESHOLD = 8
@@ -116,11 +120,27 @@ def get_db():
             current_address TEXT NOT NULL,
             province TEXT NOT NULL,
             commune TEXT NOT NULL,
+            research_consent INTEGER NOT NULL DEFAULT 0,
+            consent_version TEXT,
+            consent_at TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
     )
+
+    # Migrate prototype databases created before consent fields existed.
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(patient_profiles)").fetchall()}
+    migrations = [
+        ("research_consent", "INTEGER NOT NULL DEFAULT 0"),
+        ("consent_version", "TEXT"),
+        ("consent_at", "TEXT"),
+    ]
+    for column, definition in migrations:
+        if column not in existing:
+            conn.execute(
+                f"ALTER TABLE patient_profiles ADD COLUMN {column} {definition}"
+            )
 
     conn.commit()
     return conn
@@ -194,6 +214,9 @@ def upsert_patient(profile):
                 current_address = ?,
                 province = ?,
                 commune = ?,
+                research_consent = ?,
+                consent_version = ?,
+                consent_at = ?,
                 updated_at = ?
             WHERE phone = ?
             """,
@@ -204,6 +227,9 @@ def upsert_patient(profile):
                 profile["current_address"],
                 profile["province"],
                 profile["commune"],
+                1,
+                CONSENT_VERSION,
+                profile["consent_at"],
                 now,
                 profile["phone"],
             ),
@@ -220,10 +246,13 @@ def upsert_patient(profile):
                 current_address,
                 province,
                 commune,
+                research_consent,
+                consent_version,
+                consent_at,
                 created_at,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 profile["phone"],
@@ -233,6 +262,9 @@ def upsert_patient(profile):
                 profile["current_address"],
                 profile["province"],
                 profile["commune"],
+                1,
+                CONSENT_VERSION,
+                profile["consent_at"],
                 now,
                 now,
             ),
@@ -243,6 +275,54 @@ def upsert_patient(profile):
     conn.close()
 
     return action
+
+
+# ------------------------------------------------------------
+# CURRENT VIETNAM ADMINISTRATIVE DATA (34 PROVINCES / 3,321 COMMUNES)
+# ------------------------------------------------------------
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_admin_hierarchy():
+    """Load the current 2-level administrative hierarchy.
+
+    Source dataset follows Vietnam's post-2025 structure: 34 provincial
+    units directly administering 3,321 commune/ward/special-area units.
+    The prototype deliberately does NOT fall back to manual commune entry.
+    """
+    response = requests.get(ADMIN_DATA_URL, timeout=20)
+    response.raise_for_status()
+    payload = response.json()
+
+    records = payload.get("data", payload)
+    if not isinstance(records, list) or not records:
+        raise ValueError("Dữ liệu địa giới không đúng định dạng.")
+
+    provinces = {}
+    for province in records:
+        province_name = province.get("name", {}).get("local")
+        if not province_name:
+            continue
+
+        wards = []
+        for ward in province.get("ward", []) or province.get("wards", []):
+            ward_name = ward.get("name", {}).get("local")
+            if ward_name:
+                wards.append(ward_name)
+
+        provinces[province_name] = sorted(set(wards), key=str.casefold)
+
+    if len(provinces) != 34:
+        raise ValueError(
+            f"Dữ liệu địa giới hiện trả về {len(provinces)} tỉnh/thành, không phải 34."
+        )
+
+    total_communes = sum(len(items) for items in provinces.values())
+    if total_communes != 3321:
+        raise ValueError(
+            f"Dữ liệu địa giới hiện có {total_communes} đơn vị cấp xã, không phải 3.321."
+        )
+
+    return provinces
 
 
 # ------------------------------------------------------------
@@ -1387,148 +1467,90 @@ with st.container(border=True):
         "📍 Địa giới hành chính hiện tại"
     )
 
-    # NOTE:
-    # For a production version, replace these fallback lists with
-    # an official/current 34-province + commune dataset.
-    provinces_list = sorted(
-        [
-            "An Giang",
-            "Bà Rịa - Vũng Tàu",
-            "Bắc Ninh",
-            "Bến Tre",
-            "Bình Dương",
-            "Bình Định",
-            "Bình Phước",
-            "Bình Thuận",
-            "Cà Mau",
-            "Cần Thơ",
-            "Cao Bằng",
-            "Đà Nẵng",
-            "Đắk Lắk",
-            "Điện Biên",
-            "Đồng Nai",
-            "Đồng Tháp",
-            "Gia Lai",
-            "Hà Nội",
-            "Hà Tĩnh",
-            "Hải Phòng",
-            "Hậu Giang",
-            "Hồ Chí Minh",
-            "Hưng Yên",
-            "Khánh Hòa",
-            "Kiên Giang",
-            "Kon Tum",
-            "Lai Châu",
-            "Lâm Đồng",
-            "Lạng Sơn",
-            "Lào Cai",
-            "Long An",
-            "Nghệ An",
-            "Ninh Bình",
-            "Ninh Thuận",
-            "Phú Thọ",
-            "Phú Yên",
-            "Quảng Bình",
-            "Quảng Nam",
-            "Quảng Ngãi",
-            "Quảng Ninh",
-            "Quảng Trị",
-            "Sóc Trăng",
-            "Sơn La",
-            "Tây Ninh",
-            "Thái Bình",
-            "Thái Nguyên",
-            "Thanh Hóa",
-            "Tiền Giang",
-            "Trà Vinh",
-            "Tuyên Quang",
-            "Vĩnh Long",
-            "Vĩnh Phúc",
-            "Yên Bái",
-        ],
-        key=lambda x: x.lower(),
-    )
+    try:
+        admin_hierarchy = load_admin_hierarchy()
+        admin_data_ok = True
+    except Exception as exc:
+        admin_hierarchy = {}
+        admin_data_ok = False
+        st.error(
+            "Không tải được danh mục tỉnh/thành và phường/xã hiện hành. "
+            "Vui lòng tải lại trang hoặc thử lại sau."
+        )
+        st.caption(
+            f"Nguồn dữ liệu: {ADMIN_DATA_SOURCE_URL}"
+        )
+        st.code(str(exc))
 
-    selected_province = st.selectbox(
-        "Tỉnh / thành phố *",
-        provinces_list,
-        key="profile_province",
-    )
-
-    # Compact fallback: allow user to choose a commune from the
-    # province-specific sample, while keeping the schema easy to
-    # replace with the full official dataset.
-    commune_samples = {
-        "Đà Nẵng": [
-            "Hòa Phong",
-            "Hòa Phú",
-            "Hòa Sơn",
-            "Hòa Tiến",
-        ],
-        "Hồ Chí Minh": [
-            "Bến Nghé",
-            "Bến Thành",
-            "Tân Định",
-        ],
-        "Hà Nội": [
-            "Ba Đình",
-            "Ngọc Hà",
-            "Giảng Võ",
-        ],
-        "Đắk Lắk": [
-            "Buôn Ma Thuột",
-            "Ea Phê",
-        ],
-        "Khánh Hòa": [
-            "Nha Trang",
-            "Vĩnh Thái",
-        ],
-    }
-
-    available_communes = commune_samples.get(
-        selected_province,
-        [],
-    )
-
-    if available_communes:
-
-        commune_choice = st.selectbox(
-            "Phường / xã / đặc khu *",
-            ["— Chọn —"]
-            + sorted(
-                available_communes,
-                key=lambda x: x.lower(),
-            ),
-            key="profile_commune",
+    if admin_data_ok:
+        provinces_list = sorted(
+            admin_hierarchy.keys(),
+            key=str.casefold,
         )
 
-        commune_value = (
-            ""
-            if commune_choice == "— Chọn —"
-            else commune_choice
+        selected_province = st.selectbox(
+            "Tỉnh / thành phố *",
+            ["— Chọn tỉnh/thành —"] + provinces_list,
+            key="profile_province",
         )
 
+        if selected_province == "— Chọn tỉnh/thành —":
+            commune_value = ""
+            st.selectbox(
+                "Phường / xã / đặc khu *",
+                ["— Chọn tỉnh/thành trước —"],
+                disabled=True,
+                key="profile_commune_disabled",
+            )
+        else:
+            available_communes = admin_hierarchy[selected_province]
+            commune_choice = st.selectbox(
+                "Phường / xã / đặc khu *",
+                ["— Chọn phường/xã/đặc khu —"] + available_communes,
+                key="profile_commune",
+            )
+            commune_value = (
+                ""
+                if commune_choice == "— Chọn phường/xã/đặc khu —"
+                else commune_choice
+            )
+
+        st.caption(
+            "Danh mục địa giới được tải theo cấu trúc 2 cấp hiện hành; "
+            "không nhập tay tên phường/xã để tránh sai địa danh."
+        )
     else:
+        selected_province = ""
+        commune_value = ""
 
-        commune_value = st.text_input(
-            "Phường / xã / đặc khu *",
-            placeholder=(
-                "Danh mục mẫu chưa có tỉnh này; "
-                "nhập đúng tên để thử nghiệm"
-            ),
-            key="profile_commune_manual",
-        ).strip()
-
-        st.warning(
-            "Tỉnh này chưa có danh sách mẫu trong prototype. "
-            "Bản triển khai chính thức nên thay bộ dữ liệu này bằng "
-            "danh mục địa giới hiện hành đầy đủ."
-        )
-
-    if commune_value:
-
+    if selected_province and commune_value:
         st.success(
             f"📍 Đã chọn: **{commune_value}, {selected_province}**"
+        )
+
+    st.markdown("### 🔐 Đồng ý tham gia sàng lọc và nghiên cứu")
+    st.info(
+        "Để tiếp tục, người tham gia cần đọc và đồng ý với nội dung dưới đây. "
+        "Nếu không đồng ý, hệ thống sẽ **không thực hiện sàng lọc và không lưu hồ sơ/thông tin sức khỏe**."
+    )
+    with st.container(border=True):
+        st.markdown(
+            "**Tôi đồng ý cho nghiên cứu sinh sử dụng thông tin cá nhân, "
+            "thông tin khảo sát và thông tin sức khỏe/xét nghiệm do tôi cung cấp "
+            "cho mục đích sàng lọc cộng đồng Thalassemia và nghiên cứu khoa học.**"
+        )
+        st.markdown(
+            "Tôi hiểu rằng việc tham gia là tự nguyện; kết quả của hệ thống chỉ có "
+            "tính chất sàng lọc, không thay thế chẩn đoán của cơ sở y tế; dữ liệu "
+            "được lưu phục vụ mục đích nêu trên theo phiên bản chấp thuận của nghiên cứu. "
+            "Tôi có thể dừng tham gia bằng cách không tiếp tục sử dụng hệ thống."
+        )
+        research_consent = st.checkbox(
+            "✅ Tôi đã đọc, hiểu và đồng ý tham gia.",
+            key="research_consent",
+        )
+        st.caption(
+            f"Phiên bản nội dung chấp thuận: {CONSENT_VERSION}"
         )
 
 
@@ -1537,7 +1559,8 @@ phone = normalize_phone(
 )
 
 if (
-    phone
+    research_consent
+    and phone
     and valid_vietnam_phone(phone)
     and phone_exists(phone)
 ):
@@ -1551,9 +1574,22 @@ if (
 if st.button(
     "💾 LƯU / CẬP NHẬT HỒ SƠ",
     type="secondary",
+    disabled=not (research_consent and admin_data_ok),
 ):
 
-    if not full_name.strip():
+    if not research_consent:
+
+        st.error(
+            "Bạn cần đồng ý tham gia sàng lọc và nghiên cứu trước khi tiếp tục."
+        )
+
+    elif not admin_data_ok:
+
+        st.error(
+            "Chưa tải được danh mục địa giới hiện hành nên chưa thể lưu hồ sơ."
+        )
+
+    elif not full_name.strip():
 
         st.error(
             "Vui lòng nhập họ và tên."
@@ -1596,6 +1632,7 @@ if st.button(
             "age": calculate_age(
                 birth_date
             ),
+            "consent_at": datetime.now().isoformat(timespec="seconds"),
         }
 
         action = upsert_patient(
@@ -1621,6 +1658,12 @@ if st.button(
 patient = st.session_state.get(
     "patient_profile"
 )
+
+if not st.session_state.get("research_consent", False):
+    st.warning(
+        "🔒 Bạn chưa đồng ý tham gia. Hệ thống không mở Vòng 1 và không xử lý/lưu dữ liệu sàng lọc."
+    )
+    st.stop()
 
 if not patient:
 
