@@ -778,6 +778,41 @@ def round1_category(
     )
 
 
+
+# ============================================================
+# ĐƠN VỊ XÉT NGHIỆM — CHUYỂN VỀ ĐƠN VỊ CHUẨN NỘI BỘ
+# ============================================================
+# Nội bộ:
+#   Hb  -> g/dL
+#   RBC -> T/L
+#   MCV -> fL
+#   MCH -> pg
+#   RDW -> %
+#
+# Người dùng chọn đúng đơn vị đang in trên phiếu xét nghiệm.
+# Hệ thống chỉ chuyển đổi trước khi tính toán.
+# ============================================================
+
+def convert_hb_to_g_dl(value, unit):
+    if unit == "g/dL":
+        return float(value)
+    if unit == "g/L":
+        return float(value) / 10.0
+    raise ValueError("Đơn vị Hb không hợp lệ.")
+
+
+def convert_rbc_to_t_l(value, unit):
+    # Về mặt số trị:
+    # 1 T/L = 1 x 10^12/L = 1 x 10^6/µL
+    if unit in [
+        "T/L",
+        "10^12/L",
+        "10^6/µL",
+    ]:
+        return float(value)
+    raise ValueError("Đơn vị RBC không hợp lệ.")
+
+
 # ============================================================
 # ROUND 2 CBC
 # ============================================================
@@ -1135,17 +1170,22 @@ hãy mang kết quả đến nhân viên y tế và có thể nhập các chỉ 
         c1, c2, c3, c4 = st.columns(4)
 
         with c1:
-            hb = st.number_input(
-                "Hb (g/dL)",
-                3.0,
-                25.0,
-                13.0,
-                0.1,
+            low_hb_unit = st.selectbox(
+                "Đơn vị Hb",
+                ["g/dL", "g/L"],
+                key="low_cbc_hb_unit",
+            )
+            low_hb_input = st.number_input(
+                "Hb",
+                min_value=3.0 if low_hb_unit == "g/dL" else 30.0,
+                max_value=25.0 if low_hb_unit == "g/dL" else 250.0,
+                value=13.0 if low_hb_unit == "g/dL" else 130.0,
+                step=0.1,
                 key="low_cbc_hb",
             )
 
         with c2:
-            mcv = st.number_input(
+            low_mcv = st.number_input(
                 "MCV (fL)",
                 30.0,
                 150.0,
@@ -1155,7 +1195,7 @@ hãy mang kết quả đến nhân viên y tế và có thể nhập các chỉ 
             )
 
         with c3:
-            mch = st.number_input(
+            low_mch = st.number_input(
                 "MCH (pg)",
                 10.0,
                 50.0,
@@ -1165,8 +1205,13 @@ hãy mang kết quả đến nhân viên y tế và có thể nhập các chỉ 
             )
 
         with c4:
-            rbc = st.number_input(
-                "RBC (T/L)",
+            low_rbc_unit = st.selectbox(
+                "Đơn vị RBC",
+                ["T/L", "10^12/L", "10^6/µL"],
+                key="low_cbc_rbc_unit",
+            )
+            low_rbc_input = st.number_input(
+                "RBC",
                 1.0,
                 10.0,
                 4.8,
@@ -1174,13 +1219,17 @@ hãy mang kết quả đến nhân viên y tế và có thể nhập các chỉ 
                 key="low_cbc_rbc",
             )
 
-        rdw = st.number_input(
+        low_rdw = st.number_input(
             "RDW-CV (%)",
             5.0,
             40.0,
             13.0,
             0.1,
             key="low_cbc_rdw",
+        )
+
+        st.caption(
+            "Hệ thống sẽ quy đổi Hb về g/dL và RBC về T/L trước khi tính toán."
         )
 
         if st.button(
@@ -1196,12 +1245,22 @@ hãy mang kết quả đến nhân viên y tế và có thể nhập các chỉ 
 
             else:
 
+                hb = convert_hb_to_g_dl(
+                    low_hb_input,
+                    low_hb_unit,
+                )
+
+                rbc = convert_rbc_to_t_l(
+                    low_rbc_input,
+                    low_rbc_unit,
+                )
+
                 score, mentzer, reasons = (
                     calculate_round2_score(
-                        mcv,
-                        mch,
+                        low_mcv,
+                        low_mch,
                         rbc,
-                        rdw,
+                        low_rdw,
                     )
                 )
 
@@ -1322,7 +1381,7 @@ def create_word(
             )
 
         doc.add_paragraph(
-            f"Hb thực đo: {r2['hb']:.1f} g/dL"
+            f"Hb sau quy đổi nội bộ: {r2['hb']:.1f} g/dL"
         )
 
         doc.add_paragraph(
@@ -2244,12 +2303,17 @@ if st.session_state.get(
         c1, c2, c3, c4, c5 = st.columns(5)
 
         with c1:
-            hb = st.number_input(
-                "Hb (g/dL)",
-                3.0,
-                25.0,
-                13.0,
-                0.1,
+            hb_unit = st.selectbox(
+                "Đơn vị Hb",
+                ["g/dL", "g/L"],
+                key="round2_hb_unit",
+            )
+            hb_input = st.number_input(
+                "Hb",
+                min_value=3.0 if hb_unit == "g/dL" else 30.0,
+                max_value=25.0 if hb_unit == "g/dL" else 250.0,
+                value=13.0 if hb_unit == "g/dL" else 130.0,
+                step=0.1,
                 key="round2_hb_input",
             )
 
@@ -2274,8 +2338,13 @@ if st.session_state.get(
             )
 
         with c4:
-            rbc = st.number_input(
-                "RBC (T/L)",
+            rbc_unit = st.selectbox(
+                "Đơn vị RBC",
+                ["T/L", "10^12/L", "10^6/µL"],
+                key="round2_rbc_unit",
+            )
+            rbc_input = st.number_input(
+                "RBC",
                 1.0,
                 10.0,
                 4.8,
@@ -2292,6 +2361,11 @@ if st.session_state.get(
                 0.1,
                 key="round2_rdw_input",
             )
+
+        st.caption(
+            "Đơn vị bạn chọn không làm thay đổi kết quả: hệ thống tự quy đổi "
+            "về đơn vị chuẩn nội bộ trước khi tính Mentzer và Risk Score."
+        )
 
     # --------------------------------------------------------
     # 3 ANALYZE
@@ -2318,6 +2392,16 @@ if st.session_state.get(
             )
 
         else:
+
+            hb = convert_hb_to_g_dl(
+                hb_input,
+                hb_unit,
+            )
+
+            rbc = convert_rbc_to_t_l(
+                rbc_input,
+                rbc_unit,
+            )
 
             elevation = st.session_state.get(
                 "location_elevation"
