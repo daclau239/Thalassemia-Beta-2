@@ -258,6 +258,18 @@ def verify_password(password, stored_hash, stored_salt):
     return secrets.compare_digest(digest, stored_hash)
 
 
+def normalize_phone(value):
+    """Chuẩn hóa số điện thoại Việt Nam về chuỗi 10 chữ số bắt đầu bằng 0."""
+    digits = re.sub(r"\D", "", str(value or ""))
+    if digits.startswith("84") and len(digits) == 11:
+        digits = "0" + digits[2:]
+    return digits
+
+
+def valid_vietnam_phone(phone):
+    """Kiểm tra số điện thoại Việt Nam dạng cơ bản cho prototype."""
+    return bool(re.fullmatch(r"0\d{9}", str(phone or "")))
+
 def valid_email(email):
     return bool(
         re.fullmatch(
