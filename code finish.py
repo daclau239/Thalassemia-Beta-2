@@ -1,6 +1,7 @@
 
 import io
 import math
+import os
 import re
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -86,15 +87,32 @@ FOLLOWUP_DAYS = 30
 # ============================================================
 
 def get_google_key():
+    """
+    Tìm Google Maps API key từ:
+      1) st.secrets["google"]["maps_api_key"]
+      2) st.secrets["GOOGLE_MAPS_API_KEY"]
+      3) biến môi trường GOOGLE_MAPS_API_KEY
+
+    Không hiển thị API key lên giao diện.
+    """
     try:
-        return st.secrets["google"]["maps_api_key"]
+        key = st.secrets["google"]["maps_api_key"]
+        if key:
+            return str(key).strip()
     except Exception:
         pass
 
     try:
-        return st.secrets["GOOGLE_MAPS_API_KEY"]
+        key = st.secrets["GOOGLE_MAPS_API_KEY"]
+        if key:
+            return str(key).strip()
     except Exception:
-        return ""
+        pass
+
+    return os.environ.get(
+        "GOOGLE_MAPS_API_KEY",
+        "",
+    ).strip()
 
 
 GOOGLE_API_KEY = get_google_key()
@@ -1463,6 +1481,14 @@ st.write(
     "Vòng 2 → chọn địa điểm → độ cao + CBC → đánh giá → gợi ý cơ sở y tế."
 )
 
+if not GOOGLE_API_KEY:
+    st.info(
+        "🔑 **Cần cấu hình Google Maps API key cho Vòng 2:** "
+        "Streamlit Cloud → Manage app → Settings → Secrets, sau đó thêm "
+        '`[google]\nmaps_api_key = "YOUR_GOOGLE_MAPS_API_KEY"`'
+        "."
+    )
+
 with st.expander(
     "ℹ️ Nguyên tắc hệ thống",
     expanded=False,
@@ -1496,6 +1522,11 @@ with st.sidebar:
     else:
         st.warning(
             "Google Maps API: chưa cấu hình"
+        )
+        st.caption(
+            "Trong Streamlit Cloud: Settings → Secrets, thêm:\n\n"
+            "[google]\n"
+            'maps_api_key = "YOUR_GOOGLE_MAPS_API_KEY"'
         )
 
     if ADMIN_DATA_OK:
@@ -2158,8 +2189,10 @@ if st.session_state.get(
 
             if not GOOGLE_API_KEY:
 
-                st.error(
-                    "Chưa cấu hình Google Maps API key."
+                st.warning(
+                    "Chưa có Google Maps API key nên chưa thể tự động "
+                    "lấy tọa độ/độ cao từ Google. "
+                    "Hãy cấu hình key trong Streamlit Secrets."
                 )
 
             else:
