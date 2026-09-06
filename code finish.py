@@ -224,6 +224,22 @@ def get_db():
             round2_reasons TEXT,
             findings_json TEXT,
             advice_json TEXT,
+            round3_completed INTEGER NOT NULL DEFAULT 0,
+            round3_test_date TEXT,
+            round3_facility TEXT,
+            round3_test_type TEXT,
+            round3_hba REAL,
+            round3_hba2 REAL,
+            round3_hbf REAL,
+            round3_hbe REAL,
+            round3_ferritin REAL,
+            round3_serum_iron REAL,
+            round3_transferrin_saturation REAL,
+            round3_genetic_result TEXT,
+            round3_lab_conclusion TEXT,
+            round3_followup_status TEXT,
+            round3_counseling_note TEXT,
+            round3_followup_date TEXT,
             FOREIGN KEY(phone) REFERENCES patient_profiles(phone)
         )
         """
@@ -261,6 +277,30 @@ def get_db():
             conn.execute(
                 f"ALTER TABLE patient_profiles ADD COLUMN {column} {definition}"
             )
+
+    # Migration cho dữ liệu theo dõi Vòng 3 / xét nghiệm chuyên sâu.
+    record_columns = {row[1] for row in conn.execute("PRAGMA table_info(screening_records)").fetchall()}
+    record_migrations = [
+        ("round3_completed", "INTEGER NOT NULL DEFAULT 0"),
+        ("round3_test_date", "TEXT"),
+        ("round3_facility", "TEXT"),
+        ("round3_test_type", "TEXT"),
+        ("round3_hba", "REAL"),
+        ("round3_hba2", "REAL"),
+        ("round3_hbf", "REAL"),
+        ("round3_hbe", "REAL"),
+        ("round3_ferritin", "REAL"),
+        ("round3_serum_iron", "REAL"),
+        ("round3_transferrin_saturation", "REAL"),
+        ("round3_genetic_result", "TEXT"),
+        ("round3_lab_conclusion", "TEXT"),
+        ("round3_followup_status", "TEXT"),
+        ("round3_counseling_note", "TEXT"),
+        ("round3_followup_date", "TEXT"),
+    ]
+    for column, definition in record_migrations:
+        if column not in record_columns:
+            conn.execute(f"ALTER TABLE screening_records ADD COLUMN {column} {definition}")
 
     conn.commit()
     return conn
@@ -769,6 +809,33 @@ def update_screening_round2(record_id, r2):
     conn.close()
 
 
+
+def update_screening_round3(record_id, r3):
+    """Lưu kết quả xét nghiệm chuyên sâu và thông tin theo dõi sau sàng lọc."""
+    if not record_id:
+        return
+    conn = get_db()
+    conn.execute(
+        """UPDATE screening_records SET
+            round3_completed = 1, round3_test_date = ?, round3_facility = ?,
+            round3_test_type = ?, round3_hba = ?, round3_hba2 = ?, round3_hbf = ?,
+            round3_hbe = ?, round3_ferritin = ?, round3_serum_iron = ?,
+            round3_transferrin_saturation = ?, round3_genetic_result = ?,
+            round3_lab_conclusion = ?, round3_followup_status = ?,
+            round3_counseling_note = ?, round3_followup_date = ?
+        WHERE id = ?""",
+        (
+            r3.get("test_date"), r3.get("facility"), r3.get("test_type"),
+            r3.get("hba"), r3.get("hba2"), r3.get("hbf"), r3.get("hbe"),
+            r3.get("ferritin"), r3.get("serum_iron"), r3.get("transferrin_saturation"),
+            r3.get("genetic_result"), r3.get("lab_conclusion"),
+            r3.get("followup_status"), r3.get("counseling_note"), r3.get("followup_date"),
+            int(record_id),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
 def list_screening_records_for_staff():
     """Lấy 01 lượt sàng lọc duy nhất cho mỗi người.
 
@@ -787,7 +854,12 @@ def list_screening_records_for_staff():
             s.round2_completed, s.altitude_choice, s.altitude_adjustment,
             s.hb, s.hb_adjusted, s.mcv, s.mch, s.rbc, s.rdw, s.mentzer,
             s.round2_score, s.round2_category, s.round2_conclusion,
-            s.round1_conclusion
+            s.round1_conclusion,
+            s.round3_completed, s.round3_test_date, s.round3_facility, s.round3_test_type,
+            s.round3_hba, s.round3_hba2, s.round3_hbf, s.round3_hbe,
+            s.round3_ferritin, s.round3_serum_iron, s.round3_transferrin_saturation,
+            s.round3_genetic_result, s.round3_lab_conclusion, s.round3_followup_status,
+            s.round3_counseling_note, s.round3_followup_date
         FROM screening_records s
         JOIN patient_profiles p ON p.phone = s.phone
         WHERE p.research_consent = 1
@@ -857,6 +929,10 @@ def export_screening_xlsx(patient_rows, screening_rows):
         "Hb (g/dL)", "Hb sau hiệu chỉnh (g/dL)", "MCV (fL)", "MCH (pg)",
         "RBC (T/L)", "RDW-CV (%)", "Mentzer Index", "Điểm CBC",
         "Nguy cơ Vòng 2", "Kết luận Vòng 2", "Kết luận Vòng 1",
+        "Vòng 3", "Ngày xét nghiệm chuyên sâu", "Cơ sở thực hiện", "Loại xét nghiệm",
+        "HbA (%)", "HbA2 (%)", "HbF (%)", "HbE (%)", "Ferritin", "Sắt huyết thanh",
+        "Độ bão hòa transferrin (%)", "Kết quả di truyền", "Kết luận trên phiếu xét nghiệm",
+        "Trạng thái theo dõi", "Ghi chú tư vấn", "Ngày hẹn theo dõi",
     ]
     for c, h in enumerate(screening_headers):
         ws2.write(0, c, h, header_fmt)
@@ -873,6 +949,12 @@ def export_screening_xlsx(patient_rows, screening_rows):
             row[22] if row[22] is not None else "", row[23] if row[23] is not None else "",
             row[24] if row[24] is not None else "", row[25] if row[25] is not None else "",
             row[26] or "", row[27] or "", row[28] or "",
+            "Có" if row[29] else "Chưa", row[30] or "", row[31] or "", row[32] or "",
+            row[33] if row[33] is not None else "", row[34] if row[34] is not None else "",
+            row[35] if row[35] is not None else "", row[36] if row[36] is not None else "",
+            row[37] if row[37] is not None else "", row[38] if row[38] is not None else "",
+            row[39] if row[39] is not None else "", row[40] or "", row[41] or "",
+            row[42] or "", row[43] or "", row[44] or "",
         ]
         for c, value in enumerate(values):
             fmt = date_fmt if c in (1, 12) and isinstance(value, datetime) else cell_fmt
@@ -1084,7 +1166,7 @@ def render_admin_console(user):
     st.subheader("📊 DỮ LIỆU NGƯỜI THAM GIA — DẠNG BẢNG")
     st.caption(
         "🔒 Chỉ quản trị viên và nhân sự đã được quản trị viên phê duyệt mới xem được dữ liệu này. "
-        "Bảng sàng lọc hiển thị lượt mới nhất của từng người theo số điện thoại; các lượt cũ vẫn được lưu trong cơ sở dữ liệu."
+        "Bảng sàng lọc chỉ giữ một bản ghi hiện hành cho mỗi số điện thoại; khi sàng lọc lại, bản ghi cũ được thay thế để tạo dataset nghiên cứu sạch."
     )
 
     tab1, tab2 = st.tabs(["👤 Hồ sơ hiện tại", "🧪 Lượt sàng lọc gần nhất"])
@@ -1123,7 +1205,10 @@ def render_admin_console(user):
             "Họ tên", "Tỉnh/thành", "Phường/xã/đặc khu", "Điểm Vòng 1",
             "Nguy cơ Vòng 1", "Vòng 2", "Độ cao", "Hb", "Hb sau hiệu chỉnh",
             "MCV", "MCH", "RBC", "RDW", "Mentzer", "Điểm CBC",
-            "Nguy cơ Vòng 2", "Kết luận",
+            "Nguy cơ Vòng 2", "Kết luận", "Vòng 3", "Ngày xét nghiệm",
+            "Cơ sở thực hiện", "Loại xét nghiệm", "HbA2", "HbF", "HbE", "Ferritin",
+            "Kết quả di truyền", "Kết luận xét nghiệm", "Trạng thái theo dõi", "Ghi chú tư vấn",
+            "Ngày hẹn theo dõi",
         ]
         screening_table = []
         for row in screening_rows:
@@ -1150,6 +1235,19 @@ def render_admin_console(user):
                 "Điểm CBC": row[25] if row[25] is not None else "",
                 "Nguy cơ Vòng 2": row[26] or "",
                 "Kết luận": row[27] or row[28] or "",
+                "Vòng 3": "Có" if row[29] else "Chưa",
+                "Ngày xét nghiệm": row[30] or "",
+                "Cơ sở thực hiện": row[31] or "",
+                "Loại xét nghiệm": row[32] or "",
+                "HbA2": row[34] if row[34] is not None else "",
+                "HbF": row[35] if row[35] is not None else "",
+                "HbE": row[36] if row[36] is not None else "",
+                "Ferritin": row[37] if row[37] is not None else "",
+                "Kết quả di truyền": row[40] or "",
+                "Kết luận xét nghiệm": row[41] or "",
+                "Trạng thái theo dõi": row[42] or "",
+                "Ghi chú tư vấn": row[43] or "",
+                "Ngày hẹn theo dõi": row[44] or "",
             })
         if screening_table:
             st.dataframe(screening_table, use_container_width=True, hide_index=True)
@@ -3536,6 +3634,94 @@ if st.session_state.get(
             "Những nhận định trên chỉ hỗ trợ sàng lọc và phải được "
             "đối chiếu với lâm sàng, xét nghiệm chuyên sâu và nhân viên y tế."
         )
+
+        # ----------------------------------------------------
+        # ROUND 3 — FOLLOW-UP / SPECIALIZED RESULTS
+        # ----------------------------------------------------
+
+        st.subheader("3. THEO DÕI SAU SÀNG LỌC — KẾT QUẢ XÉT NGHIỆM CHUYÊN SÂU")
+        st.caption(
+            "Nếu người tham gia đã thực hiện điện di huyết sắc tố, HPLC, xét nghiệm sắt hoặc xét nghiệm di truyền, "
+            "có thể nhập bổ sung tại đây để phục vụ theo dõi và tư vấn về sau. Vòng 3 không chấm điểm và không tự xác lập chẩn đoán."
+        )
+
+        with st.form("round3_followup_form", clear_on_submit=False):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                r3_date = st.date_input("Ngày thực hiện xét nghiệm", value=None, key="round3_test_date")
+            with c2:
+                r3_type = st.selectbox(
+                    "Loại xét nghiệm",
+                    ["Điện di huyết sắc tố", "HPLC huyết sắc tố", "Xét nghiệm di truyền",
+                     "Ferritin / đánh giá sắt", "Kết hợp nhiều xét nghiệm", "Khác"],
+                    key="round3_test_type",
+                )
+            with c3:
+                r3_facility = st.text_input("Cơ sở thực hiện", key="round3_facility", placeholder="Bệnh viện / phòng xét nghiệm")
+
+            st.markdown("**Kết quả huyết sắc tố (nếu có trên phiếu xét nghiệm)**")
+            h1, h2, h3, h4 = st.columns(4)
+            with h1:
+                r3_hba = st.number_input("HbA (%)", min_value=0.0, max_value=100.0, value=None, step=0.1, key="round3_hba")
+            with h2:
+                r3_hba2 = st.number_input("HbA2 (%)", min_value=0.0, max_value=30.0, value=None, step=0.1, key="round3_hba2")
+            with h3:
+                r3_hbf = st.number_input("HbF (%)", min_value=0.0, max_value=100.0, value=None, step=0.1, key="round3_hbf")
+            with h4:
+                r3_hbe = st.number_input("HbE (%)", min_value=0.0, max_value=100.0, value=None, step=0.1, key="round3_hbe")
+
+            st.markdown("**Xét nghiệm liên quan khác (nếu có)**")
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                r3_ferritin = st.number_input("Ferritin", min_value=0.0, max_value=10000.0, value=None, step=0.1, key="round3_ferritin")
+            with f2:
+                r3_iron = st.number_input("Sắt huyết thanh", min_value=0.0, max_value=1000.0, value=None, step=0.1, key="round3_iron")
+            with f3:
+                r3_tsat = st.number_input("Độ bão hòa transferrin (%)", min_value=0.0, max_value=100.0, value=None, step=0.1, key="round3_tsat")
+
+            r3_genetic = st.text_area("Kết quả xét nghiệm di truyền (nếu có)", key="round3_genetic", placeholder="Ghi theo phiếu xét nghiệm hoặc tóm tắt chính xác kết quả...")
+            r3_lab = st.text_area("Kết luận trên phiếu xét nghiệm / nhận xét của cơ sở thực hiện", key="round3_lab", placeholder="Ưu tiên ghi đúng nội dung của cơ sở xét nghiệm, không tự suy diễn.")
+
+            q1, q2 = st.columns(2)
+            with q1:
+                r3_status = st.selectbox(
+                    "Trạng thái theo dõi",
+                    ["Đã có kết quả", "Đã thực hiện — đang chờ kết quả", "Chưa thực hiện"],
+                    key="round3_status",
+                )
+            with q2:
+                r3_follow_date = st.date_input("Ngày hẹn theo dõi tiếp theo (nếu có)", value=None, key="round3_follow_date")
+
+            r3_note = st.text_area(
+                "Ghi chú tư vấn / theo dõi",
+                key="round3_note",
+                placeholder="Ví dụ: mang kết quả đến bác sĩ Huyết học; cân nhắc tư vấn di truyền khi phù hợp...",
+            )
+
+            save_r3 = st.form_submit_button("LƯU KẾT QUẢ THEO DÕI", type="primary", use_container_width=True)
+
+        if save_r3:
+            has_result = any(v is not None for v in [r3_hba, r3_hba2, r3_hbf, r3_hbe, r3_ferritin, r3_iron, r3_tsat]) or bool(r3_genetic.strip()) or bool(r3_lab.strip())
+            if r3_status == "Đã có kết quả" and not has_result:
+                st.warning("Bạn chọn 'Đã có kết quả' nhưng chưa nhập dữ liệu. Vui lòng kiểm tra lại.")
+            else:
+                update_screening_round3(
+                    st.session_state.get("screening_id"),
+                    {
+                        "test_date": r3_date.isoformat() if r3_date else None,
+                        "facility": r3_facility.strip() or None, "test_type": r3_type,
+                        "hba": r3_hba, "hba2": r3_hba2, "hbf": r3_hbf, "hbe": r3_hbe,
+                        "ferritin": r3_ferritin, "serum_iron": r3_iron, "transferrin_saturation": r3_tsat,
+                        "genetic_result": r3_genetic.strip() or None, "lab_conclusion": r3_lab.strip() or None,
+                        "followup_status": r3_status, "counseling_note": r3_note.strip() or None,
+                        "followup_date": r3_follow_date.isoformat() if r3_follow_date else None,
+                    },
+                )
+                st.session_state["round3_completed"] = True
+                st.success("Đã lưu kết quả theo dõi sau sàng lọc.")
+
+        if st.session_state.get("round3_completed", False):
+            st.info("Hồ sơ đã có dữ liệu Vòng 3. Khi có kết quả mới, bạn có thể cập nhật lại để duy trì hồ sơ theo dõi hiện hành.")
 
         # ----------------------------------------------------
         # MEDICAL FACILITIES
