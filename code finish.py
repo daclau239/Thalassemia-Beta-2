@@ -11,6 +11,31 @@ from datetime import date, datetime, timedelta
 
 import requests
 import streamlit as st
+
+# ===== PROFESSIONAL HEMATOLOGY UI =====
+st.markdown("""
+<style>
+:root { --heme-navy:#17324D; --heme-red:#8E2C3A; --heme-light:#F5F7FA; --heme-border:#D8DEE6; }
+.main .block-container { max-width: 1180px; padding-top: 2rem; padding-bottom: 3rem; }
+[data-testid="stHeader"] { background: transparent; }
+.hematology-brand { border-left: 5px solid var(--heme-red); padding: 0.15rem 0 0.15rem 1rem; margin-bottom: .35rem; }
+.hematology-brand .eyebrow { font-size:.78rem; letter-spacing:.16em; color:#687789; font-weight:700; text-transform:uppercase; }
+.hematology-brand .title { font-size:2rem; line-height:1.15; color:var(--heme-navy); font-weight:750; margin-top:.18rem; }
+.hematology-brand .subtitle { color:#5B6775; font-size:.95rem; margin-top:.45rem; }
+.section-rule { height:1px; background:var(--heme-border); margin:1.2rem 0; }
+[data-testid="stExpander"] { border:1px solid var(--heme-border); border-radius:10px; background:#fff; }
+[data-testid="stExpander"] summary p { color:var(--heme-navy); font-weight:700; }
+[data-testid="stSidebar"] { border-right:1px solid var(--heme-border); }
+[data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { color:var(--heme-navy); }
+.stButton > button { border-radius:7px; font-weight:600; }
+.contact-card { border:1px solid var(--heme-border); border-radius:10px; padding:1rem 1.15rem; background:#FAFBFC; margin-top:1rem; }
+.contact-card .label { color:#687789; font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
+.contact-card .name { color:var(--heme-navy); font-size:1.1rem; font-weight:750; margin:.2rem 0 .55rem; }
+.contact-card a { color:var(--heme-red); text-decoration:none; }
+.small-note { color:#687789; font-size:.82rem; }
+</style>
+""", unsafe_allow_html=True)
+
 from docx import Document
 
 # ============================================================
@@ -2278,60 +2303,138 @@ Các điểm số và ngưỡng của Vòng 1/Vòng 2 trong phiên bản hiện 
     st.link_button("ACOG – Carrier Screening for Hemoglobinopathies", "https://www.acog.org/womens-health/faqs/carrier-screening-for-hemoglobinopathies", use_container_width=True)
 
 
-st.title("🩸 HỆ THỐNG HỖ TRỢ SÀNG LỌC THALASSEMIA")
-st.caption("Sàng lọc ban đầu → CBC → phân tích huyết học → khuyến nghị → điều hướng cơ sở y tế")
+st.markdown("""<div class=\"hematology-brand\"><div class=\"eyebrow\">HEMATOLOGY · COMMUNITY SCREENING RESEARCH</div><div class=\"title\">Hệ thống hỗ trợ sàng lọc Thalassemia</div><div class=\"subtitle\">Sàng lọc ban đầu · Công thức máu · Phân tích huyết học · Khuyến nghị · Điều hướng cơ sở y tế</div></div><div class=\"section-rule\"></div>""", unsafe_allow_html=True)
+
+
 
 # ============================================================
 # GIỚI THIỆU ĐỀ TÀI — EXPANDER
-# ============================================================
-with st.expander("📚 GIỚI THIỆU ĐỀ TÀI & CƠ SỞ NGHIÊN CỨU — BẤM ĐỂ XEM", expanded=False):
+with st.expander("GIỚI THIỆU ĐỀ TÀI & CƠ SỞ NGHIÊN CỨU · BẤM ĐỂ XEM", expanded=False):
     st.markdown("## LỜI NÓI ĐẦU")
     st.markdown("""
-    Thalassemia là nhóm bệnh lý huyết sắc tố di truyền có ý nghĩa quan trọng đối với sức khỏe cộng đồng. Mức độ biểu hiện rất đa dạng, từ người mang gen gần như không có triệu chứng đến những thể bệnh gây thiếu máu nặng và cần theo dõi, điều trị lâu dài. Việc nhận diện người mang gen có ý nghĩa đối với tư vấn sức khỏe và dự phòng nguy cơ cho thế hệ sau.
+    Thalassemia là nhóm bệnh lý huyết sắc tố di truyền do giảm hoặc mất khả năng tổng hợp một hoặc nhiều chuỗi globin. Phổ biểu hiện rất rộng, từ người mang gen có biểu hiện huyết học nhẹ hoặc gần như không có triệu chứng đến các thể bệnh thiếu máu nặng cần chăm sóc y tế lâu dài. Vì có tính di truyền, việc nhận diện người mang gen không chỉ có ý nghĩa đối với cá nhân mà còn có giá trị trong tư vấn di truyền và dự phòng nguy cơ cho thế hệ sau.
 
-    Trong thực tế, **công thức máu (CBC)** là một trong những xét nghiệm huyết học cơ bản và có khả năng tiếp cận rộng rãi hơn so với HPLC, điện di hemoglobin hoặc xét nghiệm phân tử. Các chỉ số Hb, MCV, MCH, RBC và RDW có thể cung cấp những dấu hiệu ban đầu để nhận diện kiểu hình hồng cầu cần được đánh giá thêm.
+    Trong thực hành sàng lọc, **công thức máu (CBC) và các chỉ số hồng cầu** là những dữ liệu ban đầu có giá trị để nhận diện kiểu hình hồng cầu nhỏ, nhược sắc. Tuy nhiên, CBC không thể tự xác định loại hemoglobinopathy hay biến thể gen. Khi có dấu hiệu nghi ngờ, người tham gia cần được đánh giá tiếp bằng tình trạng sắt, HPLC/điện di hemoglobin và trong những trường hợp phù hợp là xét nghiệm phân tử.
 
-    Từ thực tế đó, đề tài **“Hệ thống hỗ trợ sàng lọc Thalassemia trong cộng đồng”** được xây dựng nhằm kết nối thông tin tiền sử với dữ liệu CBC, giúp người tham gia hiểu kết quả, nhận biết mức độ cần lưu ý và định hướng bước đánh giá tiếp theo. Hệ thống **không thay thế bác sĩ và không đưa ra chẩn đoán xác định**.
+    Từ nhu cầu kết nối giữa **sàng lọc ban đầu – dữ liệu CBC – giải thích kết quả – khuyến nghị – tiếp cận cơ sở y tế**, đề tài **“Hệ thống hỗ trợ sàng lọc Thalassemia trong cộng đồng”** được xây dựng. Hệ thống được định hướng như một công cụ hỗ trợ sức khỏe cộng đồng, không thay thế bác sĩ và không đưa ra chẩn đoán xác định.
     """)
 
     st.markdown("## 1. LÝ DO CHỌN ĐỀ TÀI")
     st.markdown("""
-    Thalassemia không chỉ là vấn đề của từng cá nhân mà còn liên quan đến công tác chăm sóc sức khỏe và dự phòng bệnh di truyền trong cộng đồng. Nhiều người mang gen không có biểu hiện lâm sàng rõ ràng và có thể chỉ được phát hiện tình cờ khi làm công thức máu hoặc trong quá trình khám sức khỏe, chuẩn bị kết hôn và mang thai.
+    Thứ nhất, Thalassemia là bệnh lý di truyền có thể tồn tại âm thầm trong cộng đồng. Người mang gen có thể không có biểu hiện lâm sàng rõ ràng nhưng vẫn có ý nghĩa về mặt di truyền. Do đó, chỉ dựa vào triệu chứng để nhận diện là không đủ; cần có chiến lược sàng lọc phù hợp để phát hiện những trường hợp cần được đánh giá sâu hơn.
 
-    Bên cạnh đó, khả năng tiếp cận các xét nghiệm chuyên sâu không đồng đều. CBC thường dễ tiếp cận hơn, nhưng việc liên hệ các chỉ số MCV, MCH, RBC, RDW và Mentzer với nguy cơ Thalassemia không phải lúc nào cũng đơn giản đối với người dân. Vì vậy, cần có một công cụ hỗ trợ diễn giải bước đầu và định hướng khi nào nên đánh giá sâu hơn.
+    Thứ hai, **CBC là xét nghiệm có tính nền tảng trong thực hành huyết học**. Các thông số như Hb, MCV, MCH, RBC và RDW cung cấp thông tin về số lượng và đặc điểm hình thái của quần thể hồng cầu. Mẫu hình hồng cầu nhỏ, nhược sắc có thể gặp trong Thalassemia nhưng cũng gặp trong thiếu sắt và nhiều nguyên nhân khác. Vì vậy, vấn đề không chỉ là “đọc một con số”, mà là đặt các chỉ số vào đúng bối cảnh sàng lọc.
 
-    **Đề tài được lựa chọn với mục tiêu xây dựng một “cầu nối” giữa cộng đồng và cơ sở y tế:** bắt đầu từ tiền sử và yếu tố liên quan, tiếp nhận CBC đã có, phân tích các chỉ số huyết học theo mô hình sàng lọc prototype, sau đó đưa ra khuyến nghị và hướng tiếp cận cơ sở y tế phù hợp.
+    Thứ ba, các xét nghiệm chuyên sâu như **HPLC, điện di hemoglobin và xét nghiệm phân tử** có vai trò quan trọng nhưng không phải lúc nào cũng là bước đầu tiên hoặc dễ tiếp cận đối với mọi người dân. Một hệ thống hỗ trợ có thể giúp người sử dụng hiểu dữ liệu CBC đang có, nhận biết khi nào cần đánh giá thêm và tránh tâm lý tự kết luận chỉ từ một chỉ số.
 
-    Một nguyên tắc quan trọng của thiết kế là **Vòng 1 không dùng để loại người tham gia khỏi quá trình sàng lọc**. Điểm Vòng 1 chỉ có vai trò phân tầng ban đầu; người tham gia vẫn được tiếp tục Vòng 2 và nhập CBC nếu có. Điều này hạn chế nguy cơ hiểu sai rằng bảng câu hỏi có thể loại trừ hoàn toàn tình trạng mang gen Thalassemia.
+    Thứ tư, việc xây dựng hệ thống theo hướng **không loại người tham gia chỉ dựa trên bảng câu hỏi Vòng 1** giúp giảm nguy cơ bỏ sót người mang gen không có triệu chứng. Điểm Vòng 1 chỉ được sử dụng để phân tầng và đưa ra khuyến nghị; người tham gia vẫn có thể tiếp tục Vòng 2 để nhập CBC nếu có.
+
+    Từ những cơ sở trên, đề tài được lựa chọn với mục tiêu xây dựng một **cầu nối hỗ trợ sàng lọc trong cộng đồng**, bắt đầu từ thông tin nguy cơ và CBC, sau đó định hướng đánh giá chuyên sâu và tiếp cận cơ sở y tế khi cần thiết.
     """)
 
     st.markdown("## 2. MỤC TIÊU ĐỀ TÀI")
-    st.markdown("**2.1. Mục tiêu tổng quát**")
-    st.write("Xây dựng một hệ thống hỗ trợ sàng lọc Thalassemia trong cộng đồng dựa trên thông tin tiền sử và các chỉ số huyết học cơ bản, nhằm hỗ trợ nhận diện trường hợp cần được đánh giá thêm và định hướng tiếp cận cơ sở y tế phù hợp.")
-    st.markdown("**2.2. Mục tiêu cụ thể**")
+    st.markdown("### 2.1. Mục tiêu tổng quát")
+    st.write("Xây dựng hệ thống hỗ trợ sàng lọc Thalassemia trong cộng đồng dựa trên thông tin tiền sử và các chỉ số huyết học cơ bản, nhằm hỗ trợ nhận diện trường hợp cần được đánh giá thêm và định hướng tiếp cận cơ sở y tế phù hợp.")
+
+    st.markdown("### 2.2. Mục tiêu cụ thể")
     st.markdown("""
-    - Xây dựng bộ câu hỏi sàng lọc ban đầu gồm 20 câu.
-    - Phân tầng nguy cơ ban đầu nhưng không dùng để chẩn đoán hoặc loại trừ bệnh.
-    - Cho phép tất cả người tham gia tiếp tục Vòng 2 và nhập CBC khi có.
-    - Phân tích Hb, MCV, MCH, RBC, RDW và Mentzer theo mô hình prototype.
-    - Đưa ra khuyến nghị về đánh giá thiếu sắt, HPLC/điện di hemoglobin hoặc xét nghiệm phân tử khi phù hợp.
-    - Hỗ trợ điều hướng đến cơ sở y tế có năng lực chuyên môn phù hợp.
+    1. Xây dựng bộ câu hỏi sàng lọc ban đầu nhằm thu thập tiền sử gia đình, tiền sử huyết học và các yếu tố liên quan.
+    2. Phân tầng mức độ cần lưu ý ở Vòng 1 nhưng không sử dụng điểm số để chẩn đoán hoặc loại trừ Thalassemia.
+    3. Cho phép tất cả người tham gia tiếp tục Vòng 2 và nhập kết quả CBC khi có.
+    4. Phân tích Hb, MCV, MCH, RBC, RDW và Mentzer theo mô hình sàng lọc prototype.
+    5. Định hướng các bước đánh giá tiếp theo như tình trạng sắt, HPLC/điện di hemoglobin hoặc xét nghiệm phân tử khi phù hợp.
+    6. Hỗ trợ người tham gia tiếp cận cơ sở y tế có năng lực chuyên môn phù hợp.
     """)
 
-    st.markdown("## 3. CƠ SỞ KHOA HỌC VÀ PHẠM VI")
+    st.markdown("## 3. CƠ SỞ KHOA HỌC")
+    st.markdown("### 3.1. Cơ sở bệnh sinh và ý nghĩa của sàng lọc")
     st.markdown("""
-    **Hb** phản ánh lượng hemoglobin; **MCV** phản ánh kích thước trung bình hồng cầu; **MCH** phản ánh lượng hemoglobin trung bình trong mỗi hồng cầu; **RBC** cho biết số lượng hồng cầu; **RDW** phản ánh mức độ biến thiên kích thước hồng cầu. **Mentzer Index = MCV/RBC** là một chỉ số sàng lọc đơn giản, có thể hỗ trợ định hướng nhưng không phải xét nghiệm xác định.
+    Thalassemia phát sinh từ các biến thể di truyền làm giảm hoặc mất tổng hợp chuỗi globin. Sự mất cân bằng chuỗi globin có thể dẫn đến sinh hồng cầu không hiệu quả và mức độ thiếu máu khác nhau tùy kiểu gen, kiểu hình và thể bệnh. Ở người mang gen, biểu hiện thường nhẹ hơn đáng kể so với các thể bệnh Thalassemia có triệu chứng.
 
-    CBC chỉ cho thấy **kiểu hình huyết học**, không trực tiếp xác định biến thể hemoglobin hay gen bệnh. Khi có nghi ngờ phù hợp, có thể cần đánh giá tình trạng sắt như ferritin, HPLC/điện di hemoglobin và xét nghiệm phân tử theo chỉ định chuyên môn.
-
-    Các điểm số và ngưỡng trong phiên bản hiện tại là **prototype, chưa được thẩm định trên một quần thể người Việt Nam đủ lớn**. Vì vậy, kết quả của hệ thống chỉ mang ý nghĩa hỗ trợ sàng lọc và định hướng, không thay thế chẩn đoán lâm sàng.
+    Vì tình trạng mang gen có thể không biểu hiện rõ trên lâm sàng, **sàng lọc dựa trên dữ liệu huyết học và tiền sử** có vai trò nhận diện những trường hợp nên được xác nhận bằng xét nghiệm chuyên sâu. Đây là lý do hệ thống được thiết kế theo mô hình nhiều tầng thay vì cố gắng đưa ra chẩn đoán từ một bảng điểm duy nhất.
     """)
 
-    st.markdown("### 🔬 Tài liệu tham khảo chính")
-    st.markdown("WHO 2024 • GeneReviews – Beta-Thalassemia • ACOG – Carrier Screening for Hemoglobinopathies")
+    st.markdown("### 3.2. Vai trò của công thức máu (CBC)")
+    st.markdown("""
+    **Hb (hemoglobin):** phản ánh lượng hemoglobin trong máu và là chỉ số quan trọng khi đánh giá thiếu máu. Giá trị Hb cần được diễn giải theo tuổi, giới, thai kỳ, độ cao và các yếu tố liên quan; hệ thống sử dụng hiệu chỉnh độ cao theo hướng dẫn WHO 2024 ở mức prototype.
+
+    **MCV (Mean Corpuscular Volume):** phản ánh thể tích trung bình của hồng cầu. MCV giảm cho thấy hồng cầu nhỏ (microcytosis). Đây là một dấu hiệu thường gặp trong Thalassemia trait nhưng cũng có thể gặp trong thiếu sắt.
+
+    **MCH (Mean Corpuscular Hemoglobin):** phản ánh lượng hemoglobin trung bình trong một hồng cầu. MCH thấp thường đi cùng kiểu hình hồng cầu nhược sắc và có thể hỗ trợ nhận diện trường hợp cần đánh giá thêm.
+
+    **RBC (số lượng hồng cầu):** cung cấp thêm thông tin về số lượng hồng cầu. Trong một số trường hợp microcytosis, số lượng hồng cầu tương đối cao có thể hỗ trợ phân biệt Thalassemia trait với thiếu sắt, nhưng không đủ để xác định chẩn đoán.
+
+    **RDW (Red Cell Distribution Width):** phản ánh mức độ biến thiên kích thước hồng cầu. RDW có thể hỗ trợ diễn giải bối cảnh microcytosis, nhưng không có tính đặc hiệu đủ cao để dùng riêng cho chẩn đoán Thalassemia.
+    """)
+
+    st.markdown("### 3.3. Chỉ số Mentzer và các chỉ số phân biệt")
+    st.markdown("""
+    **Mentzer Index = MCV / RBC** là một chỉ số kinh điển được sử dụng như công cụ định hướng giữa thiếu sắt và Thalassemia trong một số bối cảnh sàng lọc. Tuy nhiên, đây chỉ là **chỉ số hỗ trợ**, không phải xét nghiệm xác nhận. Độ chính xác của các chỉ số phân biệt thay đổi theo quần thể, tuổi, tình trạng thiếu sắt đồng thời và thể bệnh.
+
+    Vì vậy, hệ thống không sử dụng Mentzer đơn độc. Kết quả được đặt cùng MCV, MCH, RBC, RDW và bối cảnh Vòng 1 để tạo ra một mức **nguy cơ sàng lọc prototype**.
+    """)
+
+    st.markdown("### 3.4. Vì sao phải đánh giá thiếu sắt?")
+    st.markdown("""
+    Thiếu sắt là một nguyên nhân phổ biến của thiếu máu hồng cầu nhỏ và có thể tạo ra kiểu hình CBC tương tự Thalassemia. Do đó, khi phát hiện microcytosis/nhược sắc, cần xem xét tình trạng sắt, thường với **ferritin và các xét nghiệm chuyển hóa sắt phù hợp** theo đánh giá chuyên môn.
+
+    Đặc biệt, người có khả năng mang Thalassemia không nên tự sử dụng sắt kéo dài chỉ vì thấy Hb thấp hoặc MCV thấp. Việc bổ sung sắt nên dựa trên bằng chứng thiếu sắt và chỉ định phù hợp.
+    """)
+
+    st.markdown("### 3.5. Vì sao CBC chưa đủ để xác định Thalassemia?")
+    st.markdown("""
+    CBC phản ánh **kiểu hình huyết học**, trong khi Thalassemia là một nhóm rối loạn có nguyên nhân di truyền. Vì vậy, cùng một mẫu hình hồng cầu nhỏ có thể xuất hiện trong nhiều tình trạng khác nhau.
+
+    Khi kết quả sàng lọc gợi ý, bước tiếp theo có thể bao gồm **HPLC hoặc điện di hemoglobin** để đánh giá thành phần hemoglobin. Trong những trường hợp cần xác định biến thể hoặc khi kết quả xét nghiệm huyết học chưa giải thích được tình trạng nghi ngờ, **xét nghiệm phân tử** có thể được cân nhắc theo chỉ định chuyên môn. Với α-thalassemia, xét nghiệm di truyền có thể đặc biệt hữu ích vì các xét nghiệm hemoglobin thường quy không phải lúc nào cũng xác định được tình trạng mang gen.
+    """)
+
+    st.markdown("### 3.6. Cơ sở thiết kế Vòng 1 → Vòng 2")
+    st.markdown("""
+    **Vòng 1** thu thập thông tin nguy cơ và tiền sử để tạo bối cảnh trước khi xem CBC. Điểm số chỉ nhằm phân tầng ban đầu.
+
+    **Vòng 2** tiếp nhận CBC và phân tích các chỉ số hồng cầu. Đây là tầng có tính khách quan hơn vì sử dụng dữ liệu xét nghiệm thực tế của người tham gia.
+
+    **Không có bước nào được thiết kế để “chẩn đoán Thalassemia”.** Kết quả cuối cùng được diễn đạt bằng các mức “thấp – trung bình – cao” về mức độ cần đánh giá thêm, kèm khuyến nghị bước tiếp theo. Người tham gia vẫn có thể cần xét nghiệm chuyên sâu và đánh giá bởi nhân viên y tế.
+    """)
+
+    st.markdown("### 3.7. Phạm vi và giới hạn của mô hình")
+    st.markdown("""
+    Phiên bản hiện tại là **prototype hỗ trợ sàng lọc**, trong đó các điểm số và ngưỡng phân tầng chưa được thẩm định trên một quần thể người Việt Nam đủ lớn. Do đó, kết quả không được sử dụng như tiêu chuẩn chẩn đoán, không thay thế xét nghiệm chuyên sâu và không được dùng để tự quyết định điều trị.
+
+    Mục tiêu của hệ thống là tạo ra một quy trình dễ tiếp cận: **nhận diện nguy cơ → xem CBC → giải thích → khuyến nghị → điều hướng**, sau đó việc xác nhận và xử trí thuộc về cơ sở y tế có thẩm quyền.
+    """)
+
+    st.markdown("## 4. TÀI LIỆU THAM KHẢO")
+    refs = [
+        ("World Health Organization. Guideline on haemoglobin cutoffs to define anaemia in individuals and populations. 2024.",
+         "https://www.who.int/publications/i/item/9789240088542"),
+        ("World Health Organization. WHO guidelines on best practices in the measurement of haemoglobin. 2024.",
+         "https://www.who.int/publications/b/71578"),
+        ("GeneReviews®. Beta-Thalassemia. University of Washington, Seattle. Updated February 12, 2026.",
+         "https://www.ncbi.nlm.nih.gov/books/NBK1426/"),
+        ("American College of Obstetricians and Gynecologists (ACOG). Carrier Screening for Genetic Conditions.",
+         "https://www.acog.org/clinical/clinical-guidance/committee-opinion/articles/2017/03/carrier-screening-for-genetic-conditions"),
+        ("American College of Obstetricians and Gynecologists (ACOG). Hemoglobinopathies in Pregnancy.",
+         "https://www.acog.org/clinical/clinical-guidance/practice-advisory/articles/2022/08/hemoglobinopathies-in-pregnancy"),
+        ("American College of Obstetricians and Gynecologists (ACOG). Carrier Screening for Hemoglobinopathies.",
+         "https://www.acog.org/womens-health/faqs/carrier-screening-for-hemoglobinopathies"),
+        ("Prevalence of Thalassemia in the Vietnamese Population and Building a Clinical Decision Support System for Prenatal Screening for Thalassemia.",
+         "https://pmc.ncbi.nlm.nih.gov/articles/PMC10171208/"),
+        ("Thalassemia among ethnic minorities in Vietnam: prevalence and molecular characterization.",
+         "https://pmc.ncbi.nlm.nih.gov/articles/PMC5496844/"),
+        ("A Review of Artificial Intelligence and Machine Learning Applications in Thalassemia Screening and Diagnosis.",
+         "https://pmc.ncbi.nlm.nih.gov/articles/PMC10177591/"),
+        ("Thalassaemia International Federation (TIF). Guidelines and Reports.",
+         "https://thalassaemia.org.cy/publications/tif-publications/guidelines-and-reports/"),
+    ]
+    for i, (title, url) in enumerate(refs, 1):
+        st.markdown(f"**{i}. [{title}]({url})**")
+        st.caption(url)
+
+st.markdown("""<div class=\"contact-card\"><div class=\"label\">Liên hệ tác giả</div><div class=\"name\">Nguyễn Đắc Lâu</div><div>Điện thoại: <a href=\"tel:0357930820\">0357930820</a></div><div>Email: <a href=\"mailto:nguyendaclau2309@gmail.com\">nguyendaclau2309@gmail.com</a></div><div class=\"small-note\">Tác giả và người phát triển nguyên mẫu hệ thống hỗ trợ sàng lọc Thalassemia.</div></div>""", unsafe_allow_html=True)
 
 st.divider()
-st.markdown("## 4. QUY TRÌNH THAM GIA SÀNG LỌC")
+st.markdown("## QUY TRÌNH THAM GIA SÀNG LỌC")
 st.caption("Hồ sơ → Đồng ý tham gia → Vòng 1 → CBC/Vòng 2 → Kết quả sàng lọc → Khuyến nghị → Điều hướng cơ sở y tế")
 
 
@@ -2340,7 +2443,7 @@ st.caption("Hồ sơ → Đồng ý tham gia → Vòng 1 → CBC/Vòng 2 → K�
 # ============================================================
 
 with st.sidebar:
-    st.header("🧭 QUY TRÌNH")
+    st.header("QUY TRÌNH")
     st.caption("Hồ sơ → Vòng 1 → CBC → Phân tích → Khuyến nghị → Cơ sở y tế")
     if GOOGLE_API_KEY:
         st.caption("🟢 Google Places đã cấu hình")
