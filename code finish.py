@@ -2278,57 +2278,57 @@ Các điểm số và ngưỡng của Vòng 1/Vòng 2 trong phiên bản hiện 
     st.link_button("ACOG – Carrier Screening for Hemoglobinopathies", "https://www.acog.org/womens-health/faqs/carrier-screening-for-hemoglobinopathies", use_container_width=True)
 
 
-st.title("🩸 TIỂU LUẬN NGHIÊN CỨU — HỆ THỐNG HỖ TRỢ SÀNG LỌC THALASSEMIA")
-st.caption("Từ nhận diện nguy cơ trong cộng đồng → CBC → phân tích huyết học → khuyến nghị → điều hướng cơ sở y tế")
+st.title("🩸 HỆ THỐNG HỖ TRỢ SÀNG LỌC THALASSEMIA")
+st.caption("Sàng lọc ban đầu → CBC → phân tích huyết học → khuyến nghị → điều hướng cơ sở y tế")
 
 # ============================================================
-# PHẦN MỞ ĐẦU THEO CẤU TRÚC TIỂU LUẬN
+# GIỚI THIỆU ĐỀ TÀI — EXPANDER
 # ============================================================
+with st.expander("📚 GIỚI THIỆU ĐỀ TÀI & CƠ SỞ NGHIÊN CỨU — BẤM ĐỂ XEM", expanded=False):
+    st.markdown("## LỜI NÓI ĐẦU")
+    st.markdown("""
+    Thalassemia là nhóm bệnh lý huyết sắc tố di truyền có ý nghĩa quan trọng đối với sức khỏe cộng đồng. Mức độ biểu hiện rất đa dạng, từ người mang gen gần như không có triệu chứng đến những thể bệnh gây thiếu máu nặng và cần theo dõi, điều trị lâu dài. Việc nhận diện người mang gen có ý nghĩa đối với tư vấn sức khỏe và dự phòng nguy cơ cho thế hệ sau.
 
-st.markdown("## LỜI NÓI ĐẦU")
-st.markdown("""
-Thalassemia là nhóm bệnh lý huyết sắc tố di truyền có ý nghĩa quan trọng đối với sức khỏe cộng đồng. Mức độ biểu hiện của bệnh rất đa dạng, từ người mang gen gần như không có triệu chứng đến những thể bệnh gây thiếu máu nặng và cần được theo dõi, điều trị lâu dài. Đặc biệt, người mang gen có thể không biết tình trạng của mình nếu chưa từng được sàng lọc, trong khi việc nhận diện người mang gen có ý nghĩa quan trọng đối với tư vấn sức khỏe và dự phòng nguy cơ cho thế hệ sau.
+    Trong thực tế, **công thức máu (CBC)** là một trong những xét nghiệm huyết học cơ bản và có khả năng tiếp cận rộng rãi hơn so với HPLC, điện di hemoglobin hoặc xét nghiệm phân tử. Các chỉ số Hb, MCV, MCH, RBC và RDW có thể cung cấp những dấu hiệu ban đầu để nhận diện kiểu hình hồng cầu cần được đánh giá thêm.
 
-Trong thực tế, **công thức máu (CBC)** là một trong những xét nghiệm huyết học cơ bản và có khả năng tiếp cận rộng rãi hơn so với các xét nghiệm chuyên sâu như HPLC, điện di hemoglobin hoặc xét nghiệm phân tử. Các chỉ số như Hb, MCV, MCH, RBC và RDW có thể cung cấp những dấu hiệu ban đầu để nhận diện kiểu hình hồng cầu nhỏ, nhược sắc và xác định những trường hợp cần được đánh giá thêm.
+    Từ thực tế đó, đề tài **“Hệ thống hỗ trợ sàng lọc Thalassemia trong cộng đồng”** được xây dựng nhằm kết nối thông tin tiền sử với dữ liệu CBC, giúp người tham gia hiểu kết quả, nhận biết mức độ cần lưu ý và định hướng bước đánh giá tiếp theo. Hệ thống **không thay thế bác sĩ và không đưa ra chẩn đoán xác định**.
+    """)
 
-Từ thực tế đó, đề tài **“Hệ thống hỗ trợ sàng lọc Thalassemia trong cộng đồng”** được xây dựng với định hướng kết nối giữa thông tin tiền sử, sàng lọc ban đầu và dữ liệu CBC. Hệ thống không nhằm thay thế bác sĩ hoặc các xét nghiệm chẩn đoán chuyên sâu, mà đóng vai trò như một công cụ hỗ trợ giúp người tham gia **hiểu kết quả, nhận biết mức độ cần lưu ý và lựa chọn bước đánh giá tiếp theo phù hợp**.
-""")
+    st.markdown("## 1. LÝ DO CHỌN ĐỀ TÀI")
+    st.markdown("""
+    Thalassemia không chỉ là vấn đề của từng cá nhân mà còn liên quan đến công tác chăm sóc sức khỏe và dự phòng bệnh di truyền trong cộng đồng. Nhiều người mang gen không có biểu hiện lâm sàng rõ ràng và có thể chỉ được phát hiện tình cờ khi làm công thức máu hoặc trong quá trình khám sức khỏe, chuẩn bị kết hôn và mang thai.
 
-st.markdown("## 1. LÝ DO CHỌN ĐỀ TÀI")
-st.markdown("""
-Thalassemia không chỉ là vấn đề của từng cá nhân mà còn liên quan đến công tác chăm sóc sức khỏe và dự phòng bệnh di truyền trong cộng đồng. Một khó khăn đáng chú ý là nhiều người mang gen không có biểu hiện lâm sàng rõ ràng nên có thể chỉ được phát hiện tình cờ khi làm công thức máu hoặc trong quá trình chuẩn bị kết hôn, mang thai và khám sức khỏe.
+    Bên cạnh đó, khả năng tiếp cận các xét nghiệm chuyên sâu không đồng đều. CBC thường dễ tiếp cận hơn, nhưng việc liên hệ các chỉ số MCV, MCH, RBC, RDW và Mentzer với nguy cơ Thalassemia không phải lúc nào cũng đơn giản đối với người dân. Vì vậy, cần có một công cụ hỗ trợ diễn giải bước đầu và định hướng khi nào nên đánh giá sâu hơn.
 
-Mặt khác, khả năng tiếp cận các xét nghiệm chuyên sâu không đồng đều giữa các nhóm dân cư. CBC thường dễ tiếp cận hơn, nhưng việc đọc và liên hệ các chỉ số MCV, MCH, RBC, RDW hoặc Mentzer với nguy cơ Thalassemia không phải lúc nào cũng đơn giản đối với người dân. Nếu chỉ dựa vào một chỉ số đơn lẻ, nguy cơ diễn giải sai hoặc bỏ sót trường hợp cần đánh giá thêm vẫn có thể xảy ra.
+    **Đề tài được lựa chọn với mục tiêu xây dựng một “cầu nối” giữa cộng đồng và cơ sở y tế:** bắt đầu từ tiền sử và yếu tố liên quan, tiếp nhận CBC đã có, phân tích các chỉ số huyết học theo mô hình sàng lọc prototype, sau đó đưa ra khuyến nghị và hướng tiếp cận cơ sở y tế phù hợp.
 
-**Vì vậy, đề tài được lựa chọn nhằm xây dựng một hệ thống hỗ trợ sàng lọc theo từng bước:** trước hết thu thập các yếu tố tiền sử và thông tin liên quan; tiếp theo cho phép người tham gia nhập CBC đã có; sau đó hệ thống phân tích các chỉ số huyết học theo một mô hình sàng lọc prototype và đưa ra khuyến nghị phù hợp. Cách tiếp cận này hướng đến việc sử dụng những dữ liệu cơ bản đã có để tạo ra một “cầu nối” giữa cộng đồng và cơ sở y tế, thay vì cố gắng thay thế các phương pháp xét nghiệm chuyên sâu.
+    Một nguyên tắc quan trọng của thiết kế là **Vòng 1 không dùng để loại người tham gia khỏi quá trình sàng lọc**. Điểm Vòng 1 chỉ có vai trò phân tầng ban đầu; người tham gia vẫn được tiếp tục Vòng 2 và nhập CBC nếu có. Điều này hạn chế nguy cơ hiểu sai rằng bảng câu hỏi có thể loại trừ hoàn toàn tình trạng mang gen Thalassemia.
+    """)
 
-Một điểm quan trọng của thiết kế là **Vòng 1 không được sử dụng để loại người tham gia khỏi quá trình sàng lọc**. Ngay cả khi điểm sàng lọc ban đầu thấp, người tham gia vẫn có thể tiếp tục Vòng 2 và nhập CBC. Điều này giúp hạn chế nguy cơ hiểu sai rằng một bảng câu hỏi có thể loại trừ hoàn toàn tình trạng mang gen Thalassemia.
-""")
-
-st.markdown("## 2. MỤC TIÊU ĐỀ TÀI")
-with st.container(border=True):
+    st.markdown("## 2. MỤC TIÊU ĐỀ TÀI")
     st.markdown("**2.1. Mục tiêu tổng quát**")
     st.write("Xây dựng một hệ thống hỗ trợ sàng lọc Thalassemia trong cộng đồng dựa trên thông tin tiền sử và các chỉ số huyết học cơ bản, nhằm hỗ trợ nhận diện trường hợp cần được đánh giá thêm và định hướng tiếp cận cơ sở y tế phù hợp.")
     st.markdown("**2.2. Mục tiêu cụ thể**")
     st.markdown("""
-- Xây dựng bộ câu hỏi sàng lọc ban đầu gồm 20 câu, tập trung vào tiền sử gia đình, tiền sử huyết học cá nhân, các dấu hiệu hỗ trợ và khả năng tiếp cận xét nghiệm.
-- Xây dựng mô hình phân tầng nguy cơ ban đầu để hỗ trợ giải thích thông tin, không dùng để chẩn đoán hoặc loại trừ bệnh.
-- Cho phép tất cả người tham gia tiếp tục Vòng 2 và nhập kết quả CBC khi có.
-- Phân tích Hb, MCV, MCH, RBC, RDW và Mentzer theo mô hình prototype để nhận diện kiểu hình cần lưu ý.
-- Đưa ra khuyến nghị về đánh giá thiếu sắt, HPLC/điện di hemoglobin hoặc xét nghiệm phân tử khi phù hợp.
-- Hỗ trợ điều hướng người tham gia đến các cơ sở y tế có năng lực chuyên môn phù hợp tại địa phương.
-- Xây dựng cơ chế quản lý hồ sơ, sự đồng ý tham gia nghiên cứu, phân quyền tài khoản và xuất dữ liệu phục vụ nghiên cứu phát triển.
-""")
+    - Xây dựng bộ câu hỏi sàng lọc ban đầu gồm 20 câu.
+    - Phân tầng nguy cơ ban đầu nhưng không dùng để chẩn đoán hoặc loại trừ bệnh.
+    - Cho phép tất cả người tham gia tiếp tục Vòng 2 và nhập CBC khi có.
+    - Phân tích Hb, MCV, MCH, RBC, RDW và Mentzer theo mô hình prototype.
+    - Đưa ra khuyến nghị về đánh giá thiếu sắt, HPLC/điện di hemoglobin hoặc xét nghiệm phân tử khi phù hợp.
+    - Hỗ trợ điều hướng đến cơ sở y tế có năng lực chuyên môn phù hợp.
+    """)
 
-st.markdown("## 3. CƠ SỞ KHOA HỌC VÀ PHẠM VI CỦA HỆ THỐNG")
-st.info("📚 Phần cơ sở khoa học chi tiết, ý nghĩa từng chỉ số, lý do xây dựng Vòng 1–Vòng 2 và các giới hạn của mô hình được trình bày trong mục **TÌM HIỂU NGHIÊN CỨU** bên dưới.")
+    st.markdown("## 3. CƠ SỞ KHOA HỌC VÀ PHẠM VI")
+    st.markdown("""
+    **Hb** phản ánh lượng hemoglobin; **MCV** phản ánh kích thước trung bình hồng cầu; **MCH** phản ánh lượng hemoglobin trung bình trong mỗi hồng cầu; **RBC** cho biết số lượng hồng cầu; **RDW** phản ánh mức độ biến thiên kích thước hồng cầu. **Mentzer Index = MCV/RBC** là một chỉ số sàng lọc đơn giản, có thể hỗ trợ định hướng nhưng không phải xét nghiệm xác định.
 
-intro_a, intro_b = st.columns([3, 1])
-with intro_a:
-    st.success("🎯 **Mục tiêu của hệ thống:** hỗ trợ sàng lọc ban đầu, giải thích CBC và định hướng bước tiếp theo. Kết quả không phải là chẩn đoán xác định.")
-with intro_b:
-    if st.button("📚 TÌM HIỂU NGHIÊN CỨU", use_container_width=True):
-        show_research_overview()
+    CBC chỉ cho thấy **kiểu hình huyết học**, không trực tiếp xác định biến thể hemoglobin hay gen bệnh. Khi có nghi ngờ phù hợp, có thể cần đánh giá tình trạng sắt như ferritin, HPLC/điện di hemoglobin và xét nghiệm phân tử theo chỉ định chuyên môn.
+
+    Các điểm số và ngưỡng trong phiên bản hiện tại là **prototype, chưa được thẩm định trên một quần thể người Việt Nam đủ lớn**. Vì vậy, kết quả của hệ thống chỉ mang ý nghĩa hỗ trợ sàng lọc và định hướng, không thay thế chẩn đoán lâm sàng.
+    """)
+
+    st.markdown("### 🔬 Tài liệu tham khảo chính")
+    st.markdown("WHO 2024 • GeneReviews – Beta-Thalassemia • ACOG – Carrier Screening for Hemoglobinopathies")
 
 st.divider()
 st.markdown("## 4. QUY TRÌNH THAM GIA SÀNG LỌC")
