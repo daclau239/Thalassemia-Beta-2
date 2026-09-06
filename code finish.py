@@ -14,11 +14,11 @@ import streamlit as st
 from docx import Document
 
 # ============================================================
-# THALASSEMIA SCREENING V5
+# THALASSEMIA SCREENING V8
 # ============================================================
 # 1) Hồ sơ bệnh nhân
 # 2) Vòng 1: 20 câu hỏi
-# 3) Chỉ nguy cơ CAO -> mở Vòng 2
+# 3) Vòng 1 phân tầng và đưa khuyến nghị; tất cả người tham gia đều được vào Vòng 2
 # 4) Vòng 2:
 #      - chọn tỉnh + phường/xã/đặc khu
 #      - chọn khoảng độ cao
@@ -2210,19 +2210,129 @@ def make_word(
 # HEADER
 # ============================================================
 
-st.title(
-    "🩸 HỆ THỐNG SÀNG LỌC VÀ PHÂN TẦNG NGUY CƠ THALASSEMIA"
-)
+# ============================================================
+# CỬA SỔ GIẢI THÍCH NGHIÊN CỨU
+# ============================================================
 
-st.write(
-    "Hồ sơ bệnh nhân → Vòng 1 (20 câu) → nguy cơ cao → "
-    "Vòng 2 (độ cao + CBC) → phân tích sơ bộ → khuyến nghị."
-)
+@st.dialog("📚 Tìm hiểu về nghiên cứu và cơ sở khoa học", width="large")
+def show_research_overview():
+    st.markdown("""
+### 1. Lý do khoa học – y tế để phát triển hệ thống
 
-st.info(
-    "🎯 Mục tiêu: hỗ trợ sàng lọc ban đầu tại tuyến cơ sở "
-    "và điều hướng người có nguy cơ tới dịch vụ phù hợp."
-)
+Thalassemia là nhóm bệnh lý di truyền do giảm tổng hợp chuỗi globin, có thể biểu hiện từ người mang gen gần như không triệu chứng đến các thể thiếu máu nặng. Trong thực hành sàng lọc, **công thức máu (CBC) và các chỉ số hồng cầu** có thể cung cấp dấu hiệu ban đầu của kiểu hình hồng cầu nhỏ, nhược sắc; khi có nghi ngờ, người bệnh cần được đánh giá tiếp bằng các xét nghiệm hemoglobin chuyên sâu và/hoặc xét nghiệm phân tử tùy trường hợp.
+
+Vấn đề thực tiễn là khả năng tiếp cận các tầng xét nghiệm không giống nhau. CBC thường dễ tiếp cận hơn so với HPLC/điện di hemoglobin hoặc xét nghiệm gen. Vì vậy hệ thống này được xây dựng như **một lớp hỗ trợ sàng lọc – giải thích CBC – phân tầng – điều hướng**, không thay thế bác sĩ và không đưa ra chẩn đoán xác định.
+
+### 2. Vì sao Vòng 1 có 20 câu hỏi?
+
+Vòng 1 không nhằm loại người tham gia khỏi quá trình sàng lọc. Nó nhằm thu thập những thông tin có thể làm thay đổi mức độ cần lưu ý, đồng thời đưa ra khuyến nghị phù hợp trước khi xem CBC. Các nhóm câu hỏi được lựa chọn dựa trên 4 nhóm thông tin: **tiền sử gia đình, tiền sử huyết học cá nhân, dấu hiệu hỗ trợ và khả năng tiếp cận xét nghiệm**.
+
+**Q1–Q5 – Tiền sử gia đình:** Thalassemia có tính di truyền. Thông tin về người thân mắc bệnh, mang gen, thiếu máu/hồng cầu nhỏ hoặc truyền máu nhiều lần có thể làm tăng lý do cần xem xét sàng lọc.
+
+**Q6–Q12 – Tiền sử bản thân:** từng được thông báo thiếu máu, MCV/MCH thấp, từng xét nghiệm hemoglobinopathy, HbE, truyền máu hoặc thiếu máu kéo dài giúp hệ thống biết người tham gia đã có những dấu hiệu/lịch sử nào cần được đối chiếu với CBC hiện tại.
+
+**Q13–Q18 – Dấu hiệu hỗ trợ:** mệt mỏi, chóng mặt, da niêm nhợt, vàng da, lách to hoặc tiền sử biến chứng huyết học có thể gợi ý vấn đề huyết học, nhưng **không đặc hiệu cho Thalassemia**. Vì vậy các câu này chỉ có vai trò hỗ trợ, không được dùng để chẩn đoán.
+
+**Q19–Q20 – Khả năng tiếp cận xét nghiệm:** giúp hệ thống hiểu người tham gia đã có CBC hay gặp khó khăn khi tiếp cận xét nghiệm chuyên sâu. Hai câu này **không được cộng vào điểm nguy cơ sinh học**, vì chi phí, khoảng cách và thời gian không phải là đặc điểm bệnh sinh của Thalassemia.
+
+### 3. Ý nghĩa của các thông số huyết học ở Vòng 2
+
+**Hb – Hemoglobin:** phản ánh lượng hemoglobin trong máu và là chỉ số quan trọng để đánh giá thiếu máu. Hb cần được diễn giải theo tuổi, giới, thai kỳ và các yếu tố bối cảnh; hệ thống không dùng một giá trị Hb đơn độc để chẩn đoán Thalassemia.
+
+**MCV – Mean Corpuscular Volume:** thể tích trung bình của hồng cầu. MCV giảm cho thấy hồng cầu nhỏ (microcytosis), là một dấu hiệu quan trọng khi xem xét Thalassemia nhưng cũng gặp trong thiếu sắt và các nguyên nhân khác.
+
+**MCH – Mean Corpuscular Hemoglobin:** lượng hemoglobin trung bình trong mỗi hồng cầu. MCH giảm biểu hiện xu hướng nhược sắc và thường đi cùng microcytosis trong Thalassemia trait.
+
+**RBC – số lượng hồng cầu:** cho biết số lượng hồng cầu. Trong một số trường hợp Thalassemia trait, RBC có thể tương đối cao dù MCV/MCH giảm. Vì vậy RBC giúp đặt MCV/MCH vào bối cảnh thay vì nhìn một chỉ số đơn lẻ.
+
+**RDW – Red Cell Distribution Width:** phản ánh mức độ biến thiên kích thước hồng cầu. RDW tăng có thể gặp trong thiếu sắt và nhiều tình trạng khác; RDW không đủ đặc hiệu để phân biệt Thalassemia với thiếu sắt.
+
+**Mentzer Index = MCV / RBC:** là chỉ số sàng lọc đơn giản được dùng để định hướng giữa kiểu hình gợi ý Thalassemia và thiếu sắt. Đây chỉ là công cụ hỗ trợ, không phải xét nghiệm xác định và có thể sai trong các trường hợp phối hợp bệnh lý.
+
+### 4. Vì sao vẫn cần xét nghiệm chuyên sâu?
+
+CBC chỉ cho thấy **kiểu hình huyết học**, không trực tiếp xác định loại hemoglobin bất thường hay biến thể gen. Khi có nghi ngờ phù hợp, các bước tiếp theo có thể bao gồm đánh giá tình trạng sắt (ví dụ ferritin), phân tích hemoglobin bằng HPLC/điện di và xét nghiệm phân tử khi có chỉ định. Với β-thalassemia trait, HbA₂ tăng có thể là dấu hiệu hỗ trợ; trong một số thể alpha-thalassemia, xét nghiệm phân tử có vai trò quan trọng vì điện di có thể không phát hiện được.
+
+### 5. Vì sao tất cả người tham gia đều được vào Vòng 2?
+
+Vòng 1 là **sàng lọc ban đầu và giáo dục sức khỏe**, không phải một phép loại trừ. Một Vòng 1 “thấp” không có nghĩa là không mang gen. Vì vậy nếu người tham gia đã có CBC, họ vẫn có thể nhập CBC để hệ thống phân tích các chỉ số huyết học.
+
+### 6. Ý nghĩa của kết quả hệ thống
+
+Kết quả của hệ thống được diễn đạt theo hướng **“gợi ý – cần đánh giá thêm – nên trao đổi với cơ sở y tế”**, không phải “mắc bệnh/không mắc bệnh”. Mục tiêu là giúp người dùng hiểu kết quả CBC, nhận biết khi nào cần đánh giá tiếp và tìm đúng cơ sở y tế có năng lực phù hợp.
+
+### 7. Giá trị cộng đồng của nghiên cứu
+
+Giá trị của hệ thống không nằm ở việc thay thế bệnh viện. Giá trị nằm ở việc tận dụng những dữ liệu huyết học cơ bản đã có, đặc biệt là CBC, để **giảm khoảng cách giữa cộng đồng và xét nghiệm chuyên sâu**. Hệ thống hướng tới sử dụng nguồn lực hợp lý hơn: người có ít dấu hiệu đáng lưu ý có thể được hướng dẫn theo dõi phù hợp; người có CBC gợi ý cần đánh giá thêm có thể được hướng dẫn đến cơ sở chuyên môn thay vì tự tìm kiếm hoặc di chuyển không cần thiết.
+
+### 8. Giới hạn cần biết
+
+Các điểm số và ngưỡng của Vòng 1/Vòng 2 trong phiên bản hiện tại là **prototype**, chưa được thẩm định trên một quần thể người Việt Nam đủ lớn. Vì vậy hệ thống chỉ có giá trị hỗ trợ sàng lọc và nghiên cứu phát triển, không thay thế chẩn đoán lâm sàng.
+    """)
+
+    st.divider()
+    st.subheader("🔗 Tài liệu chuyên môn tham khảo")
+    st.link_button("WHO 2024 – Guideline on haemoglobin cutoffs", "https://www.who.int/publications/i/item/9789240088542", use_container_width=True)
+    st.link_button("GeneReviews – Beta-Thalassemia", "https://www.ncbi.nlm.nih.gov/books/NBK1426/", use_container_width=True)
+    st.link_button("ACOG – Carrier Screening for Genetic Conditions", "https://www.acog.org/clinical/clinical-guidance/committee-opinion/articles/2017/03/carrier-screening-for-genetic-conditions", use_container_width=True)
+    st.link_button("ACOG – Carrier Screening for Hemoglobinopathies", "https://www.acog.org/womens-health/faqs/carrier-screening-for-hemoglobinopathies", use_container_width=True)
+
+
+st.title("🩸 TIỂU LUẬN NGHIÊN CỨU — HỆ THỐNG HỖ TRỢ SÀNG LỌC THALASSEMIA")
+st.caption("Từ nhận diện nguy cơ trong cộng đồng → CBC → phân tích huyết học → khuyến nghị → điều hướng cơ sở y tế")
+
+# ============================================================
+# PHẦN MỞ ĐẦU THEO CẤU TRÚC TIỂU LUẬN
+# ============================================================
+
+st.markdown("## LỜI NÓI ĐẦU")
+st.markdown("""
+Thalassemia là nhóm bệnh lý huyết sắc tố di truyền có ý nghĩa quan trọng đối với sức khỏe cộng đồng. Mức độ biểu hiện của bệnh rất đa dạng, từ người mang gen gần như không có triệu chứng đến những thể bệnh gây thiếu máu nặng và cần được theo dõi, điều trị lâu dài. Đặc biệt, người mang gen có thể không biết tình trạng của mình nếu chưa từng được sàng lọc, trong khi việc nhận diện người mang gen có ý nghĩa quan trọng đối với tư vấn sức khỏe và dự phòng nguy cơ cho thế hệ sau.
+
+Trong thực tế, **công thức máu (CBC)** là một trong những xét nghiệm huyết học cơ bản và có khả năng tiếp cận rộng rãi hơn so với các xét nghiệm chuyên sâu như HPLC, điện di hemoglobin hoặc xét nghiệm phân tử. Các chỉ số như Hb, MCV, MCH, RBC và RDW có thể cung cấp những dấu hiệu ban đầu để nhận diện kiểu hình hồng cầu nhỏ, nhược sắc và xác định những trường hợp cần được đánh giá thêm.
+
+Từ thực tế đó, đề tài **“Hệ thống hỗ trợ sàng lọc Thalassemia trong cộng đồng”** được xây dựng với định hướng kết nối giữa thông tin tiền sử, sàng lọc ban đầu và dữ liệu CBC. Hệ thống không nhằm thay thế bác sĩ hoặc các xét nghiệm chẩn đoán chuyên sâu, mà đóng vai trò như một công cụ hỗ trợ giúp người tham gia **hiểu kết quả, nhận biết mức độ cần lưu ý và lựa chọn bước đánh giá tiếp theo phù hợp**.
+""")
+
+st.markdown("## 1. LÝ DO CHỌN ĐỀ TÀI")
+st.markdown("""
+Thalassemia không chỉ là vấn đề của từng cá nhân mà còn liên quan đến công tác chăm sóc sức khỏe và dự phòng bệnh di truyền trong cộng đồng. Một khó khăn đáng chú ý là nhiều người mang gen không có biểu hiện lâm sàng rõ ràng nên có thể chỉ được phát hiện tình cờ khi làm công thức máu hoặc trong quá trình chuẩn bị kết hôn, mang thai và khám sức khỏe.
+
+Mặt khác, khả năng tiếp cận các xét nghiệm chuyên sâu không đồng đều giữa các nhóm dân cư. CBC thường dễ tiếp cận hơn, nhưng việc đọc và liên hệ các chỉ số MCV, MCH, RBC, RDW hoặc Mentzer với nguy cơ Thalassemia không phải lúc nào cũng đơn giản đối với người dân. Nếu chỉ dựa vào một chỉ số đơn lẻ, nguy cơ diễn giải sai hoặc bỏ sót trường hợp cần đánh giá thêm vẫn có thể xảy ra.
+
+**Vì vậy, đề tài được lựa chọn nhằm xây dựng một hệ thống hỗ trợ sàng lọc theo từng bước:** trước hết thu thập các yếu tố tiền sử và thông tin liên quan; tiếp theo cho phép người tham gia nhập CBC đã có; sau đó hệ thống phân tích các chỉ số huyết học theo một mô hình sàng lọc prototype và đưa ra khuyến nghị phù hợp. Cách tiếp cận này hướng đến việc sử dụng những dữ liệu cơ bản đã có để tạo ra một “cầu nối” giữa cộng đồng và cơ sở y tế, thay vì cố gắng thay thế các phương pháp xét nghiệm chuyên sâu.
+
+Một điểm quan trọng của thiết kế là **Vòng 1 không được sử dụng để loại người tham gia khỏi quá trình sàng lọc**. Ngay cả khi điểm sàng lọc ban đầu thấp, người tham gia vẫn có thể tiếp tục Vòng 2 và nhập CBC. Điều này giúp hạn chế nguy cơ hiểu sai rằng một bảng câu hỏi có thể loại trừ hoàn toàn tình trạng mang gen Thalassemia.
+""")
+
+st.markdown("## 2. MỤC TIÊU ĐỀ TÀI")
+with st.container(border=True):
+    st.markdown("**2.1. Mục tiêu tổng quát**")
+    st.write("Xây dựng một hệ thống hỗ trợ sàng lọc Thalassemia trong cộng đồng dựa trên thông tin tiền sử và các chỉ số huyết học cơ bản, nhằm hỗ trợ nhận diện trường hợp cần được đánh giá thêm và định hướng tiếp cận cơ sở y tế phù hợp.")
+    st.markdown("**2.2. Mục tiêu cụ thể**")
+    st.markdown("""
+- Xây dựng bộ câu hỏi sàng lọc ban đầu gồm 20 câu, tập trung vào tiền sử gia đình, tiền sử huyết học cá nhân, các dấu hiệu hỗ trợ và khả năng tiếp cận xét nghiệm.
+- Xây dựng mô hình phân tầng nguy cơ ban đầu để hỗ trợ giải thích thông tin, không dùng để chẩn đoán hoặc loại trừ bệnh.
+- Cho phép tất cả người tham gia tiếp tục Vòng 2 và nhập kết quả CBC khi có.
+- Phân tích Hb, MCV, MCH, RBC, RDW và Mentzer theo mô hình prototype để nhận diện kiểu hình cần lưu ý.
+- Đưa ra khuyến nghị về đánh giá thiếu sắt, HPLC/điện di hemoglobin hoặc xét nghiệm phân tử khi phù hợp.
+- Hỗ trợ điều hướng người tham gia đến các cơ sở y tế có năng lực chuyên môn phù hợp tại địa phương.
+- Xây dựng cơ chế quản lý hồ sơ, sự đồng ý tham gia nghiên cứu, phân quyền tài khoản và xuất dữ liệu phục vụ nghiên cứu phát triển.
+""")
+
+st.markdown("## 3. CƠ SỞ KHOA HỌC VÀ PHẠM VI CỦA HỆ THỐNG")
+st.info("📚 Phần cơ sở khoa học chi tiết, ý nghĩa từng chỉ số, lý do xây dựng Vòng 1–Vòng 2 và các giới hạn của mô hình được trình bày trong mục **TÌM HIỂU NGHIÊN CỨU** bên dưới.")
+
+intro_a, intro_b = st.columns([3, 1])
+with intro_a:
+    st.success("🎯 **Mục tiêu của hệ thống:** hỗ trợ sàng lọc ban đầu, giải thích CBC và định hướng bước tiếp theo. Kết quả không phải là chẩn đoán xác định.")
+with intro_b:
+    if st.button("📚 TÌM HIỂU NGHIÊN CỨU", use_container_width=True):
+        show_research_overview()
+
+st.divider()
+st.markdown("## 4. QUY TRÌNH THAM GIA SÀNG LỌC")
+st.caption("Hồ sơ → Đồng ý tham gia → Vòng 1 → CBC/Vòng 2 → Kết quả sàng lọc → Khuyến nghị → Điều hướng cơ sở y tế")
 
 
 # ============================================================
@@ -2230,18 +2340,12 @@ st.info(
 # ============================================================
 
 with st.sidebar:
-    st.header("⚙️ Trạng thái kỹ thuật")
-
+    st.header("🧭 QUY TRÌNH")
+    st.caption("Hồ sơ → Vòng 1 → CBC → Phân tích → Khuyến nghị → Cơ sở y tế")
     if GOOGLE_API_KEY:
-        st.success("Google Places: đã cấu hình")
+        st.caption("🟢 Google Places đã cấu hình")
     else:
-        st.caption("Google Places: chưa cấu hình API key — hệ thống vẫn có danh mục cơ sở ưu tiên theo tỉnh/thành.")
-
-    st.divider()
-    st.caption(
-        "👤 Hồ sơ → 🟦 Vòng 1 → 🔴 Nguy cơ cao → "
-        "🟧 Vòng 2 → 🧠 Phân tích → 🏥 Gợi ý cơ sở"
-    )
+        st.caption("ℹ️ Cơ sở y tế vẫn được gợi ý theo danh mục tỉnh/thành.")
 
 render_auth_sidebar()
 
@@ -2271,13 +2375,12 @@ st.header(
     "👤 THÔNG TIN BỆNH NHÂN"
 )
 st.caption(
-    "Khu vực này dùng để nhập hồ sơ người tham gia. "
+    "Nhập hồ sơ người tham gia. "
     + (
-        "Bạn đang ở chế độ **nhập giúp người tham gia**; dữ liệu sẽ ghi nhận tài khoản nhân sự đang đăng nhập."
+        "Chế độ nhập giúp: hệ thống ghi nhận tài khoản nhân sự thực hiện."
         if operator_mode
-        else "Người tham gia có thể tự nhập thông tin của chính mình."
+        else "Người tham gia tự nhập thông tin của mình."
     )
-    + " Danh sách hồ sơ của nhiều người chỉ được hiển thị trong khu vực quản trị có kiểm soát truy cập."
 )
 
 with st.container(border=True):
@@ -2577,10 +2680,7 @@ st.header(
     "🟦 VÒNG 1 — 20 CÂU HỎI SÀNG LỌC"
 )
 
-st.info(
-    "Q1–Q18 phục vụ sàng lọc nguy cơ. "
-    "**Q19–Q20 không cộng điểm** vì chỉ phản ánh khả năng tiếp cận xét nghiệm."
-)
+st.caption("Vòng 1 dùng để ghi nhận các yếu tố cần lưu ý và đưa khuyến nghị. Tất cả người tham gia đều được tiếp tục Vòng 2.")
 
 
 with st.container(border=True):
@@ -2857,18 +2957,10 @@ if st.session_state.get(
     ]
 
     a1, a2 = st.columns(2)
-
     with a1:
-        st.metric(
-            "Điểm Vòng 1",
-            f"{score1}/{ROUND1_MAX_SCORE}",
-        )
-
+        st.metric("Điểm sàng lọc ban đầu", f"{score1}/{ROUND1_MAX_SCORE}")
     with a2:
-        st.metric(
-            "Ngưỡng mở Vòng 2",
-            f"≥{ROUND1_HIGH_THRESHOLD}",
-        )
+        st.metric("Vòng 2", "Được tiếp tục")
 
     # Vòng 1 chỉ phân tầng và đưa lời khuyên; KHÔNG khóa Vòng 2.
     if category1 == "CAO":
