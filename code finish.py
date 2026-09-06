@@ -8,6 +8,7 @@ import sqlite3
 import hashlib
 import secrets
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import requests
 import streamlit as st
@@ -104,25 +105,12 @@ ALTITUDE_LOOKUP_URL = "https://elevationfinder.net/"
 # ------------------------------------------------------------
 
 def get_google_key():
+    """Read Google API key only from Streamlit secrets."""
     try:
-        value = st.secrets["google"]["maps_api_key"]
-        if value:
-            return str(value).strip()
+        value = st.secrets["GOOGLE_API_KEY"]
     except Exception:
-        pass
-
-    try:
-        value = st.secrets["GOOGLE_MAPS_API_KEY"]
-        if value:
-            return str(value).strip()
-    except Exception:
-        pass
-
-    return os.environ.get(
-        "GOOGLE_MAPS_API_KEY",
-        "",
-    ).strip()
-
+        return ""
+    return str(value).strip() if value else ""
 
 GOOGLE_API_KEY = get_google_key()
 
@@ -1274,28 +1262,32 @@ def altitude_selector(key_prefix):
 # CBC UNIT CONVERSION
 # ------------------------------------------------------------
 
+def _decimal(value):
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        raise ValueError("Giá trị số không hợp lệ.")
+
+
+def _round_number(value, places=4):
+    q = Decimal("1").scaleb(-places)
+    return float(_decimal(value).quantize(q, rounding=ROUND_HALF_UP))
+
+
 def hb_to_g_dl(value, unit):
+    value = _decimal(value)
     if unit == "g/dL":
-        return float(value)
-
+        return _round_number(value, 4)
     if unit == "g/L":
-        return float(value) / 10
-
+        return _round_number(value / Decimal("10"), 4)
     raise ValueError("Đơn vị Hb không hợp lệ.")
 
 
 def rbc_to_t_l(value, unit):
-    # Numerically equivalent:
-    # T/L = 10^12/L = 10^6/µL
-    if unit in (
-        "T/L",
-        "10^12/L",
-        "10^6/µL",
-    ):
-        return float(value)
-
+    # T/L, 10^12/L và 10^6/µL có cùng trị số quy đổi.
+    if unit in ("T/L", "10^12/L", "10^6/µL"):
+        return _round_number(value, 4)
     raise ValueError("Đơn vị RBC không hợp lệ.")
-
 
 # ------------------------------------------------------------
 # ROUND 1 SCORE
@@ -1433,7 +1425,7 @@ def calculate_round2_score(
             reasons.append("RBC tương đối cao khi MCV thấp")
 
     mentzer = (
-        mcv / rbc
+        _round_number(Decimal(str(mcv)) / Decimal(str(rbc)), 2)
         if rbc > 0
         else None
     )
@@ -2786,248 +2778,249 @@ st.header(
 st.caption("Vòng 1 dùng để ghi nhận các yếu tố cần lưu ý và đưa khuyến nghị. Tất cả người tham gia đều được tiếp tục Vòng 2.")
 
 
-with st.container(border=True):
+with st.form("round1_form", clear_on_submit=False):
+    with st.container(border=True):
 
-    st.subheader(
-        "A. Tiền sử gia đình"
-    )
-
-    q1 = st.radio(
-        "1. Trong gia đình/dòng họ có người từng được chẩn đoán Thalassemia không?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q2 = st.radio(
-        "2. Trong gia đình/dòng họ có người từng được thông báo mang gen Thalassemia/hemoglobinopathy không?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q3 = st.radio(
-        "3. Cha hoặc mẹ bạn có từng được xét nghiệm Thalassemia/hemoglobinopathy không?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q4 = st.radio(
-        "4. Anh/chị/em ruột có từng được chẩn đoán thiếu máu hoặc hồng cầu nhỏ không?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q5 = st.radio(
-        "5. Gia đình có trẻ từng phải truyền máu nhiều lần hoặc định kỳ không?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-
-with st.container(border=True):
-
-    st.subheader(
-        "B. Tiền sử bản thân"
-    )
-
-    q6 = st.radio(
-        "6. Bạn từng được nhân viên y tế thông báo bị thiếu máu chưa?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q7 = st.radio(
-        "7. Bạn từng được thông báo MCV thấp/hồng cầu nhỏ chưa?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q8 = st.radio(
-        "8. Bạn từng được thông báo MCH thấp/hồng cầu nhược sắc chưa?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q9 = st.selectbox(
-        "9. Bạn từng xét nghiệm Thalassemia/hemoglobinopathy chưa?",
-        [
-            "Chưa xét nghiệm",
-            "Đã xét nghiệm, bình thường",
-            "Đã nghi ngờ",
-            "Đã xác định mang gen",
-            "Không nhớ",
-        ],
-    )
-
-    q10 = st.radio(
-        "10. Bạn từng được chẩn đoán HbE hoặc hemoglobinopathy khác chưa?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q11 = st.radio(
-        "11. Bản thân từng truyền máu nhiều lần hoặc định kỳ chưa?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q12 = st.radio(
-        "12. Bạn có tiền sử thiếu máu kéo dài từ nhỏ hoặc từ tuổi thiếu niên không?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-
-with st.container(border=True):
-
-    st.subheader(
-        "C. Dấu hiệu hỗ trợ"
-    )
-
-    q13 = st.radio(
-        "13. Bạn có thường xuyên mệt mỏi hoặc giảm khả năng hoạt động không?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q14 = st.radio(
-        "14. Bạn có thường xuyên hoa mắt/chóng mặt không rõ nguyên nhân không?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q15 = st.radio(
-        "15. Bạn từng được nhận xét da hoặc niêm mạc nhợt hơn bình thường chưa?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q16 = st.radio(
-        "16. Bạn từng có vàng da/vàng mắt không rõ nguyên nhân chưa?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q17 = st.radio(
-        "17. Bạn từng được bác sĩ ghi nhận lách to hoặc gan lách to chưa?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q18 = st.radio(
-        "18. Bạn từng được bác sĩ lưu ý có biến chứng liên quan bệnh huyết học mạn chưa?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-
-with st.container(border=True):
-
-    st.subheader(
-        "D. Khả năng tiếp cận xét nghiệm — KHÔNG TÍNH ĐIỂM"
-    )
-
-    q19 = st.radio(
-        "19. Bạn hiện có CBC trong vòng 6–12 tháng gần đây không?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    q20 = st.radio(
-        "20. Bạn có gặp khó khăn khi đến cơ sở có xét nghiệm chuyên sâu "
-        "do khoảng cách, chi phí hoặc thời gian di chuyển không?",
-        ["Không", "Có", "Không biết"],
-        horizontal=True,
-    )
-
-    st.info(
-        "Q19–Q20 được lưu để hỗ trợ điều hướng y tế, **không ảnh hưởng "
-        "đến điểm nguy cơ Thalassemia**."
-    )
-
-
-if st.button(
-    "🔎 ĐÁNH GIÁ VÒNG 1",
-    type="primary",
-    use_container_width=True,
-):
-
-    answers = {
-        "q1": q1,
-        "q2": q2,
-        "q3": q3,
-        "q4": q4,
-        "q5": q5,
-        "q6": q6,
-        "q7": q7,
-        "q8": q8,
-        "q9": q9,
-        "q10": q10,
-        "q11": q11,
-        "q12": q12,
-        "q13": q13,
-        "q14": q14,
-        "q15": q15,
-        "q16": q16,
-        "q17": q17,
-        "q18": q18,
-        "q19": q19,
-        "q20": q20,
-    }
-
-    score1, reasons1 = (
-        calculate_round1_score(
-            answers
+        st.subheader(
+            "A. Tiền sử gia đình"
         )
-    )
 
-    category1, conclusion1 = (
-        round1_category(
-            score1
+        q1 = st.radio(
+            "1. Trong gia đình/dòng họ có người từng được chẩn đoán Thalassemia không?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
         )
-    )
 
-    st.session_state[
-        "round1_score"
-    ] = score1
+        q2 = st.radio(
+            "2. Trong gia đình/dòng họ có người từng được thông báo mang gen Thalassemia/hemoglobinopathy không?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
 
-    st.session_state[
-        "round1_reasons"
-    ] = reasons1
+        q3 = st.radio(
+            "3. Cha hoặc mẹ bạn có từng được xét nghiệm Thalassemia/hemoglobinopathy không?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
 
-    # Lưu một lượt sàng lọc hoàn chỉnh Vòng 1. Nếu có tài khoản đăng nhập,
-    # ghi nhận người nhập là nhân sự/ quản trị viên đang thực hiện thao tác.
-    st.session_state["screening_id"] = create_screening_record(
-        patient=patient,
-        answers=answers,
-        score1=score1,
-        category1=category1,
-        conclusion1=conclusion1,
-        reasons1=reasons1,
-        entry_mode="assisted" if operator_mode else "self",
-        entered_by_username=operator_username,
-    )
+        q4 = st.radio(
+            "4. Anh/chị/em ruột có từng được chẩn đoán thiếu máu hoặc hồng cầu nhỏ không?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
 
-    st.session_state[
-        "round1_category"
-    ] = category1
+        q5 = st.radio(
+            "5. Gia đình có trẻ từng phải truyền máu nhiều lần hoặc định kỳ không?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
 
-    st.session_state[
-        "round1_conclusion"
-    ] = conclusion1
 
-    st.session_state[
-        "round1_completed"
-    ] = True
+    with st.container(border=True):
 
-    # Vòng 1 mới -> xóa Vòng 2 cũ.
-    for key in list(
-        st.session_state.keys()
+        st.subheader(
+            "B. Tiền sử bản thân"
+        )
+
+        q6 = st.radio(
+            "6. Bạn từng được nhân viên y tế thông báo bị thiếu máu chưa?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+        q7 = st.radio(
+            "7. Bạn từng được thông báo MCV thấp/hồng cầu nhỏ chưa?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+        q8 = st.radio(
+            "8. Bạn từng được thông báo MCH thấp/hồng cầu nhược sắc chưa?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+        q9 = st.selectbox(
+            "9. Bạn từng xét nghiệm Thalassemia/hemoglobinopathy chưa?",
+            [
+                "Chưa xét nghiệm",
+                "Đã xét nghiệm, bình thường",
+                "Đã nghi ngờ",
+                "Đã xác định mang gen",
+                "Không nhớ",
+            ],
+        )
+
+        q10 = st.radio(
+            "10. Bạn từng được chẩn đoán HbE hoặc hemoglobinopathy khác chưa?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+        q11 = st.radio(
+            "11. Bản thân từng truyền máu nhiều lần hoặc định kỳ chưa?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+        q12 = st.radio(
+            "12. Bạn có tiền sử thiếu máu kéo dài từ nhỏ hoặc từ tuổi thiếu niên không?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+
+    with st.container(border=True):
+
+        st.subheader(
+            "C. Dấu hiệu hỗ trợ"
+        )
+
+        q13 = st.radio(
+            "13. Bạn có thường xuyên mệt mỏi hoặc giảm khả năng hoạt động không?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+        q14 = st.radio(
+            "14. Bạn có thường xuyên hoa mắt/chóng mặt không rõ nguyên nhân không?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+        q15 = st.radio(
+            "15. Bạn từng được nhận xét da hoặc niêm mạc nhợt hơn bình thường chưa?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+        q16 = st.radio(
+            "16. Bạn từng có vàng da/vàng mắt không rõ nguyên nhân chưa?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+        q17 = st.radio(
+            "17. Bạn từng được bác sĩ ghi nhận lách to hoặc gan lách to chưa?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+        q18 = st.radio(
+            "18. Bạn từng được bác sĩ lưu ý có biến chứng liên quan bệnh huyết học mạn chưa?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+
+    with st.container(border=True):
+
+        st.subheader(
+            "D. Khả năng tiếp cận xét nghiệm — KHÔNG TÍNH ĐIỂM"
+        )
+
+        q19 = st.radio(
+            "19. Bạn hiện có CBC trong vòng 6–12 tháng gần đây không?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+        q20 = st.radio(
+            "20. Bạn có gặp khó khăn khi đến cơ sở có xét nghiệm chuyên sâu "
+            "do khoảng cách, chi phí hoặc thời gian di chuyển không?",
+            ["Không", "Có", "Không biết"],
+            horizontal=True,
+        )
+
+        st.info(
+            "Q19–Q20 được lưu để hỗ trợ điều hướng y tế, **không ảnh hưởng "
+            "đến điểm nguy cơ Thalassemia**."
+        )
+
+
+    if st.form_submit_button(
+        "🔎 ĐÁNH GIÁ VÒNG 1",
+        type="primary",
+        use_container_width=True,
     ):
-        if (
-            key.startswith("round2_")
-            or key.startswith("google_")
+
+        answers = {
+            "q1": q1,
+            "q2": q2,
+            "q3": q3,
+            "q4": q4,
+            "q5": q5,
+            "q6": q6,
+            "q7": q7,
+            "q8": q8,
+            "q9": q9,
+            "q10": q10,
+            "q11": q11,
+            "q12": q12,
+            "q13": q13,
+            "q14": q14,
+            "q15": q15,
+            "q16": q16,
+            "q17": q17,
+            "q18": q18,
+            "q19": q19,
+            "q20": q20,
+        }
+
+        score1, reasons1 = (
+            calculate_round1_score(
+                answers
+            )
+        )
+
+        category1, conclusion1 = (
+            round1_category(
+                score1
+            )
+        )
+
+        st.session_state[
+            "round1_score"
+        ] = score1
+
+        st.session_state[
+            "round1_reasons"
+        ] = reasons1
+
+        # Lưu một lượt sàng lọc hoàn chỉnh Vòng 1. Nếu có tài khoản đăng nhập,
+        # ghi nhận người nhập là nhân sự/ quản trị viên đang thực hiện thao tác.
+        st.session_state["screening_id"] = create_screening_record(
+            patient=patient,
+            answers=answers,
+            score1=score1,
+            category1=category1,
+            conclusion1=conclusion1,
+            reasons1=reasons1,
+            entry_mode="assisted" if operator_mode else "self",
+            entered_by_username=operator_username,
+        )
+
+        st.session_state[
+            "round1_category"
+        ] = category1
+
+        st.session_state[
+            "round1_conclusion"
+        ] = conclusion1
+
+        st.session_state[
+            "round1_completed"
+        ] = True
+
+        # Vòng 1 mới -> xóa Vòng 2 cũ.
+        for key in list(
+            st.session_state.keys()
         ):
-            del st.session_state[key]
+            if (
+                key.startswith("round2_")
+                or key.startswith("google_")
+            ):
+                del st.session_state[key]
 
 
 # ============================================================
@@ -3168,9 +3161,7 @@ if st.session_state.get(
                 max_value=25.0
                 if hb_unit == "g/dL"
                 else 250.0,
-                value=13.0
-                if hb_unit == "g/dL"
-                else 130.0,
+                value=None,
                 step=0.1,
                 key="round2_hb_raw",
             )
@@ -3181,7 +3172,7 @@ if st.session_state.get(
                 "MCV (fL)",
                 30.0,
                 150.0,
-                85.0,
+                None,
                 0.1,
                 key="round2_mcv",
             )
@@ -3192,7 +3183,7 @@ if st.session_state.get(
                 "MCH (pg)",
                 10.0,
                 50.0,
-                29.0,
+                None,
                 0.1,
                 key="round2_mch",
             )
@@ -3213,7 +3204,7 @@ if st.session_state.get(
                 "RBC",
                 1.0,
                 10.0,
-                4.8,
+                None,
                 0.1,
                 key="round2_rbc_raw",
             )
@@ -3224,7 +3215,7 @@ if st.session_state.get(
                 "RDW-CV (%)",
                 5.0,
                 40.0,
-                13.0,
+                None,
                 0.1,
                 key="round2_rdw",
             )
@@ -3243,6 +3234,18 @@ if st.session_state.get(
         type="primary",
         use_container_width=True,
     ):
+
+        required_cbc = {
+            "Hb": hb_raw,
+            "MCV": mcv,
+            "MCH": mch,
+            "RBC": rbc_raw,
+            "RDW-CV": rdw,
+        }
+        missing = [name for name, value in required_cbc.items() if value is None]
+        if missing:
+            st.error("Vui lòng nhập đầy đủ số liệu CBC trước khi phân tích: " + ", ".join(missing) + ".")
+            st.stop()
 
         if rbc_raw <= 0:
 
