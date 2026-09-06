@@ -210,6 +210,21 @@ def get_db():
         """
     )
 
+    # Chỉ giữ lại 01 lượt sàng lọc mới nhất cho mỗi số điện thoại.
+    # Các lượt cũ được xóa khỏi bảng screening_records để dữ liệu nghiên cứu
+    # luôn có đúng 01 bản ghi hiện hành cho mỗi người. Hồ sơ patient_profiles
+    # vẫn được giữ nguyên.
+    conn.execute(
+        """
+        DELETE FROM screening_records
+        WHERE id NOT IN (
+            SELECT MAX(id)
+            FROM screening_records
+            GROUP BY phone
+        )
+        """
+    )
+
     # Migrate prototype databases created before consent fields existed.
     existing = {
         row[1]
@@ -672,6 +687,15 @@ def create_screening_record(
         ),
     )
     record_id = cur.lastrowid
+
+    # Khi một người (cùng số điện thoại) sàng lọc lại, lượt mới thay thế
+    # hoàn toàn lượt cũ. Không xóa hồ sơ người tham gia, chỉ xóa bản ghi
+    # sàng lọc cũ để kho dữ liệu nghiên cứu có 01 dòng/người.
+    conn.execute(
+        "DELETE FROM screening_records WHERE phone = ? AND id <> ?",
+        (patient["phone"], int(record_id)),
+    )
+
     conn.commit()
     conn.close()
     return record_id
@@ -727,6 +751,11 @@ def update_screening_round2(record_id, r2):
 
 
 def list_screening_records_for_staff():
+    """Lấy 01 lượt sàng lọc duy nhất cho mỗi người.
+
+    Hệ thống chủ động xóa lượt cũ khi có lượt mới, nên CSDL và file Excel
+    đều phục vụ tập dữ liệu nghiên cứu theo nguyên tắc 01 người/01 dòng.
+    """
     conn = get_db()
     rows = conn.execute(
         """
@@ -743,7 +772,7 @@ def list_screening_records_for_staff():
         FROM screening_records s
         JOIN patient_profiles p ON p.phone = s.phone
         WHERE p.research_consent = 1
-        ORDER BY s.screening_at DESC
+        ORDER BY s.screening_at DESC, s.id DESC
         """
     ).fetchall()
     conn.close()
@@ -799,7 +828,7 @@ def export_screening_xlsx(patient_rows, screening_rows):
     ws.autofilter(0, 0, max(len(patient_rows), 1), len(patient_headers)-1)
 
     # Sheet 2: lịch sử sàng lọc
-    ws2 = workbook.add_worksheet("Lich_su_sang_loc")
+    ws2 = workbook.add_worksheet("Luot_sang_loc_moi_nhat")
     screening_headers = [
         "ID lượt sàng lọc", "Thời điểm", "Người nhập", "Hình thức nhập",
         "Số điện thoại", "Họ và tên", "Ngày sinh", "Giới tính",
@@ -985,7 +1014,7 @@ def render_admin_console(user):
         staff_count = sum(1 for row in users if row[4] == "staff" and row[5] == "approved")
         st.metric("Nhân sự được duyệt", staff_count)
     with c4:
-        st.metric("Lượt sàng lọc đã lưu", len(screening_rows))
+        st.metric("Người có lượt sàng lọc", len(screening_rows))
 
     if user["role"] == "admin":
         st.subheader("👥 Phê duyệt tài khoản nhân sự")
@@ -1036,10 +1065,10 @@ def render_admin_console(user):
     st.subheader("📊 DỮ LIỆU NGƯỜI THAM GIA — DẠNG BẢNG")
     st.caption(
         "🔒 Chỉ quản trị viên và nhân sự đã được quản trị viên phê duyệt mới xem được dữ liệu này. "
-        "Dữ liệu gồm hồ sơ hiện tại và lịch sử từng lượt sàng lọc đã đồng ý."
+        "Bảng sàng lọc hiển thị lượt mới nhất của từng người theo số điện thoại; các lượt cũ vẫn được lưu trong cơ sở dữ liệu."
     )
 
-    tab1, tab2 = st.tabs(["👤 Hồ sơ hiện tại", "🧪 Lịch sử sàng lọc"])
+    tab1, tab2 = st.tabs(["👤 Hồ sơ hiện tại", "🧪 Lượt sàng lọc gần nhất"])
 
     with tab1:
         patient_columns = [
@@ -1118,7 +1147,7 @@ def render_admin_console(user):
             use_container_width=True,
         )
         st.caption(
-            "File Excel gồm 2 sheet: Hồ sơ hiện tại và Lịch sử sàng lọc. "
+            "File Excel gồm 2 sheet: Hồ sơ hiện tại và lượt sàng lọc gần nhất của từng số điện thoại. "
             "Không xuất mật khẩu/tài khoản nhân sự."
         )
 
