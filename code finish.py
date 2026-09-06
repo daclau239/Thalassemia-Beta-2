@@ -16,24 +16,43 @@ import streamlit as st
 # ===== PROFESSIONAL HEMATOLOGY UI =====
 st.markdown("""
 <style>
-:root { --heme-navy:#17324D; --heme-red:#8E2C3A; --heme-light:#F5F7FA; --heme-border:#D8DEE6; }
-.main .block-container { max-width: 1180px; padding-top: 2rem; padding-bottom: 3rem; }
-[data-testid="stHeader"] { background: transparent; }
-.hematology-brand { border-left: 5px solid var(--heme-red); padding: 0.15rem 0 0.15rem 1rem; margin-bottom: .35rem; }
-.hematology-brand .eyebrow { font-size:.78rem; letter-spacing:.16em; color:#687789; font-weight:700; text-transform:uppercase; }
-.hematology-brand .title { font-size:2rem; line-height:1.15; color:var(--heme-navy); font-weight:750; margin-top:.18rem; }
-.hematology-brand .subtitle { color:#5B6775; font-size:.95rem; margin-top:.45rem; }
+/* ===== Professional Hematology UI — adaptive Light / Dark ===== */
+:root {
+  --heme-navy:#17324D;
+  --heme-red:#8E2C3A;
+  --heme-accent:#A33A49;
+  --heme-border:color-mix(in srgb, var(--text-color) 18%, transparent);
+  --heme-muted:color-mix(in srgb, var(--text-color) 66%, transparent);
+  --heme-surface:var(--secondary-background-color);
+  --heme-surface-soft:color-mix(in srgb, var(--secondary-background-color) 86%, var(--background-color));
+}
+.main .block-container { max-width:1180px; padding-top:2rem; padding-bottom:3rem; }
+[data-testid="stHeader"] { background:transparent; }
+.hematology-brand { border-left:5px solid var(--heme-red); padding:.15rem 0 .15rem 1rem; margin-bottom:.35rem; }
+.hematology-brand .eyebrow { font-size:.78rem; letter-spacing:.16em; color:var(--heme-muted); font-weight:700; text-transform:uppercase; }
+.hematology-brand .title { font-size:2rem; line-height:1.15; color:var(--text-color); font-weight:750; margin-top:.18rem; }
+.hematology-brand .subtitle { color:var(--heme-muted); font-size:.95rem; margin-top:.45rem; }
 .section-rule { height:1px; background:var(--heme-border); margin:1.2rem 0; }
-[data-testid="stExpander"] { border:1px solid var(--heme-border); border-radius:10px; background:#fff; }
-[data-testid="stExpander"] summary p { color:var(--heme-navy); font-weight:700; }
+[data-testid="stExpander"] { border:1px solid var(--heme-border); border-radius:10px; background:var(--heme-surface-soft); }
+[data-testid="stExpander"] summary p { color:var(--text-color); font-weight:700; }
 [data-testid="stSidebar"] { border-right:1px solid var(--heme-border); }
-[data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { color:var(--heme-navy); }
+[data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { color:var(--text-color); }
 .stButton > button { border-radius:7px; font-weight:600; }
-.contact-card { border:1px solid var(--heme-border); border-radius:10px; padding:1rem 1.15rem; background:#FAFBFC; margin-top:1rem; }
-.contact-card .label { color:#687789; font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
-.contact-card .name { color:var(--heme-navy); font-size:1.1rem; font-weight:750; margin:.2rem 0 .55rem; }
-.contact-card a { color:var(--heme-red); text-decoration:none; }
-.small-note { color:#687789; font-size:.82rem; }
+.contact-card { border:1px solid var(--heme-border); border-radius:10px; padding:1rem 1.15rem; background:var(--heme-surface-soft); margin-top:1rem; }
+.contact-card .label { color:var(--heme-muted); font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
+.contact-card .name { color:var(--text-color); font-size:1.1rem; font-weight:750; margin:.2rem 0 .55rem; }
+.contact-card a { color:var(--heme-accent); text-decoration:none; font-weight:600; }
+.contact-card a:hover { text-decoration:underline; }
+.small-note { color:var(--heme-muted); font-size:.82rem; }
+
+/* Dark-mode refinement. Streamlit exposes theme colors through CSS variables;
+   this media rule only adjusts the hematology accent for contrast. */
+@media (prefers-color-scheme: dark) {
+  :root { --heme-red:#C45A69; --heme-accent:#E07987; }
+  [data-testid="stExpander"], .contact-card {
+    box-shadow:0 1px 0 rgba(255,255,255,.025) inset;
+  }
+}
 </style>
 """, unsafe_allow_html=True)
 
