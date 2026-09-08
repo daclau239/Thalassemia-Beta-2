@@ -376,46 +376,93 @@ def valid_username(username):
 
 
 def ensure_default_admin():
-    """Tạo admin mặc định một lần nếu database chưa có tài khoản admin."""
+    """Create/repair the default admin safely on Streamlit reruns/concurrent starts.
+
+    Uses an atomic INSERT OR IGNORE to avoid UNIQUE/IntegrityError when two
+    sessions initialize the database at nearly the same time. If the default
+    email is already occupied by a non-admin account, a deterministic fallback
+    email is used because username is the login identifier.
+    """
     conn = get_db()
-    row = conn.execute(
-        "SELECT id FROM user_accounts WHERE username = ? LIMIT 1",
-        (DEFAULT_ADMIN_USERNAME,),
-    ).fetchone()
-    if row:
+    try:
+        # First, if the default admin username already exists, nothing to do.
+        row = conn.execute(
+            "SELECT id, role, status FROM user_accounts WHERE username = ? LIMIT 1",
+            (DEFAULT_ADMIN_USERNAME,),
+        ).fetchone()
+        if row:
+            # Repair a legacy/default account if it exists but is not admin.
+            if str(row[1] or '').lower() != 'admin':
+                now = datetime.now().isoformat(timespec="seconds")
+                password_hash, password_salt = hash_password(DEFAULT_ADMIN_PASSWORD)
+                conn.execute(
+                    """
+                    UPDATE user_accounts
+                    SET full_name = ?, password_hash = ?, password_salt = ?,
+                        role = 'admin', status = 'approved',
+                        approved_by = ?, approved_at = ?
+                    WHERE id = ?
+                    """,
+                    (DEFAULT_ADMIN_FULL_NAME, password_hash, password_salt,
+                     DEFAULT_ADMIN_USERNAME, now, row[0]),
+                )
+                conn.commit()
+            return
+
+        # If any admin already exists, do not create a second one.
+        admin_row = conn.execute(
+            "SELECT id FROM user_accounts WHERE role = 'admin' LIMIT 1"
+        ).fetchone()
+        if admin_row:
+            return
+
+        now = datetime.now().isoformat(timespec="seconds")
+        password_hash, password_salt = hash_password(DEFAULT_ADMIN_PASSWORD)
+
+        # Avoid a crash if another account already uses the default email.
+        email_row = conn.execute(
+            "SELECT id FROM user_accounts WHERE lower(email) = lower(?) LIMIT 1",
+            (DEFAULT_ADMIN_EMAIL,),
+        ).fetchone()
+        admin_email = (
+            f"{DEFAULT_ADMIN_USERNAME}@thalassemia.local"
+            if email_row else DEFAULT_ADMIN_EMAIL
+        )
+
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO user_accounts
+            (username, full_name, email, password_hash, password_salt,
+             role, status, created_at, approved_by, approved_at)
+            VALUES (?, ?, ?, ?, ?, 'admin', 'approved', ?, ?, ?)
+            """,
+            (
+                DEFAULT_ADMIN_USERNAME,
+                DEFAULT_ADMIN_FULL_NAME,
+                admin_email,
+                password_hash,
+                password_salt,
+                now,
+                DEFAULT_ADMIN_USERNAME,
+                now,
+            ),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        # Another session/process may have created the admin concurrently.
+        # Re-check instead of letting the whole app crash.
+        try:
+            admin_row = conn.execute(
+                "SELECT id FROM user_accounts WHERE role = 'admin' LIMIT 1"
+            ).fetchone()
+            if admin_row:
+                conn.commit()
+                return
+        except Exception:
+            pass
+        raise
+    finally:
         conn.close()
-        return
-
-    admin_row = conn.execute(
-        "SELECT id FROM user_accounts WHERE role = 'admin' LIMIT 1"
-    ).fetchone()
-    if admin_row:
-        conn.close()
-        return
-
-    now = datetime.now().isoformat(timespec="seconds")
-    password_hash, password_salt = hash_password(DEFAULT_ADMIN_PASSWORD)
-    conn.execute(
-        """
-        INSERT INTO user_accounts
-        (username, full_name, email, password_hash, password_salt,
-         role, status, created_at, approved_by, approved_at)
-        VALUES (?, ?, ?, ?, ?, 'admin', 'approved', ?, ?, ?)
-        """,
-        (
-            DEFAULT_ADMIN_USERNAME,
-            DEFAULT_ADMIN_FULL_NAME,
-            DEFAULT_ADMIN_EMAIL,
-            password_hash,
-            password_salt,
-            now,
-            DEFAULT_ADMIN_USERNAME,
-            now,
-        ),
-    )
-    conn.commit()
-    conn.close()
-
 
 def admin_exists():
     conn = get_db()
