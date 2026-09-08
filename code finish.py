@@ -17,57 +17,133 @@ import streamlit as st
 st.markdown("""
 <style>
 /* ===== Professional Hematology UI — adaptive Light / Dark ===== */
-/* ===== Landing page / home ===== */
-.home-frame { max-width: 1040px; margin: 1.3rem auto 0; border:1px solid var(--heme-border); border-radius:18px; background:var(--background-color); overflow:hidden; box-shadow:0 8px 28px rgba(0,0,0,.055); }
-.home-head { padding:1.35rem 1.8rem 1.05rem; text-align:center; border-bottom:1px solid var(--heme-border); background:var(--heme-surface-soft); }
-.home-head .kicker { font-size:.66rem; letter-spacing:.18em; font-weight:800; color:var(--heme-muted); text-transform:uppercase; }
-.home-head h1 { font-size:1.68rem; margin:.38rem 0 .18rem; color:var(--text-color); line-height:1.2; }
-.home-head .lead { color:var(--heme-muted); font-size:.84rem; margin:0; }
-.home-login { padding:.78rem 1.1rem; border-bottom:1px solid var(--heme-border); }
-.home-login-title { font-size:.72rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--heme-muted); margin-bottom:.42rem; }
-.home-actions { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--heme-border); }
-.home-action { background:var(--background-color); padding:1.2rem 1.4rem 1.05rem; min-height:185px; display:flex; flex-direction:column; justify-content:space-between; }
-.home-action .num { font-size:.64rem; letter-spacing:.14em; font-weight:850; color:var(--heme-red); text-transform:uppercase; }
-.home-action h3 { margin:.28rem 0 .38rem; color:var(--text-color); font-size:1.08rem; }
-.home-action p { color:var(--heme-muted); line-height:1.45; font-size:.84rem; margin:0 0 .75rem; max-width:420px; }
-.home-action .sub { color:var(--heme-muted); font-size:.72rem; margin-top:.48rem; }
-.home-foot { padding:.64rem 1.1rem; text-align:center; color:var(--heme-muted); font-size:.72rem; border-top:1px solid var(--heme-border); }
-@media (max-width: 780px) { .home-actions{grid-template-columns:1fr;} .home-frame{margin-top:.55rem;} .home-action{min-height:170px;} .home-head h1{font-size:1.38rem;} }
-:root {
-  --heme-navy:#17324D;
-  --heme-red:#8E2C3A;
-  --heme-accent:#A33A49;
-  --heme-border:color-mix(in srgb, var(--text-color) 18%, transparent);
-  --heme-muted:color-mix(in srgb, var(--text-color) 66%, transparent);
-  --heme-surface:var(--secondary-background-color);
-  --heme-surface-soft:color-mix(in srgb, var(--secondary-background-color) 86%, var(--background-color));
-}
-.main .block-container { max-width:1180px; padding-top:2rem; padding-bottom:3rem; }
-[data-testid="stHeader"] { background:transparent; }
-.hematology-brand { border-left:5px solid var(--heme-red); padding:.15rem 0 .15rem 1rem; margin-bottom:.35rem; }
-.hematology-brand .eyebrow { font-size:.78rem; letter-spacing:.16em; color:var(--heme-muted); font-weight:700; text-transform:uppercase; }
-.hematology-brand .title { font-size:2rem; line-height:1.15; color:var(--text-color); font-weight:750; margin-top:.18rem; }
-.hematology-brand .subtitle { color:var(--heme-muted); font-size:.95rem; margin-top:.45rem; }
-.section-rule { height:1px; background:var(--heme-border); margin:1.2rem 0; }
-[data-testid="stExpander"] { border:1px solid var(--heme-border); border-radius:10px; background:var(--heme-surface-soft); }
-[data-testid="stExpander"] summary p { color:var(--text-color); font-weight:700; }
-[data-testid="stSidebar"] { border-right:1px solid var(--heme-border); }
-[data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { color:var(--text-color); }
-.stButton > button { border-radius:7px; font-weight:600; }
-.contact-card { border:1px solid var(--heme-border); border-radius:10px; padding:1rem 1.15rem; background:var(--heme-surface-soft); margin-top:1rem; }
-.contact-card .label { color:var(--heme-muted); font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
-.contact-card .name { color:var(--text-color); font-size:1.1rem; font-weight:750; margin:.2rem 0 .55rem; }
-.contact-card a { color:var(--heme-accent); text-decoration:none; font-weight:600; }
-.contact-card a:hover { text-decoration:underline; }
-.small-note { color:var(--heme-muted); font-size:.82rem; }
 
-/* Dark-mode refinement. Streamlit exposes theme colors through CSS variables;
-   this media rule only adjusts the hematology accent for contrast. */
-@media (prefers-color-scheme: dark) {
-  :root { --heme-red:#C45A69; --heme-accent:#E07987; }
-  [data-testid="stExpander"], .contact-card {
-    box-shadow:0 1px 0 rgba(255,255,255,.025) inset;
-  }
+/* ===== LANDING PAGE — compact hematology portal ===== */
+.home-frame{
+    max-width: 980px;
+    margin: 1.1rem auto 0;
+    border: 1px solid var(--heme-border);
+    border-radius: 10px;
+    background: var(--background-color);
+    overflow: hidden;
+}
+.home-topbar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:1rem;
+    padding:.62rem .9rem;
+    border-bottom:1px solid var(--heme-border);
+    background:var(--heme-surface-soft);
+}
+.home-auth-title{
+    font-size:.75rem;
+    font-weight:700;
+    color:var(--text-color);
+}
+.home-auth-note{
+    font-size:.64rem;
+    color:var(--heme-muted);
+    margin-top:.08rem;
+}
+.home-intro{
+    padding:.25rem .9rem .1rem;
+    text-align:center;
+    border-bottom:1px solid var(--heme-border);
+}
+.home-brand{
+    text-align:center;
+    padding:1.55rem 1rem .85rem;
+}
+.home-brand .kicker{
+    font-size:.61rem;
+    letter-spacing:.18em;
+    font-weight:800;
+    color:var(--heme-muted);
+    text-transform:uppercase;
+}
+.home-brand h1{
+    margin:.35rem 0 .22rem;
+    font-size:1.58rem;
+    line-height:1.2;
+    font-weight:750;
+    color:var(--text-color);
+}
+.home-brand p{
+    margin:0;
+    font-size:.76rem;
+    color:var(--heme-muted);
+}
+.home-actions{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:18px;
+    padding:1.05rem 1.8rem 1.4rem;
+}
+.home-action-box{
+    min-height:145px;
+    border:1px solid var(--heme-border);
+    border-radius:10px;
+    padding:1.05rem 1.15rem .9rem;
+    background:var(--background-color);
+    display:flex;
+    flex-direction:column;
+    justify-content:space-between;
+    transition:all .16s ease;
+}
+.home-action-box:hover{
+    border-color:var(--heme-accent);
+    box-shadow:0 5px 18px rgba(0,0,0,.06);
+}
+.home-action-box .num{
+    font-size:.61rem;
+    letter-spacing:.12em;
+    color:var(--heme-muted);
+    font-weight:800;
+}
+.home-action-box h3{
+    margin:.32rem 0 .2rem;
+    font-size:1.08rem;
+    color:var(--text-color);
+    font-weight:750;
+    text-transform:uppercase;
+}
+.home-action-box p{
+    margin:0 0 .75rem;
+    font-size:.72rem;
+    color:var(--heme-muted);
+}
+.home-contact{
+    border-top:1px solid var(--heme-border);
+    padding:.7rem 1.8rem .8rem;
+}
+.home-contact-title{
+    font-size:.66rem;
+    letter-spacing:.08em;
+    font-weight:800;
+    text-transform:uppercase;
+    color:var(--text-color);
+    margin-bottom:.28rem;
+}
+.home-contact-line{
+    font-size:.69rem;
+    color:var(--heme-muted);
+}
+.home-foot{
+    padding:.48rem .8rem;
+    text-align:center;
+    border-top:1px solid var(--heme-border);
+    font-size:.61rem;
+    color:var(--heme-muted);
+}
+@media (max-width:760px){
+    .home-frame{margin:.5rem .35rem 0;}
+    .home-topbar{align-items:flex-start;}
+    .home-brand{padding:1.15rem .7rem .7rem;}
+    .home-brand h1{font-size:1.22rem;}
+    .home-actions{grid-template-columns:1fr;gap:10px;padding:.8rem .8rem 1rem;}
+    .home-action-box{min-height:125px;}
+    .home-contact{padding:.65rem .8rem;}
 }
 </style>
 """, unsafe_allow_html=True)
@@ -2415,66 +2491,153 @@ def _clear_navigation():
 
 
 def render_home_choice_cards():
+    """Trang đầu: đăng nhập/đăng ký ở trên, giới thiệu thu gọn, hai chức năng, liên hệ."""
     user = current_auth_user()
+
     st.markdown('<div class="home-frame">', unsafe_allow_html=True)
-    st.markdown('''<div class="home-head">
+
+    # Thanh trên cùng — đúng theo bản phác thảo: đăng nhập/đăng ký + ô tài khoản/mật khẩu.
+    st.markdown('<div class="home-topbar">', unsafe_allow_html=True)
+    if user:
+        role = "Quản trị viên" if user.get("role") == "admin" else "Nhân sự được duyệt"
+        st.markdown(
+            f'<div><div class="home-auth-title">Đã đăng nhập</div>'
+            f'<div class="home-auth-note">{user.get("full_name","Người dùng")} · {role}</div></div>',
+            unsafe_allow_html=True
+        )
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            if st.button("TRUY XUẤT DỮ LIỆU", key="home_v11_data_top", use_container_width=True):
+                st.session_state["home_action"] = "data"
+                st.session_state["auth_page"] = "🛡️ Quản trị hệ thống"
+                st.rerun()
+        with c2:
+            if st.button("ĐĂNG XUẤT", key="home_v11_logout", use_container_width=True):
+                logout_user()
+                _clear_navigation()
+                st.rerun()
+    else:
+        st.markdown(
+            '<div><div class="home-auth-title">ĐĂNG NHẬP / ĐĂNG KÝ</div>'
+            '<div class="home-auth-note">Dành cho quản trị viên và nhân sự được phê duyệt</div></div>',
+            unsafe_allow_html=True
+        )
+        c1, c2, c3 = st.columns([1.15, .95, .48])
+        with c1:
+            login_value = st.text_input(
+                "Tài khoản / email", key="home_v11_username",
+                label_visibility="collapsed", placeholder="Tài khoản / email"
+            )
+        with c2:
+            password = st.text_input(
+                "Mật khẩu", key="home_v11_password",
+                type="password", label_visibility="collapsed", placeholder="Mật khẩu"
+            )
+        with c3:
+            if st.button("ĐĂNG NHẬP", key="home_v11_login", type="primary", use_container_width=True):
+                result, message = authenticate_user(login_value, password)
+                if result:
+                    st.session_state["auth_user"] = result
+                    st.session_state["auth_page"] = None
+                    st.session_state["home_action"] = None
+                    st.rerun()
+                else:
+                    st.error(message)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Giới thiệu đề tài là một vùng thu gọn, không chiếm trang đầu.
+    with st.expander("GIỚI THIỆU ĐỀ TÀI", expanded=False):
+        st.markdown("### Lời nói đầu")
+        st.write(
+            "Hệ thống hỗ trợ sàng lọc Thalassemia trong cộng đồng, kết hợp thông tin tiền sử, "
+            "các chỉ số huyết học cơ bản và dữ liệu xét nghiệm sau sàng lọc để hỗ trợ phân tầng, "
+            "tư vấn và nghiên cứu."
+        )
+        st.markdown("### 1. Lý do chọn đề tài")
+        st.write(
+            "CBC có khả năng tiếp cận rộng hơn so với các xét nghiệm hemoglobin chuyên sâu. "
+            "Hệ thống được xây dựng nhằm hỗ trợ nhận diện trường hợp cần đánh giá thêm và điều hướng "
+            "đến xét nghiệm phù hợp, không thay thế chẩn đoán chuyên môn."
+        )
+        st.markdown("### 2. Mục tiêu")
+        st.write(
+            "Xây dựng công cụ sàng lọc ban đầu, phân tích CBC, ghi nhận kết quả HPLC/điện di hoặc "
+            "xét nghiệm liên quan và tạo dữ liệu có cấu trúc phục vụ nghiên cứu."
+        )
+        st.markdown("### 3. Cơ sở khoa học")
+        st.write(
+            "Luồng sàng lọc được xây dựng theo hướng: CBC → đánh giá tình trạng sắt/ferritin khi phù hợp "
+            "→ HPLC/điện di huyết sắc tố → xét nghiệm gen khi có chỉ định. Các kết quả trên hệ thống "
+            "được diễn đạt theo hướng gợi ý/nguy cơ và cần được đánh giá chuyên môn."
+        )
+        st.caption("Tài liệu tham khảo và thông tin tác giả được trình bày trong phần giới thiệu nghiên cứu của hệ thống.")
+
+    # Tiêu đề trung tâm.
+    st.markdown("""
+    <div class="home-brand">
         <div class="kicker">HEMATOLOGY · THALASSEMIA · COMMUNITY SCREENING</div>
         <h1>HỆ THỐNG HỖ TRỢ SÀNG LỌC THALASSEMIA</h1>
-        <p class="lead">Sàng lọc cộng đồng · dữ liệu huyết học · theo dõi sau sàng lọc</p>
-    </div>''', unsafe_allow_html=True)
+        <p>Sàng lọc cộng đồng · dữ liệu huyết học · theo dõi sau sàng lọc</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # Gọn đúng trang đầu: đăng nhập ở trên, hai chức năng ở dưới.
-    st.markdown('<div class="home-login"><div class="home-login-title">ĐĂNG NHẬP</div>', unsafe_allow_html=True)
-    if user:
-        c1, c2 = st.columns([2.5, 1])
-        with c1:
-            role = "Quản trị viên" if user.get("role") == "admin" else "Nhân sự được duyệt"
-            st.markdown(f'<div class="small-note">Đã đăng nhập: <strong>{user.get("full_name", "Người dùng")}</strong> · {role}</div>', unsafe_allow_html=True)
-        with c2:
-            if st.button("ĐĂNG XUẤT", key="home_logout_only", use_container_width=True):
-                logout_user(); _clear_navigation(); st.rerun()
-    else:
-        with st.form("home_compact_login_form_v10"):
-            c1, c2, c3 = st.columns([1.35, 1.0, .62])
-            with c1:
-                login_value = st.text_input("Tài khoản / email", label_visibility="collapsed", placeholder="Tên đăng nhập hoặc email")
-            with c2:
-                password = st.text_input("Mật khẩu", type="password", label_visibility="collapsed", placeholder="Mật khẩu")
-            with c3:
-                submit = st.form_submit_button("ĐĂNG NHẬP", type="primary", use_container_width=True)
-        if submit:
-            result, message = authenticate_user(login_value, password)
-            if result:
-                st.session_state["auth_user"] = result
-                st.session_state["auth_page"] = None
-                st.session_state["home_action"] = None
-                st.rerun()
-            else:
-                st.error(message)
+    # Hai chức năng chính — không đưa quy trình vào trong ô.
+    st.markdown('<div class="home-actions">', unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="home-action-box">
+        <div>
+            <div class="num">01 · NGƯỜI THAM GIA</div>
+            <h3>THỰC HIỆN SÀNG LỌC</h3>
+            <p>Tham gia sàng lọc Thalassemia trong cộng đồng.</p>
+        </div>
+    """, unsafe_allow_html=True)
+    if st.button("THỰC HIỆN SÀNG LỌC", key="home_v11_screening", type="primary", use_container_width=True):
+        st.session_state["home_action"] = "screening"
+        st.session_state["auth_page"] = None
+        st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="home-actions">', unsafe_allow_html=True)
-    st.markdown('<div class="home-action"><div><div class="num">01 · NGƯỜI THAM GIA</div><h3>Thực hiện sàng lọc</h3><p>Thực hiện sàng lọc Thalassemia trong cộng đồng.</p></div>', unsafe_allow_html=True)
-    if st.button("THỰC HIỆN SÀNG LỌC", key="home_screening_btn_compact", type="primary", use_container_width=True):
-        st.session_state["home_action"]="screening"; st.session_state["auth_page"]=None; st.rerun()
-    st.markdown('<div class="sub">Dành cho người tham gia sàng lọc</div></div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="home-action"><div><div class="num">02 · DỮ LIỆU NGHIÊN CỨU</div><h3>Truy xuất dữ liệu</h3><p>Quản lý dữ liệu nghiên cứu và xuất dữ liệu phục vụ phân tích.</p></div>', unsafe_allow_html=True)
-    if st.button("TRUY XUẤT DỮ LIỆU", key="home_data_btn_compact", use_container_width=True):
+    st.markdown("""
+    <div class="home-action-box">
+        <div>
+            <div class="num">02 · DỮ LIỆU NGHIÊN CỨU</div>
+            <h3>TRUY XUẤT DỮ LIỆU</h3>
+            <p>Quản lý và khai thác dữ liệu phục vụ nghiên cứu.</p>
+        </div>
+    """, unsafe_allow_html=True)
+    if st.button("TRUY XUẤT DỮ LIỆU", key="home_v11_data", use_container_width=True):
         if current_auth_user():
-            st.session_state["home_action"]="data"; st.session_state["auth_page"]="🛡️ Quản trị hệ thống"; st.rerun()
+            st.session_state["home_action"] = "data"
+            st.session_state["auth_page"] = "🛡️ Quản trị hệ thống"
+            st.rerun()
         else:
             st.warning("Vui lòng đăng nhập ở phía trên để truy xuất dữ liệu.")
-    st.markdown('<div class="sub">Dành cho quản trị viên và nhân sự được duyệt</div></div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('<div class="home-foot">Hệ thống hỗ trợ sàng lọc và nghiên cứu · không thay thế chẩn đoán hoặc tư vấn y khoa</div></div>', unsafe_allow_html=True)
 
-_home_action=st.session_state.get("home_action")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Liên hệ tác giả ở cuối khung.
+    st.markdown("""
+    <div class="home-contact">
+        <div class="home-contact-title">Liên hệ tác giả</div>
+        <div class="home-contact-line">
+            Nguyễn Đắc Lâu · 0357930820 · nguyendaclau2309@gmail.com
+        </div>
+    </div>
+    <div class="home-foot">
+        Hệ thống hỗ trợ sàng lọc và nghiên cứu · không thay thế chẩn đoán hoặc tư vấn y khoa
+    </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+_home_action = st.session_state.get("home_action")
 if not _home_action:
     render_home_choice_cards()
     st.stop()
-if _home_action=="data" and current_auth_user():
-    st.session_state["auth_page"]="🛡️ Quản trị hệ thống"
+if _home_action == "data" and current_auth_user():
+    st.session_state["auth_page"] = "🛡️ Quản trị hệ thống"
 
 # ============================================================
 # HEADER
@@ -2484,7 +2647,6 @@ if _home_action=="data" and current_auth_user():
 # CỬA SỔ GIẢI THÍCH NGHIÊN CỨU
 # ============================================================
 
-@st.dialog("📚 Tìm hiểu về nghiên cứu và cơ sở khoa học", width="large")
 def show_research_overview():
     st.markdown("""
 ### 1. Lý do khoa học – y tế để phát triển hệ thống
