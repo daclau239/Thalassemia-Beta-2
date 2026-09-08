@@ -21,173 +21,98 @@ st.markdown("""
 
 
 
-/* ===== LANDING PAGE — medical blue / clean research portal ===== */
+
+/* ===== LANDING PAGE — refined medical portal ===== */
 .home-frame{
     max-width:1080px;
-    margin:1.0rem auto 1.2rem;
-    border:1px solid rgba(30,105,190,.22);
-    border-radius:18px;
+    margin:1rem auto 1.2rem;
+    border:1px solid rgba(30,105,190,.20);
+    border-radius:16px;
     background:var(--background-color);
     overflow:hidden;
-    box-shadow:0 18px 48px rgba(18,72,135,.14);
+    box-shadow:0 14px 42px rgba(18,72,135,.12);
 }
 .home-topbar{
-    min-height:54px;
+    min-height:56px;
     display:grid;
-    grid-template-columns:1fr auto 1.35fr;
+    grid-template-columns:1fr auto 1.5fr;
     align-items:center;
     gap:14px;
     padding:.45rem .85rem;
     background:var(--background-color);
 }
-.home-top-left{
-    display:flex;
-    align-items:center;
-    justify-content:flex-start;
+.home-top-left{display:flex;align-items:center;}
+.home-top-right{display:flex;align-items:center;justify-content:flex-end;gap:5px;}
+.home-login-link{font-size:.72rem;font-weight:750;color:var(--text-color);white-space:nowrap;}
+.home-intro{
+    border-top:1px solid var(--heme-border);
+    border-bottom:1px solid var(--heme-border);
+    background:var(--heme-surface-soft);
 }
-.home-top-center{text-align:center;}
-.home-top-right{
-    display:flex;
-    align-items:center;
-    justify-content:flex-end;
-    gap:5px;
+.home-intro .streamlit-expanderHeader{
+    padding:.5rem 1rem;
 }
-.home-login-link{
-    font-size:.72rem;
-    font-weight:750;
-    color:var(--text-color);
-    white-space:nowrap;
-}
-.home-intro-link{
-    font-size:.70rem;
-    font-weight:650;
-    color:var(--text-color);
-}
-.home-nav{
-    background:linear-gradient(90deg,#1478d4,#0b64bb);
-    min-height:39px;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    gap:2.1rem;
-    color:#fff;
-    font-size:.68rem;
-    font-weight:650;
-    letter-spacing:.02em;
-}
-.home-nav span{opacity:.96;}
 .home-brand{
     text-align:center;
-    padding:2.15rem 1rem 1.25rem;
-    background:var(--background-color);
+    padding:1.55rem 1rem .9rem;
 }
 .home-brand .kicker{
-    font-size:.55rem;
+    font-size:.54rem;
     letter-spacing:.18em;
     font-weight:800;
     color:#1675ce;
     text-transform:uppercase;
 }
 .home-brand h1{
-    margin:.38rem 0 .22rem;
-    font-size:1.9rem;
-    line-height:1.13;
+    margin:.32rem 0 .18rem;
+    font-size:1.82rem;
+    line-height:1.14;
     font-weight:800;
     color:var(--text-color);
-    letter-spacing:-.02em;
 }
-.home-brand p{
-    margin:0;
-    font-size:.69rem;
-    color:var(--heme-muted);
-}
+.home-brand p{margin:0;font-size:.67rem;color:var(--heme-muted);}
 .home-panel{
-    margin:0 3.6rem 1.8rem;
-    padding:1.25rem 1.4rem 1.4rem;
-    border:1px solid rgba(22,117,206,.11);
-    border-radius:14px;
-    background:linear-gradient(145deg,rgba(230,242,255,.78),rgba(246,250,255,.55));
-}
-.home-panel-label{
-    text-align:center;
-    font-size:.56rem;
-    letter-spacing:.15em;
-    font-weight:800;
-    color:#1975c9;
-    text-transform:uppercase;
-    margin-bottom:.8rem;
+    margin:0 3.4rem 1.55rem;
+    padding:1rem 1.15rem 1.15rem;
+    border:1px solid rgba(22,117,206,.10);
+    border-radius:13px;
+    background:linear-gradient(145deg,rgba(230,242,255,.74),rgba(246,250,255,.52));
 }
 .home-actions{
     display:grid;
     grid-template-columns:1fr 1fr;
-    gap:14px;
+    gap:18px;
 }
 .home-action-box{
-    min-height:128px;
-    border:1px solid rgba(22,117,206,.18);
-    border-radius:11px;
+    min-height:132px;
+    border:1px solid rgba(22,117,206,.17);
+    border-radius:10px;
     padding:.9rem 1rem .8rem;
     background:rgba(255,255,255,.72);
     display:flex;
     flex-direction:column;
     justify-content:space-between;
-    box-shadow:0 4px 16px rgba(19,89,151,.06);
 }
-.home-action-box:hover{
-    border-color:#1977d0;
-    box-shadow:0 7px 22px rgba(19,89,151,.12);
-}
-.home-action-box .num{
-    font-size:.53rem;
-    letter-spacing:.11em;
-    color:#6d8399;
-    font-weight:800;
-}
-.home-action-box h3{
-    margin:.25rem 0 .12rem;
-    font-size:1.0rem;
-    color:#12375c;
-    font-weight:800;
-}
-.home-action-box p{
-    margin:0 0 .45rem;
-    font-size:.62rem;
-    color:#71859a;
-}
+.home-action-box:hover{border-color:#1977d0;box-shadow:0 6px 18px rgba(19,89,151,.10);}
+.home-action-box .num{font-size:.52rem;letter-spacing:.11em;color:#6d8399;font-weight:800;}
+.home-action-box h3{margin:.25rem 0 .12rem;font-size:1rem;color:#12375c;font-weight:800;}
+.home-action-box p{margin:0 0 .45rem;font-size:.62rem;color:#71859a;}
 .home-contact{
     border-top:1px solid var(--heme-border);
-    padding:.72rem 1rem .76rem;
-    text-align:center;
+    padding:.68rem 1rem .72rem;
+    text-align:left;
 }
-.home-contact-title{
-    display:inline;
-    font-size:.57rem;
-    font-weight:800;
-    text-transform:uppercase;
-    color:var(--text-color);
-}
-.home-contact-line{
-    display:inline;
-    margin-left:.55rem;
-    font-size:.61rem;
-    color:var(--heme-muted);
-}
-.home-foot{
-    padding:.42rem .7rem;
-    text-align:center;
-    border-top:1px solid var(--heme-border);
-    font-size:.52rem;
-    color:var(--heme-muted);
-}
+.home-contact-title{font-size:.57rem;font-weight:800;text-transform:uppercase;color:var(--text-color);}
+.home-contact-line{margin-top:.18rem;font-size:.61rem;color:var(--heme-muted);}
+.home-foot{padding:.4rem .7rem;text-align:center;border-top:1px solid var(--heme-border);font-size:.52rem;color:var(--heme-muted);}
 @media(max-width:760px){
     .home-topbar{grid-template-columns:1fr;gap:6px;padding:.55rem;}
     .home-top-left,.home-top-right{justify-content:center;}
-    .home-nav{gap:.75rem;flex-wrap:wrap;padding:.45rem;}
-    .home-brand{padding:1.35rem .65rem .9rem;}
-    .home-brand h1{font-size:1.35rem;}
-    .home-panel{margin:0 .65rem 1rem;padding:.8rem;}
+    .home-brand{padding:1.15rem .6rem .7rem;}
+    .home-brand h1{font-size:1.3rem;}
+    .home-panel{margin:0 .65rem 1rem;padding:.75rem;}
     .home-actions{grid-template-columns:1fr;gap:9px;}
-    .home-contact-line{display:block;margin:.2rem 0 0;}
+    .home-contact{padding:.55rem .7rem;}
 }
 </style>
 """, unsafe_allow_html=True)
@@ -2535,83 +2460,67 @@ def _clear_navigation():
 
 
 def render_home_choice_cards():
-    """Landing page phong cách cổng Huyết học: sạch, xanh y khoa, ít thành phần."""
+    """Trang đầu: đăng nhập → giới thiệu đề tài → tên hệ thống → hai chức năng."""
     user = current_auth_user()
 
     st.markdown('<div class="home-frame">', unsafe_allow_html=True)
 
-    # Header: đăng nhập/đăng ký ở trái, giới thiệu ở giữa, tài khoản ở phải.
+    # 1. ĐĂNG NHẬP / ĐĂNG KÝ
     st.markdown('<div class="home-topbar">', unsafe_allow_html=True)
-    with st.container():
-        c_left, c_center, c_right = st.columns([1.0, .8, 1.55])
+    c_left, c_center, c_right = st.columns([1.05, .9, 1.55])
 
-        with c_left:
-            st.markdown(
-                '<div class="home-top-left"><span class="home-login-link">ĐĂNG NHẬP / ĐĂNG KÝ</span></div>',
-                unsafe_allow_html=True
-            )
+    with c_left:
+        st.markdown(
+            '<div class="home-top-left"><span class="home-login-link">ĐĂNG NHẬP / ĐĂNG KÝ</span></div>',
+            unsafe_allow_html=True
+        )
 
-        with c_center:
-            with st.expander("GIỚI THIỆU ĐỀ TÀI", expanded=False):
-                st.markdown("### Lời nói đầu")
-                st.write(
-                    "Hệ thống hỗ trợ sàng lọc Thalassemia trong cộng đồng, kết hợp thông tin tiền sử, "
-                    "các chỉ số huyết học và kết quả xét nghiệm sau sàng lọc để hỗ trợ nghiên cứu."
-                )
-                st.markdown("### Lý do chọn đề tài")
-                st.write(
-                    "Hệ thống hướng đến hỗ trợ sàng lọc ban đầu, phân tầng nguy cơ và điều hướng đánh giá "
-                    "chuyên sâu; không thay thế chẩn đoán chuyên môn."
-                )
-                st.markdown("### Cơ sở khoa học")
-                st.write(
-                    "Luồng được xây dựng theo hướng CBC → đánh giá sắt/ferritin khi phù hợp → "
-                    "HPLC/điện di Hb → xét nghiệm gen khi có chỉ định."
-                )
-                st.caption("Tài liệu tham khảo và thông tin tác giả được trình bày trong phần nghiên cứu.")
+    with c_center:
+        st.empty()
 
-        with c_right:
-            if user:
+    with c_right:
+        if user:
+            cc1, cc2 = st.columns([1.35, .55])
+            with cc1:
                 st.caption(f"Đã đăng nhập: {user.get('full_name','Người dùng')}")
-                if st.button("ĐĂNG XUẤT", key="home_v14_logout", use_container_width=True):
+            with cc2:
+                if st.button("ĐĂNG XUẤT", key="home_v15_logout", use_container_width=True):
                     logout_user()
                     _clear_navigation()
                     st.rerun()
-            else:
-                cc1, cc2, cc3 = st.columns([1, 1, .52])
-                with cc1:
-                    login_value = st.text_input(
-                        "Tài khoản", key="home_v14_username",
-                        label_visibility="collapsed", placeholder="Tài khoản"
-                    )
-                with cc2:
-                    password = st.text_input(
-                        "Mật khẩu", key="home_v14_password",
-                        type="password", label_visibility="collapsed", placeholder="Mật khẩu"
-                    )
-                with cc3:
-                    if st.button("ĐĂNG NHẬP", key="home_v14_login", type="primary", use_container_width=True):
-                        result, message = authenticate_user(login_value, password)
-                        if result:
-                            st.session_state["auth_user"] = result
-                            st.session_state["auth_page"] = None
-                            st.session_state["home_action"] = None
-                            st.rerun()
-                        else:
-                            st.error(message)
+        else:
+            cc1, cc2, cc3 = st.columns([1, 1, .52])
+            with cc1:
+                login_value = st.text_input(
+                    "Tài khoản", key="home_v15_username",
+                    label_visibility="collapsed", placeholder="Tài khoản"
+                )
+            with cc2:
+                password = st.text_input(
+                    "Mật khẩu", key="home_v15_password",
+                    type="password", label_visibility="collapsed", placeholder="Mật khẩu"
+                )
+            with cc3:
+                if st.button("ĐĂNG NHẬP", key="home_v15_login", type="primary", use_container_width=True):
+                    result, message = authenticate_user(login_value, password)
+                    if result:
+                        st.session_state["auth_user"] = result
+                        st.session_state["auth_page"] = None
+                        st.session_state["home_action"] = None
+                        st.rerun()
+                    else:
+                        st.error(message)
+
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Dải điều hướng thị giác, không chứa quy trình hay form.
-    st.markdown("""
-    <div class="home-nav">
-        <span>GIỚI THIỆU ĐỀ TÀI</span>
-        <span>THALASSEMIA</span>
-        <span>HEMATOLOGY</span>
-        <span>SCREENING</span>
-    </div>
-    """, unsafe_allow_html=True)
+    # 2. GIỚI THIỆU ĐỀ TÀI — full width, ngay dưới đăng nhập.
+    st.markdown('<div class="home-intro">', unsafe_allow_html=True)
+    with st.expander("GIỚI THIỆU ĐỀ TÀI  ·  CƠ SỞ KHOA HỌC", expanded=False):
+        # Dùng toàn bộ nội dung nghiên cứu đã hoàn thiện trong show_research_overview().
+        show_research_overview()
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    # Banner trung tâm.
+    # 3. TÊN HỆ THỐNG
     st.markdown("""
     <div class="home-brand">
         <div class="kicker">THALASSEMIA · HEMATOLOGY · SCREENING</div>
@@ -2620,47 +2529,44 @@ def render_home_choice_cards():
     </div>
     """, unsafe_allow_html=True)
 
-    # Một panel duy nhất chứa hai chức năng chính.
+    # 4. HAI Ô CHỨC NĂNG — trái/phải, bấm trực tiếp.
+    st.markdown('<div class="home-panel"><div class="home-actions">', unsafe_allow_html=True)
+
     st.markdown("""
-    <div class="home-panel">
-        <div class="home-panel-label">LỰA CHỌN CHỨC NĂNG</div>
-        <div class="home-actions">
-            <div class="home-action-box">
-                <div>
-                    <div class="num">01 · NGƯỜI THAM GIA</div>
-                    <h3>THỰC HIỆN SÀNG LỌC</h3>
-                    <p>Cần đăng nhập để thực hiện.</p>
-                </div>
+    <div class="home-action-box">
+        <div>
+            <div class="num">01 · NGƯỜI THAM GIA</div>
+            <h3>THỰC HIỆN SÀNG LỌC</h3>
+            <p>Cần đăng nhập để thực hiện.</p>
+        </div>
     """, unsafe_allow_html=True)
-    if st.button("THỰC HIỆN SÀNG LỌC", key="home_v14_screening", type="primary", use_container_width=True):
+    if st.button("THỰC HIỆN SÀNG LỌC", key="home_v15_screening", type="primary", use_container_width=True):
         if current_auth_user():
             st.session_state["home_action"] = "screening"
             st.session_state["auth_page"] = None
             st.rerun()
         else:
             st.warning("Vui lòng đăng nhập ở phía trên để thực hiện sàng lọc.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
     st.markdown("""
-            </div>
-            <div class="home-action-box">
-                <div>
-                    <div class="num">02 · DỮ LIỆU NGHIÊN CỨU</div>
-                    <h3>TRUY XUẤT DỮ LIỆU</h3>
-                    <p>Cần đăng nhập để truy xuất.</p>
-                </div>
+    <div class="home-action-box">
+        <div>
+            <div class="num">02 · DỮ LIỆU NGHIÊN CỨU</div>
+            <h3>TRUY XUẤT DỮ LIỆU</h3>
+            <p>Cần đăng nhập để truy xuất.</p>
+        </div>
     """, unsafe_allow_html=True)
-    if st.button("TRUY XUẤT DỮ LIỆU", key="home_v14_data", use_container_width=True):
+    if st.button("TRUY XUẤT DỮ LIỆU", key="home_v15_data", use_container_width=True):
         if current_auth_user():
             st.session_state["home_action"] = "data"
             st.session_state["auth_page"] = "🛡️ Quản trị hệ thống"
             st.rerun()
         else:
             st.warning("Vui lòng đăng nhập ở phía trên để truy xuất dữ liệu.")
-    st.markdown("""
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('</div></div></div>', unsafe_allow_html=True)
 
+    # 5. LIÊN HỆ TÁC GIẢ
     st.markdown("""
     <div class="home-contact">
         <div class="home-contact-title">Liên hệ tác giả</div>
