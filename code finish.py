@@ -18,132 +18,126 @@ st.markdown("""
 <style>
 /* ===== Professional Hematology UI — adaptive Light / Dark ===== */
 
-/* ===== LANDING PAGE — compact hematology portal ===== */
+
+/* ===== LANDING PAGE — ultra minimal ===== */
 .home-frame{
-    max-width: 980px;
-    margin: 1.1rem auto 0;
-    border: 1px solid var(--heme-border);
-    border-radius: 10px;
-    background: var(--background-color);
-    overflow: hidden;
+    max-width:900px;
+    margin:1.1rem auto 0;
+    border:1px solid var(--heme-border);
+    border-radius:8px;
+    background:var(--background-color);
+    overflow:hidden;
 }
 .home-topbar{
     display:flex;
     align-items:center;
-    justify-content:space-between;
-    gap:1rem;
-    padding:.62rem .9rem;
+    gap:.7rem;
+    padding:.48rem .7rem;
     border-bottom:1px solid var(--heme-border);
     background:var(--heme-surface-soft);
 }
 .home-auth-title{
-    font-size:.75rem;
+    font-size:.68rem;
     font-weight:700;
     color:var(--text-color);
+    white-space:nowrap;
 }
-.home-auth-note{
-    font-size:.64rem;
-    color:var(--heme-muted);
-    margin-top:.08rem;
-}
-.home-intro{
-    padding:.25rem .9rem .1rem;
-    text-align:center;
-    border-bottom:1px solid var(--heme-border);
-}
+.home-auth-note{display:none;}
+.home-intro{display:none;}
 .home-brand{
     text-align:center;
-    padding:1.55rem 1rem .85rem;
+    padding:1.15rem .7rem .65rem;
 }
 .home-brand .kicker{
-    font-size:.61rem;
-    letter-spacing:.18em;
+    font-size:.52rem;
+    letter-spacing:.15em;
     font-weight:800;
     color:var(--heme-muted);
     text-transform:uppercase;
 }
 .home-brand h1{
-    margin:.35rem 0 .22rem;
-    font-size:1.58rem;
-    line-height:1.2;
+    margin:.28rem 0 .16rem;
+    font-size:1.35rem;
+    line-height:1.15;
     font-weight:750;
     color:var(--text-color);
 }
 .home-brand p{
     margin:0;
-    font-size:.76rem;
+    font-size:.66rem;
     color:var(--heme-muted);
 }
 .home-actions{
     display:grid;
     grid-template-columns:1fr 1fr;
-    gap:18px;
-    padding:1.05rem 1.8rem 1.4rem;
+    gap:12px;
+    padding:.7rem 1.2rem 1.15rem;
 }
 .home-action-box{
-    min-height:145px;
+    min-height:112px;
     border:1px solid var(--heme-border);
-    border-radius:10px;
-    padding:1.05rem 1.15rem .9rem;
+    border-radius:7px;
+    padding:.8rem .9rem .7rem;
     background:var(--background-color);
     display:flex;
     flex-direction:column;
     justify-content:space-between;
-    transition:all .16s ease;
 }
 .home-action-box:hover{
     border-color:var(--heme-accent);
-    box-shadow:0 5px 18px rgba(0,0,0,.06);
+    box-shadow:0 3px 12px rgba(0,0,0,.045);
 }
 .home-action-box .num{
-    font-size:.61rem;
-    letter-spacing:.12em;
+    font-size:.52rem;
+    letter-spacing:.1em;
     color:var(--heme-muted);
     font-weight:800;
 }
 .home-action-box h3{
-    margin:.32rem 0 .2rem;
-    font-size:1.08rem;
+    margin:.22rem 0 .12rem;
+    font-size:.92rem;
     color:var(--text-color);
     font-weight:750;
-    text-transform:uppercase;
 }
 .home-action-box p{
-    margin:0 0 .75rem;
-    font-size:.72rem;
+    margin:0 0 .45rem;
+    font-size:.62rem;
     color:var(--heme-muted);
 }
 .home-contact{
     border-top:1px solid var(--heme-border);
-    padding:.7rem 1.8rem .8rem;
+    padding:.5rem .9rem .55rem;
 }
 .home-contact-title{
-    font-size:.66rem;
-    letter-spacing:.08em;
+    display:inline;
+    font-size:.58rem;
+    letter-spacing:.06em;
     font-weight:800;
     text-transform:uppercase;
     color:var(--text-color);
-    margin-bottom:.28rem;
 }
 .home-contact-line{
-    font-size:.69rem;
-    color:var(--heme-muted);
-}
-.home-foot{
-    padding:.48rem .8rem;
-    text-align:center;
-    border-top:1px solid var(--heme-border);
+    display:inline;
+    margin-left:.55rem;
     font-size:.61rem;
     color:var(--heme-muted);
 }
+.home-foot{
+    padding:.36rem .7rem;
+    text-align:center;
+    border-top:1px solid var(--heme-border);
+    font-size:.53rem;
+    color:var(--heme-muted);
+}
 @media (max-width:760px){
-    .home-frame{margin:.5rem .35rem 0;}
-    .home-topbar{align-items:flex-start;}
-    .home-brand{padding:1.15rem .7rem .7rem;}
-    .home-brand h1{font-size:1.22rem;}
-    .home-actions{grid-template-columns:1fr;gap:10px;padding:.8rem .8rem 1rem;}
-    .home-action-box{min-height:125px;}
-    .home-contact{padding:.65rem .8rem;}
+    .home-frame{margin:.35rem .2rem 0;}
+    .home-topbar{padding:.42rem .5rem;}
+    .home-brand{padding:.9rem .5rem .55rem;}
+    .home-brand h1{font-size:1.08rem;}
+    .home-actions{grid-template-columns:1fr;gap:8px;padding:.55rem .55rem .8rem;}
+    .home-action-box{min-height:105px;}
+    .home-contact{padding:.45rem .55rem;}
+    .home-contact-title,.home-contact-line{display:block;margin-left:0;}
 }
 </style>
 """, unsafe_allow_html=True)
@@ -2522,7 +2516,7 @@ def render_home_choice_cards():
             '<div class="home-auth-note">Dành cho quản trị viên và nhân sự được phê duyệt</div></div>',
             unsafe_allow_html=True
         )
-        c1, c2, c3 = st.columns([1.15, .95, .48])
+        c1, c2, c3 = st.columns([1.05, .85, .42])
         with c1:
             login_value = st.text_input(
                 "Tài khoản / email", key="home_v11_username",
@@ -2577,7 +2571,7 @@ def render_home_choice_cards():
     <div class="home-brand">
         <div class="kicker">HEMATOLOGY · THALASSEMIA · COMMUNITY SCREENING</div>
         <h1>HỆ THỐNG HỖ TRỢ SÀNG LỌC THALASSEMIA</h1>
-        <p>Sàng lọc cộng đồng · dữ liệu huyết học · theo dõi sau sàng lọc</p>
+        <p>Community screening · hematology research</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -2589,7 +2583,7 @@ def render_home_choice_cards():
         <div>
             <div class="num">01 · NGƯỜI THAM GIA</div>
             <h3>THỰC HIỆN SÀNG LỌC</h3>
-            <p>Tham gia sàng lọc Thalassemia trong cộng đồng.</p>
+            <p>Tham gia sàng lọc cộng đồng.</p>
         </div>
     """, unsafe_allow_html=True)
     if st.button("THỰC HIỆN SÀNG LỌC", key="home_v11_screening", type="primary", use_container_width=True):
@@ -2603,7 +2597,7 @@ def render_home_choice_cards():
         <div>
             <div class="num">02 · DỮ LIỆU NGHIÊN CỨU</div>
             <h3>TRUY XUẤT DỮ LIỆU</h3>
-            <p>Quản lý và khai thác dữ liệu phục vụ nghiên cứu.</p>
+            <p>Quản lý dữ liệu nghiên cứu.</p>
         </div>
     """, unsafe_allow_html=True)
     if st.button("TRUY XUẤT DỮ LIỆU", key="home_v11_data", use_container_width=True):
@@ -2626,7 +2620,7 @@ def render_home_choice_cards():
         </div>
     </div>
     <div class="home-foot">
-        Hệ thống hỗ trợ sàng lọc và nghiên cứu · không thay thế chẩn đoán hoặc tư vấn y khoa
+        Hỗ trợ sàng lọc · không thay thế chẩn đoán y khoa
     </div>
     </div>
     """, unsafe_allow_html=True)
