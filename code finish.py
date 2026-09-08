@@ -1542,93 +1542,65 @@ def calculate_round2_score(
     rbc,
     rdw,
 ):
-    score = 0
+    """
+    Sàng lọc CBC theo quy trình trong Hướng dẫn chẩn đoán và điều trị
+    một số bệnh lý huyết học (Bộ Y tế, 2022), Phụ lục: Quy trình xét nghiệm
+    sàng lọc, chẩn đoán Thalassemia.
+
+    Tiêu chí gợi ý bước đánh giá tiếp theo trong tài liệu: MCV < 85 fL
+    và/hoặc MCH < 28 pg. Mentzer được lưu như chỉ số hỗ trợ, nhưng không
+    được dùng làm tiêu chuẩn chẩn đoán của Bộ Y tế.
+    """
     reasons = []
+    score = 0
 
-    if mcv < 70:
-        score += 3
-        reasons.append("MCV rất thấp (<70 fL)")
-    elif mcv < 75:
+    # Tiêu chí sàng lọc theo BYT 2022: MCV <85 và/hoặc MCH <28.
+    if mcv < 85:
+        reasons.append("MCV <85 fL — đạt tiêu chí sàng lọc CBC theo phụ lục hướng dẫn BYT 2022")
         score += 2
-        reasons.append("MCV giảm rõ (70–74,9 fL)")
-    elif mcv < 80:
-        score += 1
-        reasons.append("MCV giảm (75–79,9 fL)")
-
-    if mch < 24:
+    if mch < 28:
+        reasons.append("MCH <28 pg — đạt tiêu chí sàng lọc CBC theo phụ lục hướng dẫn BYT 2022")
         score += 2
-        reasons.append("MCH thấp (<24 pg)")
-    elif mch < 27:
-        score += 1
-        reasons.append("MCH giảm (24–26,9 pg)")
 
+    # Các đặc điểm bổ sung để mô tả kiểu hình, không thay thế tiêu chuẩn BYT.
     if mcv < 80:
-        if rbc >= 5.5:
-            score += 2
-            reasons.append("RBC tương đối cao khi MCV thấp")
-        elif rbc >= 5.0:
-            score += 1
-            reasons.append("RBC tương đối cao khi MCV thấp")
+        score += 1
+        reasons.append("MCV <80 fL — hồng cầu nhỏ")
+    if mch < 27:
+        score += 1
+        reasons.append("MCH <27 pg — xu hướng hồng cầu nhược sắc")
+    if rdw > 14:
+        reasons.append("RDW >14% — kích thước hồng cầu không đồng đều theo hướng dẫn BYT 2022")
 
-    mentzer = (
-        _round_number(Decimal(str(mcv)) / Decimal(str(rbc)), 2)
-        if rbc > 0
-        else None
-    )
+    # RBC chỉ là thông tin hỗ trợ bối cảnh.
+    if mcv < 85 and rbc >= 5.0:
+        score += 1
+        reasons.append("RBC tương đối cao trong bối cảnh MCV giảm")
 
-    if (
-        mentzer is not None
-        and mcv < 80
-    ):
-        if mentzer < 13:
-            score += 2
-            reasons.append("Mentzer Index <13")
-        elif mentzer < 14:
-            score += 1
-            reasons.append("Mentzer Index 13–13,9")
-
-    if rdw > 15:
-        reasons.append(
-            "RDW tăng — cần lưu ý thiếu sắt hoặc nguyên nhân microcytosis khác"
-        )
+    mentzer = (_round_number(Decimal(str(mcv)) / Decimal(str(rbc)), 2)
+               if rbc > 0 else None)
+    if mentzer is not None:
+        reasons.append(f"Mentzer Index = {mentzer:.2f} — chỉ số hỗ trợ, không phải tiêu chuẩn chẩn đoán")
 
     return score, mentzer, reasons
 
 
-def round2_category(score, mcv):
-    if (
-        mcv >= 80
-        and score <= 2
-    ):
+def round2_category(score, mcv, mch=None):
+    """Phân tầng nguy cơ sàng lọc; tiêu chí CBC cốt lõi bám theo BYT 2022."""
+    screening_trigger = (mcv < 85) or (mch is not None and mch < 28)
+    if not screening_trigger:
         return (
             "THẤP",
-            "CBC chưa cho thấy mẫu hình hồng cầu nhỏ rõ.",
+            "CBC hiện tại chưa đạt tiêu chí sàng lọc MCV <85 fL và/hoặc MCH <28 pg trong phụ lục hướng dẫn BYT 2022; điều này không loại trừ hoàn toàn Thalassemia.",
         )
-
-    if score <= 3:
-        return (
-            "THẤP",
-            "Nguy cơ sàng lọc từ CBC hiện tại thấp; không loại trừ "
-            "hoàn toàn Thalassemia.",
-        )
-
-    if score <= 6:
-        return (
-            "TRUNG BÌNH",
-            "Có đặc điểm hồng cầu nhỏ/nhược sắc. Nên đánh giá "
-            "thiếu sắt và các nguyên nhân khác.",
-        )
-
-    if score <= 9:
+    if score >= 6:
         return (
             "CAO",
-            "Mẫu hình CBC gợi ý cần đánh giá hemoglobinopathy "
-            "bằng HPLC/điện di Hb.",
+            "CBC có tiêu chí sàng lọc đáng lưu ý (MCV <85 fL và/hoặc MCH <28 pg). Theo quy trình BYT 2022, nên đánh giá tình trạng sắt và xác định thành phần huyết sắc tố bằng điện di/HPLC; xét nghiệm gen tùy trường hợp.",
         )
-
     return (
-        "RẤT CAO",
-        "Có nhiều dấu hiệu sàng lọc đáng chú ý; cần xét nghiệm xác nhận.",
+        "TRUNG BÌNH",
+        "CBC đạt tiêu chí sàng lọc MCV <85 fL và/hoặc MCH <28 pg. Cần đánh giá thiếu sắt và nguyên nhân hồng cầu nhỏ; nếu phù hợp, thực hiện điện di/HPLC huyết sắc tố.",
     )
 
 
@@ -1643,28 +1615,28 @@ def narrative_cbc_advice(
     findings = []
     advice = []
 
-    if mcv < 80:
+    if mcv < 85:
         findings.append(
-            "Có microcytosis (MCV giảm)."
+            "MCV <85 fL — đạt tiêu chí sàng lọc CBC theo phụ lục BYT 2022."
         )
 
-    if mch < 27:
+    if mch < 28:
         findings.append(
-            "Có xu hướng hồng cầu nhược sắc (MCH giảm)."
+            "MCH <28 pg — đạt tiêu chí sàng lọc CBC theo phụ lục BYT 2022."
         )
 
-    if rdw > 15:
+    if rdw > 14:
         findings.append(
             "RDW tăng; cần lưu ý thiếu sắt hoặc các nguyên nhân "
             "khác của microcytosis."
         )
 
-    if mcv < 80 and rbc >= 5.0:
+    if mcv < 85 and rbc >= 5.0:
         findings.append(
             "RBC tương đối cao trong bối cảnh MCV thấp."
         )
 
-    if mcv < 80 and mentzer < 13:
+    if mcv < 85 and mentzer < 13:
         findings.append(
             "Mentzer Index <13: mẫu hình sàng lọc nghiêng về "
             "Thalassemia hơn thiếu sắt."
@@ -1675,7 +1647,7 @@ def narrative_cbc_advice(
             "tùy trường hợp có thể cần xét nghiệm phân tử."
         )
 
-    elif mcv < 80 and mentzer >= 13:
+    elif mcv < 85 and mentzer >= 13:
         findings.append(
             "Mentzer Index ≥13: mẫu hình sàng lọc nghiêng về "
             "thiếu sắt hoặc nguyên nhân microcytosis khác."
@@ -2161,6 +2133,7 @@ Bạn có thể nhập CBC bên dưới để hệ thống **sàng lọc lại**
                 round2_category(
                     score,
                     mcv,
+                    mch,
                 )
             )
 
@@ -3370,6 +3343,10 @@ if st.session_state.get(
             "Hệ thống tự chuyển Hb → g/dL và RBC → T/L trước khi tính."
         )
 
+        st.caption(
+            "Tiêu chí sàng lọc CBC theo Phụ lục ‘Quy trình xét nghiệm sàng lọc, chẩn đoán Thalassemia’ của Hướng dẫn chẩn đoán và điều trị một số bệnh lý huyết học (Bộ Y tế, 2022): MCV <85 fL và/hoặc MCH <28 pg. Đây là tiêu chí sàng lọc, không phải tiêu chuẩn chẩn đoán xác định."
+        )
+
 
     # --------------------------------------------------------
     # ANALYZE
@@ -3432,6 +3409,7 @@ if st.session_state.get(
                 round2_category(
                     score2,
                     mcv,
+                    mch,
                 )
             )
 
@@ -3722,6 +3700,49 @@ if st.session_state.get(
 
         if st.session_state.get("round3_completed", False):
             st.info("Hồ sơ đã có dữ liệu Vòng 3. Khi có kết quả mới, bạn có thể cập nhật lại để duy trì hồ sơ theo dõi hiện hành.")
+
+        # ----------------------------------------------------
+        # ROUND 3 — BYT 2022 INTERPRETATION SUPPORT
+        # ----------------------------------------------------
+        def _round3_byt_interpretation(r3):
+            notes = []
+            hba, hba2, hbf, hbe = r3.get("hba"), r3.get("hba2"), r3.get("hbf"), r3.get("hbe")
+            ferritin, tsat = r3.get("ferritin"), r3.get("transferrin_saturation")
+            if hba is not None and 96.5 <= hba <= 98 and hba2 is not None and 2 <= hba2 <= 3.5 and hbf is not None and hbf < 1:
+                notes.append("Thành phần Hb nằm trong khoảng HbA 96,5–98%, HbA2 2–3,5%, HbF <1% được nêu trong phụ lục BYT 2022; cần đối chiếu toàn bộ phiếu xét nghiệm và lâm sàng.")
+            if hba2 is not None and hba2 > 3.5:
+                notes.append("HbA2 >3,5% — bất thường được phụ lục BYT 2022 nêu là gợi ý Beta-thalassemia.")
+            if hbf is not None and hbf >= 1:
+                notes.append("HbF tăng so với ngưỡng <1% nêu trong phụ lục BYT 2022; cần đánh giá trong bối cảnh toàn bộ thành phần Hb.")
+            if hbe is not None and hbe > 0:
+                notes.append("Có HbE — phụ lục BYT 2022 nêu HbE dương tính là dấu hiệu cần đánh giá bệnh huyết sắc tố E/hemoglobinopathy.")
+            gen = (r3.get("genetic_result") or "").lower()
+            lab = (r3.get("lab_conclusion") or "").lower()
+            combined = gen + " " + lab
+            for marker, label in [("hbh", "HbH"), ("hb bart", "Hb Bart’s"), ("hbcs", "HbCS"), ("constant spring", "Hb Constant Spring")]:
+                if marker in combined:
+                    notes.append(f"Phiếu có đề cập {label}; theo hướng dẫn BYT 2022 cần đối chiếu với đánh giá Alpha-thalassemia và/hoặc xét nghiệm DNA.")
+            if ferritin is not None and ferritin < 30:
+                notes.append("Ferritin <30 ng/mL — mức được hướng dẫn BYT 2022 nêu trong chẩn đoán thiếu máu thiếu sắt; cần đối chiếu lâm sàng và các chỉ số sắt khác.")
+            if tsat is not None and tsat < 30:
+                notes.append("Độ bão hòa transferrin <30% — mức được hướng dẫn BYT 2022 nêu trong chẩn đoán thiếu máu thiếu sắt.")
+            if not notes:
+                notes.append("Chưa có mẫu hình tự động để đối chiếu từ các trường đã nhập. Cần xem toàn bộ phiếu xét nghiệm và đánh giá chuyên môn.")
+            return notes
+
+        if st.session_state.get("round3_completed", False):
+            st.markdown("### Đối chiếu kết quả theo hướng dẫn BYT 2022")
+            current_r3 = {
+                "hba": st.session_state.get("round3_hba"), "hba2": st.session_state.get("round3_hba2"),
+                "hbf": st.session_state.get("round3_hbf"), "hbe": st.session_state.get("round3_hbe"),
+                "ferritin": st.session_state.get("round3_ferritin"),
+                "transferrin_saturation": st.session_state.get("round3_tsat"),
+                "genetic_result": st.session_state.get("round3_genetic", ""),
+                "lab_conclusion": st.session_state.get("round3_lab", ""),
+            }
+            for note in _round3_byt_interpretation(current_r3):
+                st.write("• " + note)
+            st.caption("Đây là đối chiếu hỗ trợ dựa trên dữ liệu đã nhập và nội dung tài liệu BYT 2022; không thay thế kết luận của cơ sở xét nghiệm/bác sĩ Huyết học.")
 
         # ----------------------------------------------------
         # MEDICAL FACILITIES
