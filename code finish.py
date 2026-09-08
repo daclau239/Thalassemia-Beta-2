@@ -17,6 +17,19 @@ import streamlit as st
 st.markdown("""
 <style>
 /* ===== Professional Hematology UI — adaptive Light / Dark ===== */
+/* ===== Landing page / home ===== */
+.home-shell { max-width: 1060px; margin: 0 auto; }
+.home-hero { text-align:center; padding: 2.2rem 0 1.2rem; }
+.home-hero .kicker { font-size:.76rem; letter-spacing:.18em; font-weight:750; color:var(--heme-muted); text-transform:uppercase; }
+.home-hero h1 { font-size:2.35rem; margin:.5rem 0 .45rem; color:var(--text-color); }
+.home-hero .lead { max-width:760px; margin:0 auto; color:var(--heme-muted); font-size:1rem; line-height:1.6; }
+.access-panel { border:1px solid var(--heme-border); border-radius:12px; padding:1rem 1.1rem; background:var(--heme-surface-soft); margin-bottom:1.2rem; }
+.access-panel-title { font-weight:750; color:var(--text-color); margin-bottom:.35rem; }
+.choice-card { border:1px solid var(--heme-border); border-radius:14px; padding:1.5rem 1.5rem 1.2rem; min-height:255px; background:var(--background-color); box-shadow:0 2px 10px rgba(0,0,0,.04); }
+.choice-card .num { font-size:.74rem; letter-spacing:.14em; font-weight:800; color:var(--heme-red); text-transform:uppercase; }
+.choice-card h3 { margin:.45rem 0 .65rem; color:var(--text-color); }
+.choice-card p { color:var(--heme-muted); line-height:1.55; min-height:78px; }
+.home-note { margin-top:1.3rem; padding:.9rem 1rem; border-top:1px solid var(--heme-border); color:var(--heme-muted); font-size:.87rem; text-align:center; }
 :root {
   --heme-navy:#17324D;
   --heme-red:#8E2C3A;
@@ -2390,6 +2403,95 @@ def make_word(
 
 
 # ============================================================
+# LANDING PAGE / HOME
+# ============================================================
+
+def _clear_navigation():
+    st.session_state.pop("home_action", None)
+    st.session_state.pop("auth_page", None)
+
+
+def render_top_access_panel():
+    user = current_auth_user()
+    st.markdown('<div class="access-panel">', unsafe_allow_html=True)
+    if user:
+        role = "Quản trị viên" if user["role"] == "admin" else "Nhân sự được duyệt"
+        st.markdown(f'<div class="access-panel-title">Đang đăng nhập: {user["full_name"]}</div><div style="color:var(--heme-muted);font-size:.9rem;">{role} · {user["username"]}</div>', unsafe_allow_html=True)
+        c1,c2,c3=st.columns([1.2,1.2,1])
+        with c1:
+            if st.button("Trang chính", key="home_top_btn", use_container_width=True):
+                st.session_state["home_action"] = None
+                st.session_state["auth_page"] = None
+                st.rerun()
+        with c2:
+            if st.button("Truy xuất dữ liệu", key="data_top_btn", use_container_width=True):
+                st.session_state["home_action"] = "data"
+                st.session_state["auth_page"] = "🛡️ Quản trị hệ thống"
+                st.rerun()
+        with c3:
+            if st.button("Đăng xuất", key="logout_top_btn", use_container_width=True):
+                logout_user(); _clear_navigation(); st.rerun()
+    else:
+        st.markdown('<div class="access-panel-title">Đăng nhập</div><div style="color:var(--heme-muted);font-size:.9rem;margin-bottom:.7rem;">Dành cho quản trị viên và nhân sự được phê duyệt để truy xuất dữ liệu hoặc nhập hỗ trợ.</div>', unsafe_allow_html=True)
+        with st.form("top_login_form"):
+            c1,c2,c3=st.columns([1.3,1.0,.7])
+            with c1: login_value=st.text_input("Tên đăng nhập hoặc email", key="top_login_value")
+            with c2: password=st.text_input("Mật khẩu", type="password", key="top_login_password")
+            with c3:
+                st.write("")
+                submit=st.form_submit_button("ĐĂNG NHẬP", type="primary", use_container_width=True)
+        if submit:
+            result,message=authenticate_user(login_value,password)
+            if result:
+                st.session_state["auth_user"]=result
+                st.session_state["auth_page"]=None
+                st.session_state["home_action"]=None
+                st.rerun()
+            else: st.error(message)
+        with st.expander("Đăng ký tài khoản nhân sự", expanded=False):
+            with st.form("home_staff_register_form"):
+                a,b=st.columns(2)
+                with a:
+                    su=st.text_input("Tên đăng nhập", key="home_staff_u")
+                    sf=st.text_input("Họ và tên", key="home_staff_f")
+                    se=st.text_input("Email", key="home_staff_e")
+                with b:
+                    sp=st.text_input("Mật khẩu", type="password", key="home_staff_p")
+                    sp2=st.text_input("Nhập lại mật khẩu", type="password", key="home_staff_p2")
+                rs=st.form_submit_button("GỬI YÊU CẦU PHÊ DUYỆT", use_container_width=True)
+            if rs:
+                if not valid_username(su): st.error("Tên đăng nhập 4–32 ký tự, không có khoảng trắng.")
+                elif not sf.strip(): st.error("Vui lòng nhập họ và tên.")
+                elif not valid_email(se): st.error("Email chưa đúng định dạng.")
+                elif len(sp)<8: st.error("Mật khẩu phải có ít nhất 8 ký tự.")
+                elif sp!=sp2: st.error("Hai mật khẩu không khớp.")
+                else:
+                    ok,msg=register_staff_account(su,sf,se,sp); (st.success if ok else st.error)(msg)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def render_home_choice_cards():
+    st.markdown('<div class="home-shell"><div class="home-hero"><div class="kicker">HEMATOLOGY · THALASSEMIA · COMMUNITY SCREENING</div><h1>Hệ thống hỗ trợ sàng lọc Thalassemia</h1><div class="lead">Cổng sàng lọc cộng đồng kết hợp dữ liệu huyết học, theo dõi kết quả chuyên sâu và quản lý dữ liệu nghiên cứu.</div></div></div>', unsafe_allow_html=True)
+    render_top_access_panel()
+    c1,c2=st.columns(2)
+    with c1:
+        st.markdown('<div class="choice-card"><div class="num">01 · Người tham gia</div><h3>Thực hiện sàng lọc</h3><p>Nhập hồ sơ, thực hiện Vòng 1, cung cấp CBC ở Vòng 2 và bổ sung HPLC/điện di, ferritin hoặc xét nghiệm di truyền ở Vòng 3 khi có.</p></div>', unsafe_allow_html=True)
+        if st.button("THỰC HIỆN SÀNG LỌC", key="home_screening_btn", type="primary", use_container_width=True):
+            st.session_state["home_action"]="screening"; st.session_state["auth_page"]=None; st.rerun()
+    with c2:
+        st.markdown('<div class="choice-card"><div class="num">02 · Dữ liệu nghiên cứu</div><h3>Truy xuất dữ liệu</h3><p>Truy cập khu vực quản trị để xem hồ sơ, dữ liệu sàng lọc và xuất Excel. Chức năng này yêu cầu tài khoản được cấp quyền.</p></div>', unsafe_allow_html=True)
+        if st.button("TRUY XUẤT DỮ LIỆU", key="home_data_btn", use_container_width=True):
+            if current_auth_user():
+                st.session_state["home_action"]="data"; st.session_state["auth_page"]="🛡️ Quản trị hệ thống"; st.rerun()
+            else: st.warning("Vui lòng đăng nhập ở phía trên để truy xuất dữ liệu.")
+    st.markdown('<div class="home-note">Hệ thống phục vụ sàng lọc hỗ trợ và nghiên cứu; kết quả không thay thế chẩn đoán hoặc tư vấn của cơ sở y tế.</div>', unsafe_allow_html=True)
+
+render_home_choice_cards()
+_home_action=st.session_state.get("home_action")
+if not _home_action: st.stop()
+if _home_action=="data" and current_auth_user(): st.session_state["auth_page"]="🛡️ Quản trị hệ thống"
+
+# ============================================================
 # HEADER
 # ============================================================
 
@@ -2608,7 +2710,8 @@ with st.sidebar:
     else:
         st.caption("ℹ️ Cơ sở y tế vẫn được gợi ý theo danh mục tỉnh/thành.")
 
-render_auth_sidebar()
+if st.session_state.get("home_action") == "screening":
+    render_top_access_panel()
 
 # ============================================================
 # ADMIN CONSOLE
