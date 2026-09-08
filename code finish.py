@@ -17,96 +17,41 @@ import streamlit as st
 st.markdown("""
 <style>
 /* ===== Professional Hematology UI — adaptive Light / Dark ===== */
+:root {
+  --heme-navy:#17324D;
+  --heme-red:#8E2C3A;
+  --heme-accent:#A33A49;
+  --heme-border:color-mix(in srgb, var(--text-color) 18%, transparent);
+  --heme-muted:color-mix(in srgb, var(--text-color) 66%, transparent);
+  --heme-surface:var(--secondary-background-color);
+  --heme-surface-soft:color-mix(in srgb, var(--secondary-background-color) 86%, var(--background-color));
+}
+.main .block-container { max-width:1180px; padding-top:2rem; padding-bottom:3rem; }
+[data-testid="stHeader"] { background:transparent; }
+.hematology-brand { border-left:5px solid var(--heme-red); padding:.15rem 0 .15rem 1rem; margin-bottom:.35rem; }
+.hematology-brand .eyebrow { font-size:.78rem; letter-spacing:.16em; color:var(--heme-muted); font-weight:700; text-transform:uppercase; }
+.hematology-brand .title { font-size:2rem; line-height:1.15; color:var(--text-color); font-weight:750; margin-top:.18rem; }
+.hematology-brand .subtitle { color:var(--heme-muted); font-size:.95rem; margin-top:.45rem; }
+.section-rule { height:1px; background:var(--heme-border); margin:1.2rem 0; }
+[data-testid="stExpander"] { border:1px solid var(--heme-border); border-radius:10px; background:var(--heme-surface-soft); }
+[data-testid="stExpander"] summary p { color:var(--text-color); font-weight:700; }
+[data-testid="stSidebar"] { border-right:1px solid var(--heme-border); }
+[data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { color:var(--text-color); }
+.stButton > button { border-radius:7px; font-weight:600; }
+.contact-card { border:1px solid var(--heme-border); border-radius:10px; padding:1rem 1.15rem; background:var(--heme-surface-soft); margin-top:1rem; }
+.contact-card .label { color:var(--heme-muted); font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
+.contact-card .name { color:var(--text-color); font-size:1.1rem; font-weight:750; margin:.2rem 0 .55rem; }
+.contact-card a { color:var(--heme-accent); text-decoration:none; font-weight:600; }
+.contact-card a:hover { text-decoration:underline; }
+.small-note { color:var(--heme-muted); font-size:.82rem; }
 
-
-
-
-
-
-/* ===== LANDING PAGE — compact, no wasted top space ===== */
-.home-frame{
-    max-width:1080px;
-    margin:.25rem auto .7rem;
-    border:1px solid rgba(30,105,190,.18);
-    border-radius:14px;
-    background:var(--background-color);
-    overflow:hidden;
-    box-shadow:0 8px 26px rgba(18,72,135,.09);
-}
-.home-topbar{
-    min-height:48px;
-    display:grid;
-    grid-template-columns:1fr 1.2fr 1.7fr;
-    align-items:center;
-    gap:10px;
-    padding:.28rem .7rem;
-    background:var(--background-color);
-}
-.home-top-left{display:flex;align-items:center;}
-.home-top-right{display:flex;align-items:center;justify-content:flex-end;gap:4px;}
-.home-login-link{font-size:.68rem;font-weight:750;color:var(--text-color);white-space:nowrap;}
-.home-intro{
-    border-top:1px solid var(--heme-border);
-    border-bottom:1px solid var(--heme-border);
-    background:var(--heme-surface-soft);
-}
-.home-brand{
-    text-align:center;
-    padding:1rem .8rem .65rem;
-}
-.home-brand .kicker{
-    font-size:.50rem;
-    letter-spacing:.16em;
-    font-weight:800;
-    color:#1675ce;
-    text-transform:uppercase;
-}
-.home-brand h1{
-    margin:.25rem 0 .12rem;
-    font-size:1.52rem;
-    line-height:1.12;
-    font-weight:800;
-    color:var(--text-color);
-}
-.home-brand p{margin:0;font-size:.61rem;color:var(--heme-muted);}
-.home-panel{
-    margin:0 2.4rem 1rem;
-    padding:.72rem .85rem .82rem;
-    border:1px solid rgba(22,117,206,.09);
-    border-radius:11px;
-    background:linear-gradient(145deg,rgba(230,242,255,.68),rgba(246,250,255,.46));
-}
-.home-actions{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
-.home-action-box{
-    min-height:112px;
-    border:1px solid rgba(22,117,206,.15);
-    border-radius:9px;
-    padding:.72rem .82rem .65rem;
-    background:rgba(255,255,255,.70);
-    display:flex;
-    flex-direction:column;
-    justify-content:space-between;
-}
-.home-action-box:hover{border-color:#1977d0;box-shadow:0 4px 14px rgba(19,89,151,.08);}
-.home-action-box .num{font-size:.49rem;letter-spacing:.10em;color:#6d8399;font-weight:800;}
-.home-action-box h3{margin:.20rem 0 .08rem;font-size:.90rem;color:#12375c;font-weight:800;}
-.home-action-box p{margin:0 0 .30rem;font-size:.59rem;color:#71859a;}
-.home-contact{
-    border-top:1px solid var(--heme-border);
-    padding:.48rem .8rem .52rem;
-    text-align:left;
-}
-.home-contact-title{font-size:.55rem;font-weight:800;text-transform:uppercase;color:var(--text-color);}
-.home-contact-line{margin-top:.12rem;font-size:.58rem;color:var(--heme-muted);}
-.home-foot{padding:.28rem .6rem;text-align:center;border-top:1px solid var(--heme-border);font-size:.49rem;color:var(--heme-muted);}
-@media(max-width:760px){
-    .home-topbar{grid-template-columns:1fr;gap:5px;padding:.45rem;}
-    .home-top-left,.home-top-right{justify-content:center;}
-    .home-brand{padding:.8rem .5rem .5rem;}
-    .home-brand h1{font-size:1.16rem;}
-    .home-panel{margin:0 .55rem .7rem;padding:.6rem;}
-    .home-actions{grid-template-columns:1fr;gap:8px;}
-    .home-contact{padding:.45rem .6rem;}
+/* Dark-mode refinement. Streamlit exposes theme colors through CSS variables;
+   this media rule only adjusts the hematology accent for contrast. */
+@media (prefers-color-scheme: dark) {
+  :root { --heme-red:#C45A69; --heme-accent:#E07987; }
+  [data-testid="stExpander"], .contact-card {
+    box-shadow:0 1px 0 rgba(255,255,255,.025) inset;
+  }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -144,7 +89,7 @@ from docx import Document
 
 st.set_page_config(
     page_title="Hệ thống Sàng lọc Thalassemia",
-    page_icon="⚕",
+    page_icon="🩸",
     layout="wide",
 )
 
@@ -2445,16 +2390,84 @@ def make_word(
 
 
 # ============================================================
-# LANDING PAGE / HOME
+# HEADER
 # ============================================================
 
-def _clear_navigation():
-    st.session_state.pop("home_action", None)
-    st.session_state.pop("auth_page", None)
+# ============================================================
+# CỬA SỔ GIẢI THÍCH NGHIÊN CỨU
+# ============================================================
 
-
+@st.dialog("📚 Tìm hiểu về nghiên cứu và cơ sở khoa học", width="large")
 def show_research_overview():
-    """Nội dung giới thiệu đề tài đầy đủ dùng trong expander trang chủ."""
+    st.markdown("""
+### 1. Lý do khoa học – y tế để phát triển hệ thống
+
+Thalassemia là nhóm bệnh lý di truyền do giảm tổng hợp chuỗi globin, có thể biểu hiện từ người mang gen gần như không triệu chứng đến các thể thiếu máu nặng. Trong thực hành sàng lọc, **công thức máu (CBC) và các chỉ số hồng cầu** có thể cung cấp dấu hiệu ban đầu của kiểu hình hồng cầu nhỏ, nhược sắc; khi có nghi ngờ, người bệnh cần được đánh giá tiếp bằng các xét nghiệm hemoglobin chuyên sâu và/hoặc xét nghiệm phân tử tùy trường hợp.
+
+Vấn đề thực tiễn là khả năng tiếp cận các tầng xét nghiệm không giống nhau. CBC thường dễ tiếp cận hơn so với HPLC/điện di hemoglobin hoặc xét nghiệm gen. Vì vậy hệ thống này được xây dựng như **một lớp hỗ trợ sàng lọc – giải thích CBC – phân tầng – điều hướng**, không thay thế bác sĩ và không đưa ra chẩn đoán xác định.
+
+### 2. Vì sao Vòng 1 có 20 câu hỏi?
+
+Vòng 1 không nhằm loại người tham gia khỏi quá trình sàng lọc. Nó nhằm thu thập những thông tin có thể làm thay đổi mức độ cần lưu ý, đồng thời đưa ra khuyến nghị phù hợp trước khi xem CBC. Các nhóm câu hỏi được lựa chọn dựa trên 4 nhóm thông tin: **tiền sử gia đình, tiền sử huyết học cá nhân, dấu hiệu hỗ trợ và khả năng tiếp cận xét nghiệm**.
+
+**Q1–Q5 – Tiền sử gia đình:** Thalassemia có tính di truyền. Thông tin về người thân mắc bệnh, mang gen, thiếu máu/hồng cầu nhỏ hoặc truyền máu nhiều lần có thể làm tăng lý do cần xem xét sàng lọc.
+
+**Q6–Q12 – Tiền sử bản thân:** từng được thông báo thiếu máu, MCV/MCH thấp, từng xét nghiệm hemoglobinopathy, HbE, truyền máu hoặc thiếu máu kéo dài giúp hệ thống biết người tham gia đã có những dấu hiệu/lịch sử nào cần được đối chiếu với CBC hiện tại.
+
+**Q13–Q18 – Dấu hiệu hỗ trợ:** mệt mỏi, chóng mặt, da niêm nhợt, vàng da, lách to hoặc tiền sử biến chứng huyết học có thể gợi ý vấn đề huyết học, nhưng **không đặc hiệu cho Thalassemia**. Vì vậy các câu này chỉ có vai trò hỗ trợ, không được dùng để chẩn đoán.
+
+**Q19–Q20 – Khả năng tiếp cận xét nghiệm:** giúp hệ thống hiểu người tham gia đã có CBC hay gặp khó khăn khi tiếp cận xét nghiệm chuyên sâu. Hai câu này **không được cộng vào điểm nguy cơ sinh học**, vì chi phí, khoảng cách và thời gian không phải là đặc điểm bệnh sinh của Thalassemia.
+
+### 3. Ý nghĩa của các thông số huyết học ở Vòng 2
+
+**Hb – Hemoglobin:** phản ánh lượng hemoglobin trong máu và là chỉ số quan trọng để đánh giá thiếu máu. Hb cần được diễn giải theo tuổi, giới, thai kỳ và các yếu tố bối cảnh; hệ thống không dùng một giá trị Hb đơn độc để chẩn đoán Thalassemia.
+
+**MCV – Mean Corpuscular Volume:** thể tích trung bình của hồng cầu. MCV giảm cho thấy hồng cầu nhỏ (microcytosis), là một dấu hiệu quan trọng khi xem xét Thalassemia nhưng cũng gặp trong thiếu sắt và các nguyên nhân khác.
+
+**MCH – Mean Corpuscular Hemoglobin:** lượng hemoglobin trung bình trong mỗi hồng cầu. MCH giảm biểu hiện xu hướng nhược sắc và thường đi cùng microcytosis trong Thalassemia trait.
+
+**RBC – số lượng hồng cầu:** cho biết số lượng hồng cầu. Trong một số trường hợp Thalassemia trait, RBC có thể tương đối cao dù MCV/MCH giảm. Vì vậy RBC giúp đặt MCV/MCH vào bối cảnh thay vì nhìn một chỉ số đơn lẻ.
+
+**RDW – Red Cell Distribution Width:** phản ánh mức độ biến thiên kích thước hồng cầu. RDW tăng có thể gặp trong thiếu sắt và nhiều tình trạng khác; RDW không đủ đặc hiệu để phân biệt Thalassemia với thiếu sắt.
+
+**Mentzer Index = MCV / RBC:** là chỉ số sàng lọc đơn giản được dùng để định hướng giữa kiểu hình gợi ý Thalassemia và thiếu sắt. Đây chỉ là công cụ hỗ trợ, không phải xét nghiệm xác định và có thể sai trong các trường hợp phối hợp bệnh lý.
+
+### 4. Vì sao vẫn cần xét nghiệm chuyên sâu?
+
+CBC chỉ cho thấy **kiểu hình huyết học**, không trực tiếp xác định loại hemoglobin bất thường hay biến thể gen. Khi có nghi ngờ phù hợp, các bước tiếp theo có thể bao gồm đánh giá tình trạng sắt (ví dụ ferritin), phân tích hemoglobin bằng HPLC/điện di và xét nghiệm phân tử khi có chỉ định. Với β-thalassemia trait, HbA₂ tăng có thể là dấu hiệu hỗ trợ; trong một số thể alpha-thalassemia, xét nghiệm phân tử có vai trò quan trọng vì điện di có thể không phát hiện được.
+
+### 5. Vì sao tất cả người tham gia đều được vào Vòng 2?
+
+Vòng 1 là **sàng lọc ban đầu và giáo dục sức khỏe**, không phải một phép loại trừ. Một Vòng 1 “thấp” không có nghĩa là không mang gen. Vì vậy nếu người tham gia đã có CBC, họ vẫn có thể nhập CBC để hệ thống phân tích các chỉ số huyết học.
+
+### 6. Ý nghĩa của kết quả hệ thống
+
+Kết quả của hệ thống được diễn đạt theo hướng **“gợi ý – cần đánh giá thêm – nên trao đổi với cơ sở y tế”**, không phải “mắc bệnh/không mắc bệnh”. Mục tiêu là giúp người dùng hiểu kết quả CBC, nhận biết khi nào cần đánh giá tiếp và tìm đúng cơ sở y tế có năng lực phù hợp.
+
+### 7. Giá trị cộng đồng của nghiên cứu
+
+Giá trị của hệ thống không nằm ở việc thay thế bệnh viện. Giá trị nằm ở việc tận dụng những dữ liệu huyết học cơ bản đã có, đặc biệt là CBC, để **giảm khoảng cách giữa cộng đồng và xét nghiệm chuyên sâu**. Hệ thống hướng tới sử dụng nguồn lực hợp lý hơn: người có ít dấu hiệu đáng lưu ý có thể được hướng dẫn theo dõi phù hợp; người có CBC gợi ý cần đánh giá thêm có thể được hướng dẫn đến cơ sở chuyên môn thay vì tự tìm kiếm hoặc di chuyển không cần thiết.
+
+### 8. Giới hạn cần biết
+
+Các điểm số và ngưỡng của Vòng 1/Vòng 2 trong phiên bản hiện tại là **prototype**, chưa được thẩm định trên một quần thể người Việt Nam đủ lớn. Vì vậy hệ thống chỉ có giá trị hỗ trợ sàng lọc và nghiên cứu phát triển, không thay thế chẩn đoán lâm sàng.
+    """)
+
+    st.divider()
+    st.subheader("🔗 Tài liệu chuyên môn tham khảo")
+    st.link_button("WHO 2024 – Guideline on haemoglobin cutoffs", "https://www.who.int/publications/i/item/9789240088542", use_container_width=True)
+    st.link_button("GeneReviews – Beta-Thalassemia", "https://www.ncbi.nlm.nih.gov/books/NBK1426/", use_container_width=True)
+    st.link_button("ACOG – Carrier Screening for Genetic Conditions", "https://www.acog.org/clinical/clinical-guidance/committee-opinion/articles/2017/03/carrier-screening-for-genetic-conditions", use_container_width=True)
+    st.link_button("ACOG – Carrier Screening for Hemoglobinopathies", "https://www.acog.org/womens-health/faqs/carrier-screening-for-hemoglobinopathies", use_container_width=True)
+
+
+st.markdown("""<div class=\"hematology-brand\"><div class=\"eyebrow\">HEMATOLOGY · COMMUNITY SCREENING RESEARCH</div><div class=\"title\">Hệ thống hỗ trợ sàng lọc Thalassemia</div><div class=\"subtitle\">Sàng lọc ban đầu · Công thức máu · Phân tích huyết học · Khuyến nghị · Điều hướng cơ sở y tế</div></div><div class=\"section-rule\"></div>""", unsafe_allow_html=True)
+
+
+
+# ============================================================
+# GIỚI THIỆU ĐỀ TÀI — EXPANDER
+with st.expander("GIỚI THIỆU ĐỀ TÀI & CƠ SỞ NGHIÊN CỨU · BẤM ĐỂ XEM", expanded=False):
     st.markdown("## LỜI NÓI ĐẦU")
     st.markdown("""
     Thalassemia là nhóm bệnh lý huyết sắc tố di truyền do giảm hoặc mất khả năng tổng hợp một hoặc nhiều chuỗi globin. Phổ biểu hiện rất rộng, từ người mang gen có biểu hiện huyết học nhẹ hoặc gần như không có triệu chứng đến các thể bệnh thiếu máu nặng cần chăm sóc y tế lâu dài. Vì có tính di truyền, việc nhận diện người mang gen không chỉ có ý nghĩa đối với cá nhân mà còn có giá trị trong tư vấn di truyền và dự phòng nguy cơ cho thế hệ sau.
@@ -2576,144 +2589,7 @@ def show_research_overview():
         st.markdown(f"**{i}. [{title}]({url})**")
         st.caption(url)
 
-    st.markdown("""<div class=\"contact-card\"><div class=\"label\">Liên hệ tác giả</div><div class=\"name\">Nguyễn Đắc Lâu</div><div>Điện thoại: <a href=\"tel:0357930820\">0357930820</a></div><div>Email: <a href=\"mailto:nguyendaclau2309@gmail.com\">nguyendaclau2309@gmail.com</a></div><div class=\"small-note\">Tác giả và người phát triển nguyên mẫu hệ thống hỗ trợ sàng lọc Thalassemia.</div></div>""", unsafe_allow_html=True)
-
-def render_home_choice_cards():
-    """Trang đầu: đăng nhập → giới thiệu đề tài → tên hệ thống → hai chức năng."""
-    user = current_auth_user()
-
-    st.markdown('<div class="home-frame">', unsafe_allow_html=True)
-
-    # 1. ĐĂNG NHẬP / ĐĂNG KÝ
-    st.markdown('<div class="home-topbar">', unsafe_allow_html=True)
-    c_left, c_center, c_right = st.columns([1.05, .9, 1.55])
-
-    with c_left:
-        st.markdown(
-            '<div class="home-top-left"><span class="home-login-link">ĐĂNG NHẬP / ĐĂNG KÝ</span></div>',
-            unsafe_allow_html=True
-        )
-
-    with c_center:
-        st.empty()
-
-    with c_right:
-        if user:
-            cc1, cc2 = st.columns([1.35, .55])
-            with cc1:
-                st.caption(f"Đã đăng nhập: {user.get('full_name','Người dùng')}")
-            with cc2:
-                if st.button("ĐĂNG XUẤT", key="home_v17_logout", use_container_width=True):
-                    logout_user()
-                    _clear_navigation()
-                    st.rerun()
-        else:
-            cc1, cc2, cc3 = st.columns([1, 1, .52])
-            with cc1:
-                login_value = st.text_input(
-                    "Tài khoản", key="home_v17_username",
-                    label_visibility="collapsed", placeholder="Tài khoản"
-                )
-            with cc2:
-                password = st.text_input(
-                    "Mật khẩu", key="home_v17_password",
-                    type="password", label_visibility="collapsed", placeholder="Mật khẩu"
-                )
-            with cc3:
-                if st.button("ĐĂNG NHẬP", key="home_v17_login", type="primary", use_container_width=True):
-                    result, message = authenticate_user(login_value, password)
-                    if result:
-                        st.session_state["auth_user"] = result
-                        st.session_state["auth_page"] = None
-                        st.session_state["home_action"] = None
-                        st.rerun()
-                    else:
-                        st.error(message)
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # 2. GIỚI THIỆU ĐỀ TÀI — full width, ngay dưới đăng nhập.
-    st.markdown('<div class="home-intro">', unsafe_allow_html=True)
-    with st.expander("GIỚI THIỆU ĐỀ TÀI  ·  CƠ SỞ KHOA HỌC", expanded=False):
-        # Dùng toàn bộ nội dung nghiên cứu đã hoàn thiện trong show_research_overview().
-        show_research_overview()
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # 3. TÊN HỆ THỐNG
-    st.markdown("""
-    <div class="home-brand">
-        <div class="kicker">THALASSEMIA · HEMATOLOGY · SCREENING</div>
-        <h1>HỆ THỐNG SÀNG LỌC THALASSEMIA</h1>
-        <p>Community screening · hematology research</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # 4. HAI Ô CHỨC NĂNG — trái/phải, bấm trực tiếp.
-    st.markdown('<div class="home-panel"><div class="home-actions">', unsafe_allow_html=True)
-
-    st.markdown("""
-    <div class="home-action-box">
-        <div>
-            <div class="num">01 · NGƯỜI THAM GIA</div>
-            <h3>THỰC HIỆN SÀNG LỌC</h3>
-            <p>Cần đăng nhập để thực hiện.</p>
-        </div>
-    """, unsafe_allow_html=True)
-    if st.button("THỰC HIỆN SÀNG LỌC", key="home_v17_screening", type="primary", use_container_width=True):
-        if current_auth_user():
-            st.session_state["home_action"] = "screening"
-            st.session_state["auth_page"] = None
-            st.rerun()
-        else:
-            st.warning("Vui lòng đăng nhập ở phía trên để thực hiện sàng lọc.")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown("""
-    <div class="home-action-box">
-        <div>
-            <div class="num">02 · DỮ LIỆU NGHIÊN CỨU</div>
-            <h3>TRUY XUẤT DỮ LIỆU</h3>
-            <p>Cần đăng nhập để truy xuất.</p>
-        </div>
-    """, unsafe_allow_html=True)
-    if st.button("TRUY XUẤT DỮ LIỆU", key="home_v17_data", use_container_width=True):
-        if current_auth_user():
-            st.session_state["home_action"] = "data"
-            st.session_state["auth_page"] = "🛡️ Quản trị hệ thống"
-            st.rerun()
-        else:
-            st.warning("Vui lòng đăng nhập ở phía trên để truy xuất dữ liệu.")
-    st.markdown('</div></div></div>', unsafe_allow_html=True)
-
-    # 5. LIÊN HỆ TÁC GIẢ
-    st.markdown("""
-    <div class="home-contact">
-        <div class="home-contact-title">Liên hệ tác giả</div>
-        <div class="home-contact-line">Nguyễn Đắc Lâu · 0357930820 · nguyendaclau2309@gmail.com</div>
-    </div>
-    <div class="home-foot">Hệ thống hỗ trợ sàng lọc · không thay thế chẩn đoán y khoa</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-_home_action = st.session_state.get("home_action")
-if not _home_action:
-    render_home_choice_cards()
-    st.stop()
-if _home_action == "data" and current_auth_user():
-    st.session_state["auth_page"] = "🛡️ Quản trị hệ thống"
-
-# ============================================================
-# HEADER
-# ============================================================
-
-# ============================================================
-# CỬA SỔ GIẢI THÍCH NGHIÊN CỨU
-# ============================================================
-
-st.markdown("""<div class=\"hematology-brand\"><div class=\"eyebrow\">HEMATOLOGY · COMMUNITY SCREENING RESEARCH</div><div class=\"title\">Hệ thống hỗ trợ sàng lọc Thalassemia</div><div class=\"subtitle\">Sàng lọc ban đầu · Công thức máu · Phân tích huyết học · Khuyến nghị · Điều hướng cơ sở y tế</div></div><div class=\"section-rule\"></div>""", unsafe_allow_html=True)
-
-
+st.markdown("""<div class=\"contact-card\"><div class=\"label\">Liên hệ tác giả</div><div class=\"name\">Nguyễn Đắc Lâu</div><div>Điện thoại: <a href=\"tel:0357930820\">0357930820</a></div><div>Email: <a href=\"mailto:nguyendaclau2309@gmail.com\">nguyendaclau2309@gmail.com</a></div><div class=\"small-note\">Tác giả và người phát triển nguyên mẫu hệ thống hỗ trợ sàng lọc Thalassemia.</div></div>""", unsafe_allow_html=True)
 
 st.divider()
 st.markdown("## QUY TRÌNH THAM GIA SÀNG LỌC")
@@ -2724,15 +2600,15 @@ st.caption("Hồ sơ → Đồng ý tham gia → Vòng 1 → CBC/Vòng 2 → K�
 # ACCESS / SIDEBAR
 # ============================================================
 
-if st.session_state.get("home_action"):
-    with st.sidebar:
-        st.header("QUY TRÌNH")
-        st.caption("Hồ sơ → Vòng 1 → CBC → Phân tích → Khuyến nghị → Cơ sở y tế")
-        if GOOGLE_API_KEY:
-            st.caption("Google Places đã cấu hình")
-        else:
-            st.caption("Cơ sở y tế được gợi ý theo danh mục tỉnh/thành.")
+with st.sidebar:
+    st.header("QUY TRÌNH")
+    st.caption("Hồ sơ → Vòng 1 → CBC → Phân tích → Khuyến nghị → Cơ sở y tế")
+    if GOOGLE_API_KEY:
+        st.caption("🟢 Google Places đã cấu hình")
+    else:
+        st.caption("ℹ️ Cơ sở y tế vẫn được gợi ý theo danh mục tỉnh/thành.")
 
+render_auth_sidebar()
 
 # ============================================================
 # ADMIN CONSOLE
