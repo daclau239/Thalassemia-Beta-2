@@ -59,7 +59,7 @@ st.markdown("""
 from docx import Document
 
 # ============================================================
-# THALASSEMIA SCREENING V8
+# THALASSEMIA SCREENING BY DAC LAU
 # ============================================================
 # 1) Hồ sơ bệnh nhân
 # 2) Vòng 1: 20 câu hỏi
@@ -2101,8 +2101,8 @@ Bạn có thể nhập CBC bên dưới để hệ thống **sàng lọc lại**
             )
             hb_raw = st.number_input(
                 "Hb",
-                min_value=3.0 if hb_unit == "g/dL" else 30.0,
-                max_value=25.0 if hb_unit == "g/dL" else 250.0,
+                min_value=0.0,
+                max_value=100000.0,
                 value=13.0 if hb_unit == "g/dL" else 130.0,
                 step=0.1,
                 key="low_cbc_hb",
@@ -3321,12 +3321,8 @@ if st.session_state.get(
 
             hb_raw = st.number_input(
                 "Hb",
-                min_value=3.0
-                if hb_unit == "g/dL"
-                else 30.0,
-                max_value=25.0
-                if hb_unit == "g/dL"
-                else 250.0,
+                min_value=0.0,
+                max_value=100000.0,
                 value=None,
                 step=0.1,
                 key="round2_hb_raw",
