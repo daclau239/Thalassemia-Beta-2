@@ -94,7 +94,7 @@ st.set_page_config(
 )
 
 DB_PATH = "thalassemia_patients.db"
-CONSENT_VERSION = "THAL-RS-CONSENT-v1-2026-09-05"
+CONSENT_VERSION = "DACLAU239-BETA5"
 ADMIN_DATA_URL = "https://raw.githubusercontent.com/open-admin-data/vietnam-administrative-divisions/main/data/hierarchy.json"
 ADMIN_DATA_SOURCE_URL = "https://github.com/open-admin-data/vietnam-administrative-divisions"
 
