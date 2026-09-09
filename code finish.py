@@ -59,7 +59,7 @@ st.markdown("""
 from docx import Document
 
 # ============================================================
-# THALASSEMIA SCREENING BY DAC LAU
+# THALASSEMIA SCREENING V8
 # ============================================================
 # 1) Hồ sơ bệnh nhân
 # 2) Vòng 1: 20 câu hỏi
@@ -1842,6 +1842,38 @@ MEDICAL_FACILITIES = {
     ],
 }
 
+# Bổ sung các địa phương còn thiếu trong danh mục 34 tỉnh/thành hiện hành.
+# Danh mục này là dữ liệu điều hướng của prototype; tên bệnh viện có thể thay đổi
+# theo tổ chức lại đơn vị, vì vậy luôn kèm nút tra cứu Google Maps.
+MEDICAL_FACILITIES.update({
+    "Cao Bằng": [
+        {"name": "Bệnh viện Đa khoa tỉnh Cao Bằng", "tier": "Tuyến tỉnh", "note": "Cơ sở đa khoa tuyến tỉnh; có thể liên hệ khoa Huyết học/Truyền máu để hỏi khả năng xét nghiệm chuyên sâu", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Cao+Bằng"},
+        {"name": "Bệnh viện Y học cổ truyền Cao Bằng", "tier": "Tuyến tỉnh", "note": "Cơ sở y tế trên địa bàn tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Y+học+cổ+truyền+Cao+Bằng"},
+    ],
+    "Điện Biên": [
+        {"name": "Bệnh viện Đa khoa tỉnh Điện Biên", "tier": "Tuyến tỉnh", "note": "Cơ sở đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Điện+Biên"},
+    ],
+    "Lai Châu": [
+        {"name": "Bệnh viện Đa khoa tỉnh Lai Châu", "tier": "Tuyến tỉnh", "note": "Cơ sở đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Lai+Châu"},
+    ],
+    "Lạng Sơn": [
+        {"name": "Bệnh viện Đa khoa tỉnh Lạng Sơn", "tier": "Tuyến tỉnh", "note": "Cơ sở đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Lạng+Sơn"},
+        {"name": "Bệnh viện Phổi Lạng Sơn", "tier": "Chuyên khoa", "note": "Cơ sở chuyên khoa trên địa bàn tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Phổi+Lạng+Sơn"},
+    ],
+    "Quảng Trị": [
+        {"name": "Bệnh viện Hữu nghị Việt Nam – Cuba Đồng Hới", "tier": "Tuyến Trung ương", "note": "Cơ sở tuyến trên phục vụ khu vực; nên xác nhận khoa Huyết học/Truyền máu trước khi đến", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Hữu+nghị+Việt+Nam+Cuba+Đồng+Hới"},
+        {"name": "Bệnh viện Đa khoa tỉnh Quảng Trị", "tier": "Tuyến tỉnh", "note": "Cơ sở đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Quảng+Trị"},
+    ],
+    "Sơn La": [
+        {"name": "Bệnh viện Đa khoa tỉnh Sơn La", "tier": "Tuyến tỉnh", "note": "Cơ sở đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Sơn+La"},
+    ],
+    "Tuyên Quang": [
+        {"name": "Bệnh viện Đa khoa tỉnh Tuyên Quang", "tier": "Tuyến tỉnh", "note": "Cơ sở đa khoa tuyến tỉnh", "maps": "https://www.google.com/maps/search/?api=1&query=Bệnh+viện+Đa+khoa+tỉnh+Tuyên+Quang"},
+    ],
+})
+
+
+
 # Tên tỉnh cũ → tên tỉnh/thành dùng để tra danh mục cơ sở trong prototype.
 PROVINCE_FACILITY_ALIASES = {
     "Thừa Thiên Huế": "Huế",
@@ -1876,6 +1908,19 @@ def recommended_facilities(province):
     province_key = PROVINCE_FACILITY_ALIASES.get(province, province)
     facilities = MEDICAL_FACILITIES.get(province_key, [])
     return facilities[:5]
+
+
+def all_medical_facilities():
+    """Flatten danh mục để phục vụ màn hình tra cứu toàn bộ cơ sở."""
+    rows = []
+    for province, facilities in MEDICAL_FACILITIES.items():
+        if province in {"Thừa Thiên Huế"}:
+            continue
+        for facility in facilities:
+            item = dict(facility)
+            item["province"] = province
+            rows.append(item)
+    return rows
 
 
 # ------------------------------------------------------------
@@ -3791,65 +3836,106 @@ if st.session_state.get(
         # MEDICAL FACILITIES
         # ----------------------------------------------------
 
-        st.subheader(
-            "🏥 CƠ SỞ Y TẾ GỢI Ý"
+        st.subheader("🏥 DANH SÁCH CƠ SỞ Y TẾ")
+        st.caption(
+            "Tra cứu bệnh viện/cơ sở y tế theo tỉnh, tên cơ sở hoặc tuyến. "
+            "Danh mục là dữ liệu điều hướng của prototype và cần được đối soát "
+            "với bệnh viện trước khi sử dụng thực tế."
         )
 
-        facilities = recommended_facilities(patient["province"])
+        all_facilities = all_medical_facilities()
+        province_options = ["Tất cả tỉnh/thành"] + sorted(
+            {x["province"] for x in all_facilities}
+        )
+        selected_facility_province = st.selectbox(
+            "Tỉnh/thành",
+            province_options,
+            index=(province_options.index(patient["province"])
+                   if patient["province"] in province_options else 0),
+            key="facility_province_filter",
+        )
+        facility_keyword = st.text_input(
+            "🔎 Tìm bệnh viện",
+            placeholder="Ví dụ: Bạch Mai, Huyết học, Đa khoa...",
+            key="facility_keyword",
+        )
 
-        if facilities:
-
-            st.success(
-                f"Đã tìm thấy {len(facilities)} cơ sở ưu tiên trong "
-                f"**{patient['province']}**."
+        filtered_facilities = all_facilities
+        if selected_facility_province != "Tất cả tỉnh/thành":
+            province_key = PROVINCE_FACILITY_ALIASES.get(
+                selected_facility_province,
+                selected_facility_province,
             )
+            filtered_facilities = [
+                x for x in filtered_facilities
+                if x["province"] == province_key
+                or x["province"] == selected_facility_province
+            ]
 
-            st.caption(
-                "Ưu tiên bệnh viện hạng I và bệnh viện tuyến Trung ương/hạng đặc biệt "
-                "đang có trong danh mục prototype của tỉnh/thành. "
-                "Khi đi khám, người bệnh nên hỏi trước khoa Huyết học/Truyền máu "
-                "và khả năng thực hiện xét nghiệm chuyên sâu."
-            )
+        if facility_keyword.strip():
+            kw = facility_keyword.strip().lower()
+            filtered_facilities = [
+                x for x in filtered_facilities
+                if kw in " ".join([
+                    x.get("name", ""),
+                    x.get("tier", ""),
+                    x.get("note", ""),
+                    x.get("province", ""),
+                ]).lower()
+            ]
 
-            for i, facility in enumerate(facilities, start=1):
+        st.write(f"**{len(filtered_facilities)} cơ sở** phù hợp với bộ lọc.")
+
+        if filtered_facilities:
+            for i, facility in enumerate(filtered_facilities, start=1):
                 with st.container(border=True):
-                    st.markdown(
-                        f"### {i}. {facility['name']}"
-                    )
-                    st.write(
-                        f"**Phân loại:** {facility['tier']}"
-                    )
-                    st.write(
-                        f"**Gợi ý:** {facility['note']}"
-                    )
+                    st.markdown(f"### {i}. {facility['name']}")
+                    st.write(f"**Tỉnh/thành:** {facility['province']}")
+                    st.write(f"**Phân loại:** {facility['tier']}")
+                    st.write(f"**Gợi ý:** {facility['note']}")
                     st.link_button(
                         "🗺️ Xem vị trí / chỉ đường",
                         facility["maps"],
                     )
-
         else:
-
             st.info(
-                f"Prototype chưa có danh mục bệnh viện ưu tiên cho **{patient['province']}**. "
-                "Bạn có thể dùng Google Maps để tìm bệnh viện hạng I hoặc cơ sở tuyến Trung ương "
-                "trong chính tỉnh/thành."
+                "Chưa tìm thấy cơ sở phù hợp. Hãy thử bỏ bộ lọc hoặc tìm bằng "
+                "tên bệnh viện khác."
             )
 
-            maps_query = (
-                f"bệnh viện hạng I bệnh viện Trung ương {patient['province']}"
+        st.divider()
+        st.markdown("### ⭐ Cơ sở ưu tiên theo nơi ở của người bệnh")
+
+        facilities = recommended_facilities(patient["province"])
+        if facilities:
+            st.success(
+                f"Đã tìm thấy {len(facilities)} cơ sở ưu tiên cho **{patient['province']}**."
             )
+            for i, facility in enumerate(facilities, start=1):
+                with st.container(border=True):
+                    st.markdown(f"**{i}. {facility['name']}**")
+                    st.caption(f"{facility['tier']} · {facility['note']}")
+                    st.link_button(
+                        "🗺️ Xem vị trí / chỉ đường",
+                        facility["maps"],
+                        key=f"recommended_facility_{i}_{patient['phone']}",
+                    )
+        else:
+            maps_query = f"bệnh viện {patient['province']}"
             maps_url = (
                 "https://www.google.com/maps/search/?api=1&query="
                 + requests.utils.quote(maps_query)
             )
-            st.link_button(
-                "🗺️ Tìm bệnh viện tuyến trên trong tỉnh",
-                maps_url,
+            st.info(
+                f"Chưa có cơ sở được chọn sẵn cho **{patient['province']}**. "
+                "Bạn có thể mở Google Maps để xem các bệnh viện gần khu vực."
             )
+            st.link_button("🗺️ Tìm bệnh viện trên Google Maps", maps_url)
 
         st.caption(
-            "Danh mục cơ sở dùng cho điều hướng prototype; cần cập nhật/đối soát định kỳ "
-            "với nguồn chính thức trước khi dùng trong nghiên cứu hoặc triển khai thực tế."
+            "⚠️ Danh mục chỉ hỗ trợ định hướng. Khả năng thực hiện CBC, HPLC/điện di Hb, "
+            "xét nghiệm gen Thalassemia và tiếp nhận chuyên khoa có thể khác nhau theo cơ sở; "
+            "nên gọi xác nhận trước khi đến."
         )
 
         # ----------------------------------------------------
