@@ -2994,9 +2994,7 @@ if operator_mode:
 # PATIENT PROFILE
 # ============================================================
 
-st.header(
-    "👤 THÔNG TIN BỆNH NHÂN"
-)
+st.header("👤 THÔNG TIN BỆNH NHÂN")
 st.caption(
     "Nhập hồ sơ người tham gia. "
     + (
@@ -3006,249 +3004,243 @@ st.caption(
     )
 )
 
-with st.form("patient_profile_form_v21", clear_on_submit=False):
+# ============================================================
+# A. THÔNG TIN CƠ BẢN — FORM RIÊNG
+# ============================================================
+with st.form("patient_basic_form_v22", clear_on_submit=False):
     with st.container(border=True):
-
         p1, p2, p3 = st.columns(3)
 
         with p1:
-
             full_name = st.text_input(
                 "Họ và tên *",
                 placeholder="Nguyễn Văn A",
+                key="v22_full_name",
             )
-
             birth_date = st.date_input(
                 "Ngày sinh *",
-                value=date(
-                    2000,
-                    1,
-                    1,
-                ),
-                min_value=date(
-                    1900,
-                    1,
-                    1,
-                ),
+                value=date(2000, 1, 1),
+                min_value=date(1900, 1, 1),
                 max_value=date.today(),
                 format="DD/MM/YYYY",
+                key="v22_birth_date",
             )
 
         with p2:
-
             phone_raw = st.text_input(
                 "Số điện thoại *",
                 placeholder="09xxxxxxxx",
+                key="v22_phone",
             )
-
             gender = st.selectbox(
                 "Giới tính *",
-                [
-                    "Nam",
-                    "Nữ",
-                    "Khác",
-                ],
+                ["Nam", "Nữ", "Khác"],
+                key="v22_gender",
             )
 
         with p3:
-
             current_address = st.text_input(
                 "Địa chỉ hiện tại *",
                 placeholder="Số nhà/thôn/tổ/đường",
+                key="v22_address",
             )
 
-        st.subheader(
-            "📍 Địa giới hành chính hiện tại"
+        st.caption(
+            "Nhập thông tin cơ bản rồi chọn địa giới hành chính bên dưới. "
+            "Danh sách phường/xã sẽ cập nhật ngay khi đổi tỉnh/thành."
         )
 
-        try:
-            admin_hierarchy = load_admin_hierarchy()
-            admin_data_ok = True
-        except Exception as exc:
-            admin_hierarchy = {}
-            admin_data_ok = False
+        basic_continue = st.form_submit_button(
+            "Tiếp tục →",
+            type="primary",
+            use_container_width=True,
+        )
+
+# ============================================================
+# B. ĐỊA GIỚI — CỐ Ý ĐẶT NGOÀI FORM
+# ============================================================
+# Đây là điểm sửa quan trọng:
+# selectbox tỉnh phải được phép rerun ngay khi người dùng đổi tỉnh,
+# nếu đặt trong st.form thì Streamlit giữ nguyên widget xã cũ và gây
+# tình trạng "— Chọn tỉnh/thành trước —" dù tỉnh đã được chọn.
+st.subheader("📍 Địa giới hành chính hiện tại")
+
+try:
+    admin_hierarchy = load_admin_hierarchy()
+    admin_data_ok = True
+except Exception as exc:
+    admin_hierarchy = {}
+    admin_data_ok = False
+    st.error(
+        "Không tải được danh mục tỉnh/thành và phường/xã/đặc khu. "
+        "Vui lòng tải lại trang hoặc thử lại sau."
+    )
+    st.caption(f"Nguồn dữ liệu: {ADMIN_DATA_SOURCE_URL}")
+    st.code(str(exc))
+
+if admin_data_ok:
+    provinces_list = sorted(admin_hierarchy.keys(), key=str.casefold)
+
+    selected_province = st.selectbox(
+        "Tỉnh / thành phố *",
+        ["— Chọn tỉnh/thành —"] + provinces_list,
+        key="v22_profile_province",
+    )
+
+    if selected_province == "— Chọn tỉnh/thành —":
+        commune_value = ""
+        st.selectbox(
+            "Phường / xã / đặc khu *",
+            ["— Chọn tỉnh/thành trước —"],
+            disabled=True,
+            key="v22_profile_commune_empty",
+        )
+    else:
+        available_communes = list(
+            admin_hierarchy.get(selected_province, [])
+        )
+
+        # Key phụ thuộc tỉnh để Streamlit không tái sử dụng lựa chọn
+        # phường/xã của tỉnh trước đó.
+        safe_province = (
+            selected_province
+            .replace(" ", "_")
+            .replace("/", "_")
+            .replace("\\", "_")
+        )
+        commune_key = f"v22_profile_commune_{safe_province}"
+
+        commune_options = [
+            "— Chọn phường/xã/đặc khu —"
+        ] + available_communes
+
+        commune_choice = st.selectbox(
+            "Phường / xã / đặc khu *",
+            commune_options,
+            key=commune_key,
+        )
+
+        commune_value = (
+            ""
+            if commune_choice == "— Chọn phường/xã/đặc khu —"
+            else commune_choice
+        )
+
+        if not available_communes:
             st.error(
-                "Không tải được danh mục tỉnh/thành và phường/xã hiện hành. "
-                "Vui lòng tải lại trang hoặc thử lại sau."
-            )
-            st.caption(
-                f"Nguồn dữ liệu: {ADMIN_DATA_SOURCE_URL}"
-            )
-            st.code(str(exc))
-
-        if admin_data_ok:
-            provinces_list = sorted(
-                admin_hierarchy.keys(),
-                key=str.casefold,
+                "Tỉnh/thành này chưa có danh mục phường/xã/đặc khu "
+                "trong dữ liệu hiện tại."
             )
 
-            selected_province = st.selectbox(
-                "Tỉnh / thành phố *",
-                ["— Chọn tỉnh/thành —"] + provinces_list,
-                key="profile_province",
-            )
+    st.caption(
+        "Danh mục địa giới được tải theo cấu trúc 2 cấp hiện hành; "
+        "không nhập tay tên phường/xã để tránh sai địa danh."
+    )
+else:
+    selected_province = ""
+    commune_value = ""
 
-            if selected_province == "— Chọn tỉnh/thành —":
-                commune_value = ""
-                st.selectbox(
-                    "Phường / xã / đặc khu *",
-                    ["— Chọn tỉnh/thành trước —"],
-                    disabled=True,
-                    key="profile_commune_disabled",
-                )
-            else:
-                available_communes = admin_hierarchy[selected_province]
-                commune_choice = st.selectbox(
-                    "Phường / xã / đặc khu *",
-                    ["— Chọn phường/xã/đặc khu —"] + available_communes,
-                    key="profile_commune",
-                )
-                commune_value = (
-                    ""
-                    if commune_choice == "— Chọn phường/xã/đặc khu —"
-                    else commune_choice
-                )
+if selected_province and commune_value:
+    st.success(
+        f"📍 Đã chọn: **{commune_value}, {selected_province}**"
+    )
 
-            st.caption(
-                "Danh mục địa giới được tải theo cấu trúc 2 cấp hiện hành; "
-                "không nhập tay tên phường/xã để tránh sai địa danh."
-            )
-        else:
-            selected_province = ""
-            commune_value = ""
-
-        if selected_province and commune_value:
-            st.success(
-                f"📍 Đã chọn: **{commune_value}, {selected_province}**"
-            )
-
+# ============================================================
+# C. ĐỒNG Ý + LƯU HỒ SƠ — FORM RIÊNG
+# ============================================================
+with st.form("patient_consent_save_form_v22", clear_on_submit=False):
+    with st.container(border=True):
         st.markdown("### 🔐 Đồng ý tham gia sàng lọc và nghiên cứu")
+
         if operator_mode:
             st.info(
-                "Bạn đang nhập giúp người tham gia. Chỉ tiếp tục khi người tham gia đã được giải thích "
-                "nội dung, đồng ý cho nghiên cứu sinh sử dụng dữ liệu theo mục đích nghiên cứu/sàng lọc, "
-                "và bạn có cơ sở hợp lý để ghi nhận sự đồng ý đó."
+                "Bạn đang nhập giúp người tham gia. Chỉ tiếp tục khi người tham gia "
+                "đã được giải thích nội dung và đã đồng ý cho sử dụng dữ liệu "
+                "theo mục đích nghiên cứu/sàng lọc."
             )
         else:
             st.info(
                 "Để tiếp tục, người tham gia cần đọc và đồng ý với nội dung dưới đây. "
-                "Nếu không đồng ý, hệ thống sẽ **không thực hiện sàng lọc và không lưu hồ sơ/thông tin sức khỏe**."
+                "Nếu không đồng ý, hệ thống sẽ không thực hiện sàng lọc và không lưu hồ sơ."
             )
-        with st.container(border=True):
-            st.markdown(
-                "**Tôi đồng ý cho nghiên cứu sinh sử dụng thông tin cá nhân, "
-                "thông tin khảo sát và thông tin sức khỏe/xét nghiệm do tôi cung cấp "
-                "cho mục đích sàng lọc cộng đồng Thalassemia và nghiên cứu khoa học.**"
-            )
-            st.markdown(
-                "Tôi hiểu rằng việc tham gia là tự nguyện; kết quả của hệ thống chỉ có "
-                "tính chất sàng lọc, không thay thế chẩn đoán của cơ sở y tế; dữ liệu "
-                "được lưu phục vụ mục đích nêu trên theo phiên bản chấp thuận của nghiên cứu. "
-                "Tôi có thể dừng tham gia bằng cách không tiếp tục sử dụng hệ thống."
-            )
-            research_consent = st.checkbox(
-                "✅ Tôi đã đọc, hiểu và đồng ý tham gia." if not operator_mode
-                else "✅ Tôi xác nhận người tham gia đã đọc/được giải thích và đã đồng ý.",
-                key="research_consent",
-            )
-            if operator_mode:
-                st.caption(
-                    f"Người nhập: {auth_user['full_name']} ({auth_user['username']})"
-                )
+
+        st.markdown(
+            "**Tôi đồng ý cho nghiên cứu sinh sử dụng thông tin cá nhân, "
+            "thông tin khảo sát và thông tin sức khỏe/xét nghiệm do tôi cung cấp "
+            "cho mục đích sàng lọc cộng đồng Thalassemia và nghiên cứu khoa học.**"
+        )
+        st.markdown(
+            "Tôi hiểu rằng việc tham gia là tự nguyện; kết quả của hệ thống chỉ có "
+            "tính chất sàng lọc, không thay thế chẩn đoán của cơ sở y tế; dữ liệu "
+            "được lưu phục vụ mục đích nêu trên theo phiên bản chấp thuận của nghiên cứu."
+        )
+
+        research_consent = st.checkbox(
+            "✅ Tôi đã đọc, hiểu và đồng ý tham gia."
+            if not operator_mode
+            else "✅ Tôi xác nhận người tham gia đã đọc/được giải thích và đã đồng ý.",
+            key="v22_research_consent",
+        )
+
+        if operator_mode:
             st.caption(
-                f"Phiên bản nội dung chấp thuận: {CONSENT_VERSION}"
+                f"Người nhập: {auth_user['full_name']} ({auth_user['username']})"
             )
 
+        st.caption(f"Phiên bản nội dung chấp thuận: {CONSENT_VERSION}")
 
-    phone = normalize_phone(
-        phone_raw
-    )
+        save_profile = st.form_submit_button(
+            "💾 LƯU / CẬP NHẬT HỒ SƠ",
+            type="primary",
+            use_container_width=True,
+        )
 
+phone = normalize_phone(phone_raw)
 
-    if st.form_submit_button(
-        "💾 LƯU / CẬP NHẬT HỒ SƠ",
-        type="secondary",
-        use_container_width=True,
-    ):
+if save_profile:
+    if not research_consent:
+        st.error(
+            "Bạn cần đồng ý tham gia sàng lọc và nghiên cứu trước khi tiếp tục."
+        )
+    elif not admin_data_ok:
+        st.error(
+            "Chưa tải được danh mục địa giới hiện hành nên chưa thể lưu hồ sơ."
+        )
+    elif not full_name.strip():
+        st.error("Vui lòng nhập họ và tên.")
+    elif not valid_vietnam_phone(phone):
+        st.error("Số điện thoại phải là số Việt Nam 10 chữ số.")
+    elif not current_address.strip():
+        st.error("Vui lòng nhập địa chỉ hiện tại.")
+    elif not selected_province:
+        st.error("Vui lòng chọn tỉnh/thành phố.")
+    elif not commune_value:
+        st.error("Vui lòng chọn phường/xã/đặc khu.")
+    else:
+        profile = {
+            "phone": phone,
+            "full_name": full_name.strip(),
+            "birth_date": birth_date.isoformat(),
+            "gender": gender,
+            "current_address": current_address.strip(),
+            "province": selected_province,
+            "commune": commune_value,
+            "age": calculate_age(birth_date),
+            "consent_at": datetime.now().isoformat(timespec="seconds"),
+            "entry_mode": "assisted" if operator_mode else "self",
+            "entered_by_username": operator_username,
+        }
 
-        if not research_consent:
+        action = upsert_patient(profile)
+        st.session_state["patient_profile"] = profile
+        st.session_state["research_consent"] = True
+        reset_results()
 
-            st.error(
-                "Bạn cần đồng ý tham gia sàng lọc và nghiên cứu trước khi tiếp tục."
-            )
-
-        elif not admin_data_ok:
-
-            st.error(
-                "Chưa tải được danh mục địa giới hiện hành nên chưa thể lưu hồ sơ."
-            )
-
-        elif not full_name.strip():
-
-            st.error(
-                "Vui lòng nhập họ và tên."
-            )
-
-        elif not valid_vietnam_phone(phone):
-
-            st.error(
-                "Số điện thoại phải là số Việt Nam 10 chữ số."
-            )
-
-        elif not current_address.strip():
-
-            st.error(
-                "Vui lòng nhập địa chỉ hiện tại."
-            )
-
-        elif not selected_province:
-
-            st.error(
-                "Vui lòng chọn tỉnh/thành phố."
-            )
-
-        elif not commune_value:
-
-            st.error(
-                "Vui lòng chọn phường/xã/đặc khu."
-            )
-
+        if action == "updated":
+            st.success("✅ Đã cập nhật hồ sơ bằng lần nhập sau cùng.")
         else:
+            st.success("✅ Đã tạo hồ sơ bệnh nhân.")
 
-            profile = {
-                "phone": phone,
-                "full_name": full_name.strip(),
-                "birth_date": birth_date.isoformat(),
-                "gender": gender,
-                "current_address": current_address.strip(),
-                "province": selected_province,
-                "commune": commune_value,
-                "age": calculate_age(
-                    birth_date
-                ),
-                "consent_at": datetime.now().isoformat(timespec="seconds"),
-                "entry_mode": "assisted" if operator_mode else "self",
-                "entered_by_username": operator_username,
-            }
-
-            action = upsert_patient(
-                profile
-            )
-
-            st.session_state[
-                "patient_profile"
-            ] = profile
-
-            reset_results()
-
-            if action == "updated":
-                st.success(
-                    "✅ Đã cập nhật hồ sơ bằng lần nhập sau cùng."
-                )
-            else:
-                st.success(
-                    "✅ Đã tạo hồ sơ bệnh nhân."
-                )
 
 patient = st.session_state.get(
     "patient_profile"
