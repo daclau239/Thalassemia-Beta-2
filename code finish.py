@@ -4,7 +4,6 @@ import json
 import math
 import os
 import re
-import sqlite3
 import hashlib
 import secrets
 from datetime import date, datetime, timedelta
@@ -93,7 +92,22 @@ st.set_page_config(
     layout="wide",
 )
 
-DB_PATH = "thalassemia_patients.db"
+# Persistent database for Streamlit Cloud.
+# Configure one of these secrets in Streamlit Cloud:
+#   DATABASE_URL = "postgresql://..."
+# or SUPABASE_DB_URL = "postgresql://..."
+DATABASE_URL = ""
+try:
+    DATABASE_URL = str(st.secrets.get("DATABASE_URL", "") or "").strip()
+except Exception:
+    DATABASE_URL = ""
+if not DATABASE_URL:
+    try:
+        DATABASE_URL = str(st.secrets.get("SUPABASE_DB_URL", "") or "").strip()
+    except Exception:
+        DATABASE_URL = ""
+
+LOCAL_SQLITE_PATH = "thalassemia_patients.db"
 CONSENT_VERSION = "DACLAU239-BETA5"
 ADMIN_DATA_URL = "https://raw.githubusercontent.com/open-admin-data/vietnam-administrative-divisions/main/data/hierarchy.json"
 ADMIN_DATA_SOURCE_URL = "https://github.com/open-admin-data/vietnam-administrative-divisions"
@@ -147,12 +161,56 @@ DEFAULT_ADMIN_FULL_NAME = "Quản trị viên hệ thống"
 DEFAULT_ADMIN_EMAIL = "admin@thalassemia.local"
 
 
-def get_db():
-    conn = sqlite3.connect(
-        DB_PATH,
-        check_same_thread=False,
-    )
 
+class PersistentPGConnection:
+    """Small compatibility wrapper so the existing application can keep its execute/fetch API."""
+    def __init__(self, dsn: str):
+        try:
+            import psycopg
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Thiếu thư viện psycopg. Hãy thêm `psycopg[binary]` vào requirements.txt."
+            ) from exc
+        self._conn = psycopg.connect(dsn)
+        self._conn.autocommit = False
+
+    @staticmethod
+    def _translate(sql: str) -> str:
+        # Existing app uses SQLite-style '?' parameters.
+        sql = sql.replace("?", "%s")
+        return sql
+
+    def execute(self, sql: str, params=None):
+        cur = self._conn.cursor()
+        cur.execute(self._translate(sql), params or ())
+        return cur
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
+
+def _pg_table_columns(conn, table_name):
+    rows = conn.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = ?
+        """,
+        (table_name,),
+    ).fetchall()
+    return {row[0] for row in rows}
+
+
+def _create_postgres_schema(conn):
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS patient_profiles (
@@ -171,12 +229,10 @@ def get_db():
         )
         """
     )
-
-    # Tài khoản quản trị / người được phê duyệt.
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS user_accounts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id BIGSERIAL PRIMARY KEY,
             username TEXT NOT NULL UNIQUE,
             full_name TEXT NOT NULL,
             email TEXT NOT NULL UNIQUE,
@@ -191,12 +247,10 @@ def get_db():
         )
         """
     )
-
-    # Nhật ký từng lần sàng lọc: giữ lịch sử theo lượt, tách khỏi hồ sơ hiện tại.
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS screening_records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id BIGSERIAL PRIMARY KEY,
             phone TEXT NOT NULL,
             screening_at TEXT NOT NULL,
             entered_by_username TEXT,
@@ -244,42 +298,25 @@ def get_db():
         )
         """
     )
-
-    # Chỉ giữ lại 01 lượt sàng lọc mới nhất cho mỗi số điện thoại.
-    # Các lượt cũ được xóa khỏi bảng screening_records để dữ liệu nghiên cứu
-    # luôn có đúng 01 bản ghi hiện hành cho mỗi người. Hồ sơ patient_profiles
-    # vẫn được giữ nguyên.
-    conn.execute(
-        """
-        DELETE FROM screening_records
-        WHERE id NOT IN (
-            SELECT MAX(id)
-            FROM screening_records
-            GROUP BY phone
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS system_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
         )
-        """
-    )
+    """)
 
-    # Migrate prototype databases created before consent fields existed.
-    existing = {
-        row[1]
-        for row in conn.execute(
-            "PRAGMA table_info(patient_profiles)"
-        ).fetchall()
-    }
-    migrations = [
+    # Safe migrations for columns added after the first prototype.
+    patient_columns = _pg_table_columns(conn, "patient_profiles")
+    patient_migrations = [
         ("research_consent", "INTEGER NOT NULL DEFAULT 0"),
         ("consent_version", "TEXT"),
         ("consent_at", "TEXT"),
     ]
-    for column, definition in migrations:
-        if column not in existing:
-            conn.execute(
-                f"ALTER TABLE patient_profiles ADD COLUMN {column} {definition}"
-            )
+    for column, definition in patient_migrations:
+        if column not in patient_columns:
+            conn.execute(f"ALTER TABLE patient_profiles ADD COLUMN {column} {definition}")
 
-    # Migration cho dữ liệu theo dõi Vòng 3 / xét nghiệm chuyên sâu.
-    record_columns = {row[1] for row in conn.execute("PRAGMA table_info(screening_records)").fetchall()}
+    record_columns = _pg_table_columns(conn, "screening_records")
     record_migrations = [
         ("round3_completed", "INTEGER NOT NULL DEFAULT 0"),
         ("round3_test_date", "TEXT"),
@@ -302,6 +339,148 @@ def get_db():
         if column not in record_columns:
             conn.execute(f"ALTER TABLE screening_records ADD COLUMN {column} {definition}")
 
+
+def _migrate_local_sqlite_once(conn):
+    """Migrate an existing local SQLite prototype DB into the persistent DB once, when present."""
+    if not os.path.exists(LOCAL_SQLITE_PATH):
+        return
+    marker = conn.execute(
+        "SELECT value FROM system_meta WHERE key = ?",
+        ("local_sqlite_migrated",),
+    ).fetchone()
+    if marker and str(marker[0]) == "1":
+        return
+
+    try:
+        import sqlite3
+        local = sqlite3.connect(LOCAL_SQLITE_PATH)
+        local.row_factory = sqlite3.Row
+
+        # Copy parent tables first.
+        patient_rows = local.execute("SELECT * FROM patient_profiles").fetchall()
+        for r in patient_rows:
+            conn.execute(
+                """
+                INSERT INTO patient_profiles
+                (phone, full_name, birth_date, gender, current_address, province, commune,
+                 research_consent, consent_version, consent_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (phone) DO UPDATE SET
+                    full_name=EXCLUDED.full_name,
+                    birth_date=EXCLUDED.birth_date,
+                    gender=EXCLUDED.gender,
+                    current_address=EXCLUDED.current_address,
+                    province=EXCLUDED.province,
+                    commune=EXCLUDED.commune,
+                    research_consent=EXCLUDED.research_consent,
+                    consent_version=EXCLUDED.consent_version,
+                    consent_at=EXCLUDED.consent_at,
+                    updated_at=EXCLUDED.updated_at
+                """,
+                (
+                    r["phone"], r["full_name"], r["birth_date"], r["gender"],
+                    r["current_address"], r["province"], r["commune"],
+                    r["research_consent"] if "research_consent" in r.keys() else 0,
+                    r["consent_version"] if "consent_version" in r.keys() else None,
+                    r["consent_at"] if "consent_at" in r.keys() else None,
+                    r["created_at"], r["updated_at"],
+                ),
+            )
+
+        # Copy users.
+        try:
+            user_rows = local.execute("SELECT * FROM user_accounts").fetchall()
+            for r in user_rows:
+                cols = set(r.keys())
+                conn.execute(
+                    """
+                    INSERT INTO user_accounts
+                    (id, username, full_name, email, password_hash, password_salt,
+                     role, status, created_at, approved_by, approved_at, last_login_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (username) DO NOTHING
+                    """,
+                    (
+                        r["id"], r["username"], r["full_name"], r["email"],
+                        r["password_hash"], r["password_salt"], r["role"], r["status"],
+                        r["created_at"], r["approved_by"] if "approved_by" in cols else None,
+                        r["approved_at"] if "approved_at" in cols else None,
+                        r["last_login_at"] if "last_login_at" in cols else None,
+                    ),
+                )
+        except Exception:
+            pass
+
+        # Copy ALL screening history. Nothing is deleted during migration.
+        screening_rows = local.execute("SELECT * FROM screening_records").fetchall()
+        record_columns = _pg_table_columns(conn, "screening_records")
+        allowed = [c for c in record_columns if c != "id"]
+        # Use explicit compatible columns and NULL for absent legacy fields.
+        for r in screening_rows:
+            def rv(name):
+                return r[name] if name in r.keys() else None
+
+            conn.execute(
+                """
+                INSERT INTO screening_records
+                (id, phone, screening_at, entered_by_username, entry_mode,
+                 consent_version, consent_at, round1_score, round1_category,
+                 round1_conclusion, round1_reasons, answers_json,
+                 round2_completed, altitude_choice, altitude_adjustment, hb, hb_adjusted,
+                 mcv, mch, rbc, rdw, mentzer, round2_score, round2_category,
+                 round2_conclusion, round2_reasons, findings_json, advice_json,
+                 round3_completed, round3_test_date, round3_facility, round3_test_type,
+                 round3_hba, round3_hba2, round3_hbf, round3_hbe, round3_ferritin,
+                 round3_serum_iron, round3_transferrin_saturation, round3_genetic_result,
+                 round3_lab_conclusion, round3_followup_status, round3_counseling_note,
+                 round3_followup_date)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (
+                    r["id"], rv("phone"), rv("screening_at"), rv("entered_by_username"),
+                    rv("entry_mode"), rv("consent_version"), rv("consent_at"),
+                    rv("round1_score") or 0, rv("round1_category") or "THẤP",
+                    rv("round1_conclusion"), rv("round1_reasons"), rv("answers_json"),
+                    rv("round2_completed") or 0, rv("altitude_choice"), rv("altitude_adjustment"),
+                    rv("hb"), rv("hb_adjusted"), rv("mcv"), rv("mch"), rv("rbc"), rv("rdw"),
+                    rv("mentzer"), rv("round2_score"), rv("round2_category"), rv("round2_conclusion"),
+                    rv("round2_reasons"), rv("findings_json"), rv("advice_json"),
+                    rv("round3_completed") or 0, rv("round3_test_date"), rv("round3_facility"),
+                    rv("round3_test_type"), rv("round3_hba"), rv("round3_hba2"), rv("round3_hbf"),
+                    rv("round3_hbe"), rv("round3_ferritin"), rv("round3_serum_iron"),
+                    rv("round3_transferrin_saturation"), rv("round3_genetic_result"),
+                    rv("round3_lab_conclusion"), rv("round3_followup_status"),
+                    rv("round3_counseling_note"), rv("round3_followup_date"),
+                ),
+            )
+
+        local.close()
+        conn.execute(
+            "INSERT INTO system_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+            ("local_sqlite_migrated", "1"),
+        )
+        conn.commit()
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        st.warning(
+            "Đã kết nối database bền vững nhưng không thể tự động chuyển dữ liệu SQLite cũ: "
+            f"{exc}"
+        )
+
+
+def get_db():
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "Chưa cấu hình DATABASE_URL hoặc SUPABASE_DB_URL trong Streamlit Secrets. "
+            "Hệ thống đã chặn chạy để tránh lưu dữ liệu nghiên cứu vào SQLite tạm thời."
+        )
+    conn = PersistentPGConnection(DATABASE_URL)
+    _create_postgres_schema(conn)
+    _migrate_local_sqlite_once(conn)
     conn.commit()
     return conn
 
@@ -431,10 +610,11 @@ def ensure_default_admin():
 
         conn.execute(
             """
-            INSERT OR IGNORE INTO user_accounts
+            INSERT INTO user_accounts
             (username, full_name, email, password_hash, password_salt,
              role, status, created_at, approved_by, approved_at)
             VALUES (?, ?, ?, ?, ?, 'admin', 'approved', ?, ?, ?)
+            ON CONFLICT (username) DO NOTHING
             """,
             (
                 DEFAULT_ADMIN_USERNAME,
@@ -777,6 +957,7 @@ def create_screening_record(
             consent_version, consent_at, round1_score, round1_category,
             round1_conclusion, round1_reasons, answers_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        RETURNING id
         """,
         (
             patient["phone"],
@@ -792,16 +973,10 @@ def create_screening_record(
             json.dumps(answers, ensure_ascii=False),
         ),
     )
-    record_id = cur.lastrowid
+    record_row = cur.fetchone()
+    record_id = int(record_row[0])
 
-    # Khi một người (cùng số điện thoại) sàng lọc lại, lượt mới thay thế
-    # hoàn toàn lượt cũ. Không xóa hồ sơ người tham gia, chỉ xóa bản ghi
-    # sàng lọc cũ để kho dữ liệu nghiên cứu có 01 dòng/người.
-    conn.execute(
-        "DELETE FROM screening_records WHERE phone = ? AND id <> ?",
-        (patient["phone"], int(record_id)),
-    )
-
+    # KHÔNG xóa lượt cũ. Mọi lần sàng lọc được giữ để nghiên cứu theo dõi dọc.
     conn.commit()
     conn.close()
     return record_id
@@ -884,11 +1059,7 @@ def update_screening_round3(record_id, r3):
     conn.close()
 
 def list_screening_records_for_staff():
-    """Lấy 01 lượt sàng lọc duy nhất cho mỗi người.
-
-    Hệ thống chủ động xóa lượt cũ khi có lượt mới, nên CSDL và file Excel
-    đều phục vụ tập dữ liệu nghiên cứu theo nguyên tắc 01 người/01 dòng.
-    """
+    """Lấy TOÀN BỘ lịch sử sàng lọc của người tham gia đã đồng ý."""
     conn = get_db()
     rows = conn.execute(
         """
@@ -910,6 +1081,44 @@ def list_screening_records_for_staff():
         FROM screening_records s
         JOIN patient_profiles p ON p.phone = s.phone
         WHERE p.research_consent = 1
+        ORDER BY s.screening_at DESC, s.id DESC
+        """
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+
+def list_latest_screening_records_for_staff():
+    """Lấy một lượt mới nhất/người để hiển thị nhanh trên giao diện; không xóa lịch sử."""
+    conn = get_db()
+    rows = conn.execute(
+        """
+        SELECT
+            s.id, s.screening_at, s.entered_by_username, s.entry_mode,
+            p.phone, p.full_name, p.birth_date, p.gender,
+            p.current_address, p.province, p.commune,
+            s.consent_version, s.consent_at,
+            s.round1_score, s.round1_category,
+            s.round2_completed, s.altitude_choice, s.altitude_adjustment,
+            s.hb, s.hb_adjusted, s.mcv, s.mch, s.rbc, s.rdw, s.mentzer,
+            s.round2_score, s.round2_category, s.round2_conclusion,
+            s.round1_conclusion,
+            s.round3_completed, s.round3_test_date, s.round3_facility, s.round3_test_type,
+            s.round3_hba, s.round3_hba2, s.round3_hbf, s.round3_hbe,
+            s.round3_ferritin, s.round3_serum_iron, s.round3_transferrin_saturation,
+            s.round3_genetic_result, s.round3_lab_conclusion, s.round3_followup_status,
+            s.round3_counseling_note, s.round3_followup_date
+        FROM (
+            SELECT sr.*,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY sr.phone
+                       ORDER BY sr.screening_at DESC, sr.id DESC
+                   ) AS rn
+            FROM screening_records sr
+        ) s
+        JOIN patient_profiles p ON p.phone = s.phone
+        WHERE s.rn = 1 AND p.research_consent = 1
         ORDER BY s.screening_at DESC, s.id DESC
         """
     ).fetchall()
@@ -966,7 +1175,7 @@ def export_screening_xlsx(patient_rows, screening_rows):
     ws.autofilter(0, 0, max(len(patient_rows), 1), len(patient_headers)-1)
 
     # Sheet 2: lịch sử sàng lọc
-    ws2 = workbook.add_worksheet("Luot_sang_loc_moi_nhat")
+    ws2 = workbook.add_worksheet("Lich_su_sang_loc")
     screening_headers = [
         "ID lượt sàng lọc", "Thời điểm", "Người nhập", "Hình thức nhập",
         "Số điện thoại", "Họ và tên", "Ngày sinh", "Giới tính",
@@ -1150,7 +1359,8 @@ def render_admin_console(user):
 
     patients = list_patient_profiles_for_staff()
     users = list_user_accounts()
-    screening_rows = list_screening_records_for_staff()
+    screening_rows = list_latest_screening_records_for_staff()
+    screening_history_rows = list_screening_records_for_staff()
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -1213,7 +1423,7 @@ def render_admin_console(user):
     st.subheader("📊 DỮ LIỆU NGƯỜI THAM GIA — DẠNG BẢNG")
     st.caption(
         "🔒 Chỉ quản trị viên và nhân sự đã được quản trị viên phê duyệt mới xem được dữ liệu này. "
-        "Bảng sàng lọc chỉ giữ một bản ghi hiện hành cho mỗi số điện thoại; khi sàng lọc lại, bản ghi cũ được thay thế để tạo dataset nghiên cứu sạch."
+        "Bảng trên web hiển thị lượt mới nhất cho mỗi số điện thoại; toàn bộ lịch sử vẫn được giữ trong database và file Excel nghiên cứu."
     )
 
     tab1, tab2 = st.tabs(["👤 Hồ sơ hiện tại", "🧪 Lượt sàng lọc gần nhất"])
@@ -1301,8 +1511,8 @@ def render_admin_console(user):
         else:
             st.info("Chưa có lượt sàng lọc nào được lưu.")
 
-    if patients or screening_rows:
-        excel_data = export_screening_xlsx(patients, screening_rows)
+    if patients or screening_history_rows:
+        excel_data = export_screening_xlsx(patients, screening_history_rows)
         st.download_button(
             "📊 XUẤT DỮ LIỆU EXCEL (.xlsx)",
             data=excel_data.getvalue(),
@@ -1311,7 +1521,7 @@ def render_admin_console(user):
             use_container_width=True,
         )
         st.caption(
-            "File Excel gồm 2 sheet: Hồ sơ hiện tại và lượt sàng lọc gần nhất của từng số điện thoại. "
+            "File Excel gồm 2 sheet: Hồ sơ hiện tại và TOÀN BỘ lịch sử sàng lọc. Bảng trên web chỉ hiển thị lượt mới nhất của từng số điện thoại. "
             "Không xuất mật khẩu/tài khoản nhân sự."
         )
 
