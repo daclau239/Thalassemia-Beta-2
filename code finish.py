@@ -77,7 +77,7 @@ from docx import Document
 # - Risk score hiện tại là prototype, chưa validation trên người Việt Nam.
 # - "Khuyến nghị" là hỗ trợ sàng lọc, không chẩn đoán.
 # - Q19/Q20 về tiếp cận xét nghiệm = 0 điểm.
-# - Một số điện thoại = một hồ sơ; nhập lại sẽ ghi nhận lần cuối.
+# - Một số điện thoại = một hồ sơ hiện tại; mỗi lần sàng lọc được lưu thành một bản ghi lịch sử riêng.
 # - SQLite chỉ phù hợp prototype; Streamlit Cloud có thể reset filesystem.
 # ============================================================
 
@@ -106,6 +106,8 @@ if not DATABASE_URL:
         DATABASE_URL = str(st.secrets.get("SUPABASE_DB_URL", "") or "").strip()
     except Exception:
         DATABASE_URL = ""
+if not DATABASE_URL:
+    DATABASE_URL = os.environ.get("DATABASE_URL", "").strip() or os.environ.get("SUPABASE_DB_URL", "").strip()
 
 LOCAL_SQLITE_PATH = "thalassemia_patients.db"
 CONSENT_VERSION = "DACLAU239-BETA5"
@@ -472,15 +474,30 @@ def _migrate_local_sqlite_once(conn):
         )
 
 
+def _sync_postgres_sequences(conn):
+    """Đồng bộ sequence sau khi migrate các ID cũ từ SQLite."""
+    for table in ("user_accounts", "screening_records"):
+        conn.execute(
+            f"""
+            SELECT setval(
+                pg_get_serial_sequence('{table}', 'id'),
+                COALESCE((SELECT MAX(id) FROM {table}), 1),
+                TRUE
+            )
+            """
+        )
+
+
 def get_db():
     if not DATABASE_URL:
         raise RuntimeError(
-            "Chưa cấu hình DATABASE_URL hoặc SUPABASE_DB_URL trong Streamlit Secrets. "
-            "Hệ thống đã chặn chạy để tránh lưu dữ liệu nghiên cứu vào SQLite tạm thời."
+            "Chưa cấu hình database bền vững. Hãy thêm DATABASE_URL "
+            "(hoặc SUPABASE_DB_URL) vào Streamlit Cloud > Manage app > Settings > Secrets."
         )
     conn = PersistentPGConnection(DATABASE_URL)
     _create_postgres_schema(conn)
     _migrate_local_sqlite_once(conn)
+    _sync_postgres_sequences(conn)
     conn.commit()
     return conn
 
@@ -1235,7 +1252,23 @@ def export_screening_xlsx(patient_rows, screening_rows):
 # ACCESS CONTROL / ADMIN CONSOLE
 # ------------------------------------------------------------
 
-ensure_default_admin()
+if not DATABASE_URL:
+    st.error("Database chưa được cấu hình — hệ thống đang khóa ghi dữ liệu để tránh mất dữ liệu.")
+    st.info(
+        "Vào Streamlit Cloud → Manage app → Settings → Secrets và thêm: "
+        '`DATABASE_URL = "postgresql://..."`'
+    )
+    st.stop()
+
+try:
+    ensure_default_admin()
+except Exception as exc:
+    st.error("Không thể kết nối/khởi tạo database bền vững.")
+    st.code(str(exc))
+    st.info(
+        "Kiểm tra DATABASE_URL/SUPABASE_DB_URL và quyền truy cập PostgreSQL/Supabase."
+    )
+    st.stop()
 
 
 def current_auth_user():
@@ -1514,7 +1547,7 @@ def render_admin_console(user):
     if patients or screening_history_rows:
         excel_data = export_screening_xlsx(patients, screening_history_rows)
         st.download_button(
-            "📊 XUẤT DỮ LIỆU EXCEL (.xlsx)",
+            "📊 XUẤT DỮ LIỆU EXCEL — TOÀN BỘ LỊCH SỬ (.xlsx)",
             data=excel_data.getvalue(),
             file_name=f"Thalassemia_du_lieu_{date.today().isoformat()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
