@@ -94,20 +94,37 @@ st.set_page_config(
 
 # Persistent database for Streamlit Cloud.
 # Configure one of these secrets in Streamlit Cloud:
-#   DATABASE_URL = "postgresql://..."
-# or SUPABASE_DB_URL = "postgresql://..."
-DATABASE_URL = ""
-try:
-    DATABASE_URL = str(st.secrets.get("DATABASE_URL", "") or "").strip()
-except Exception:
-    DATABASE_URL = ""
-if not DATABASE_URL:
+#   # ============================================================
+# PERSISTENT DATABASE CONFIG
+# Prefer separate secrets instead of a URI so passwords containing
+# @, #, ?, &, etc. never break URL parsing.
+#
+# Streamlit Secrets:
+# DB_HOST = "aws-0-ap-northeast-2.pooler.supabase.com"
+# DB_PORT = 6543
+# DB_NAME = "postgres"
+# DB_USER = "postgres.cqltdtigenzqoqrfzgej"
+# DB_PASSWORD = "YOUR_DATABASE_PASSWORD"
+#
+# DATABASE_URL is still supported as a fallback.
+# ============================================================
+
+def _secret(name, default=""):
     try:
-        DATABASE_URL = str(st.secrets.get("SUPABASE_DB_URL", "") or "").strip()
+        value = st.secrets.get(name, default)
     except Exception:
-        DATABASE_URL = ""
-if not DATABASE_URL:
-    DATABASE_URL = os.environ.get("DATABASE_URL", "").strip() or os.environ.get("SUPABASE_DB_URL", "").strip()
+        value = default
+    if value is None or value == "":
+        value = os.environ.get(name, default)
+    return str(value).strip() if value is not None else ""
+
+
+DB_HOST = _secret("DB_HOST")
+DB_PORT = int(_secret("DB_PORT", "6543") or "6543")
+DB_NAME = _secret("DB_NAME", "postgres")
+DB_USER = _secret("DB_USER")
+DB_PASSWORD = _secret("DB_PASSWORD")
+DATABASE_URL = _secret("DATABASE_URL") or _secret("SUPABASE_DB_URL")
 
 LOCAL_SQLITE_PATH = "thalassemia_patients.db"
 CONSENT_VERSION = "DACLAU239-BETA5"
@@ -165,22 +182,48 @@ DEFAULT_ADMIN_EMAIL = "admin@thalassemia.local"
 
 
 class PersistentPGConnection:
-    """Small compatibility wrapper so the existing application can keep its execute/fetch API."""
-    def __init__(self, dsn: str):
+    """Compatibility wrapper around psycopg using explicit host/port/user/password."""
+    def __init__(self, dsn=None):
         try:
             import psycopg
         except ModuleNotFoundError as exc:
             raise RuntimeError(
                 "Thiếu thư viện psycopg. Hãy thêm `psycopg[binary]` vào requirements.txt."
             ) from exc
-        self._conn = psycopg.connect(dsn)
+
+        kwargs = None
+
+        if DB_HOST and DB_USER and DB_PASSWORD:
+            kwargs = {
+                "host": DB_HOST,
+                "port": DB_PORT,
+                "dbname": DB_NAME or "postgres",
+                "user": DB_USER,
+                "password": DB_PASSWORD,
+            }
+        elif dsn:
+            kwargs = {"conninfo": dsn}
+
+        if not kwargs:
+            raise RuntimeError(
+                "Chưa cấu hình database. Cần DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD "
+                "trong Streamlit Secrets (khuyến nghị), hoặc một DATABASE_URL hợp lệ."
+            )
+
+        try:
+            self._conn = psycopg.connect(**kwargs)
+        except Exception as exc:
+            host = DB_HOST or "<DATABASE_URL>"
+            raise RuntimeError(
+                f"Không thể kết nối PostgreSQL tới host '{host}'. "
+                "Kiểm tra DB_HOST, DB_PORT, DB_USER, DB_PASSWORD và database Supabase."
+            ) from exc
+
         self._conn.autocommit = False
 
     @staticmethod
     def _translate(sql: str) -> str:
-        # Existing app uses SQLite-style '?' parameters.
-        sql = sql.replace("?", "%s")
-        return sql
+        return sql.replace("?", "%s")
 
     def execute(self, sql: str, params=None):
         cur = self._conn.cursor()
@@ -489,12 +532,14 @@ def _sync_postgres_sequences(conn):
 
 
 def get_db():
-    if not DATABASE_URL:
+    configured = bool((DB_HOST and DB_USER and DB_PASSWORD) or DATABASE_URL)
+    if not configured:
         raise RuntimeError(
-            "Chưa cấu hình database bền vững. Hãy thêm DATABASE_URL "
-            "(hoặc SUPABASE_DB_URL) vào Streamlit Cloud > Manage app > Settings > Secrets."
+            "Chưa cấu hình database bền vững. "
+            "Hãy thêm DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD vào Streamlit Secrets."
         )
-    conn = PersistentPGConnection(DATABASE_URL)
+
+    conn = PersistentPGConnection(DATABASE_URL or None)
     _create_postgres_schema(conn)
     _migrate_local_sqlite_once(conn)
     _sync_postgres_sequences(conn)
@@ -1252,12 +1297,25 @@ def export_screening_xlsx(patient_rows, screening_rows):
 # ACCESS CONTROL / ADMIN CONSOLE
 # ------------------------------------------------------------
 
-if not DATABASE_URL:
+def _database_is_configured():
+    return bool((DB_HOST and DB_USER and DB_PASSWORD) or DATABASE_URL)
+
+
+if not _database_is_configured():
     st.error("Database chưa được cấu hình — hệ thống đang khóa ghi dữ liệu để tránh mất dữ liệu.")
-    st.info(
-        "Vào Streamlit Cloud → Manage app → Settings → Secrets và thêm: "
-        '`DATABASE_URL = "postgresql://..."`'
-    )
+    with st.expander("Cấu hình database bền vững", expanded=True):
+        st.code(
+            'DB_HOST = "aws-0-ap-northeast-2.pooler.supabase.com"\n'
+            'DB_PORT = 6543\n'
+            'DB_NAME = "postgres"\n'
+            'DB_USER = "postgres.cqltdtigenzqoqrfzgej"\n'
+            'DB_PASSWORD = "MẬT_KHẨU_DATABASE_CỦA_EM"',
+            language="toml",
+        )
+        st.caption(
+            "Đặt các giá trị này trong Streamlit Cloud → Manage app → Settings → Secrets. "
+            "Không cần percent-encode mật khẩu khi dùng DB_PASSWORD riêng."
+        )
     st.stop()
 
 try:
@@ -1266,7 +1324,7 @@ except Exception as exc:
     st.error("Không thể kết nối/khởi tạo database bền vững.")
     st.code(str(exc))
     st.info(
-        "Kiểm tra DATABASE_URL/SUPABASE_DB_URL và quyền truy cập PostgreSQL/Supabase."
+        "Kiểm tra lại DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD trong Streamlit Secrets."
     )
     st.stop()
 
