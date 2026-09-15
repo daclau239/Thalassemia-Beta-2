@@ -1,2 +1,7 @@
 streamlit
 python-docx
+streamlit
+requests
+python-docx
+XlsxWriter
+psycopg[binary]
