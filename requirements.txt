@@ -2,3 +2,8 @@ streamlit>=1.40
 requests>=2.31
 python-docx>=1.1
 XlsxWriter>=3.2
+streamlit
+requests
+python-docx
+XlsxWriter
+psycopg[binary]
