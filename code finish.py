@@ -2955,18 +2955,11 @@ with st.expander("GIỚI THIỆU ĐỀ TÀI & CƠ SỞ NGHIÊN CỨU · BẤM Đ
 
 st.markdown("""<div class=\"contact-card\"><div class=\"label\">Liên hệ tác giả</div><div class=\"name\">Nguyễn Đắc Lâu</div><div>Điện thoại: <a href=\"tel:0357930820\">0357930820</a></div><div>Email: <a href=\"mailto:nguyendaclau2309@gmail.com\">nguyendaclau2309@gmail.com</a></div><div class=\"small-note\">Tác giả và người phát triển nguyên mẫu hệ thống hỗ trợ sàng lọc Thalassemia.</div></div>""", unsafe_allow_html=True)
 
-st.divider()
-st.markdown("## QUY TRÌNH THAM GIA SÀNG LỌC")
-st.caption("Hồ sơ → Đồng ý tham gia → Vòng 1 → CBC/Vòng 2 → Kết quả sàng lọc → Khuyến nghị → Điều hướng cơ sở y tế")
-
-
 # ============================================================
 # ACCESS / SIDEBAR
 # ============================================================
 
 with st.sidebar:
-    st.header("QUY TRÌNH")
-    st.caption("Hồ sơ → Vòng 1 → CBC → Phân tích → Khuyến nghị → Cơ sở y tế")
     if GOOGLE_API_KEY:
         st.caption("🟢 Google Places đã cấu hình")
     else:
