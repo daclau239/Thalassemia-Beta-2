@@ -12,7 +12,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import requests
 import streamlit as st
 
-# ===== PROFESSIONAL HEMATOLOGY UI =====
+# ===== CODE BY NGUYEN DAC LAU 24XN1 =====
 st.markdown("""
 <style>
 /* ===== Professional Hematology UI — adaptive Light / Dark ===== */
@@ -60,7 +60,7 @@ st.markdown("""
 from docx import Document
 
 # ============================================================
-# THALASSEMIA SCREENING V8
+# THALASSEMIA SCREENING PREVIEW
 # ============================================================
 # 1) Hồ sơ bệnh nhân
 # 2) Vòng 1: 20 câu hỏi
@@ -137,6 +137,8 @@ ROUND1_MAX_SCORE = 20
 ROUND1_HIGH_THRESHOLD = 8  # chỉ dùng để phân tầng Vòng 1, KHÔNG khóa Vòng 2
 
 FOLLOWUP_DAYS = 30
+BIRTH_DATE_MIN = date(1900, 1, 1)
+BIRTH_DATE_MAX = date.today()
 
 ALTITUDE_OPTIONS = {
     "<500 m": 0.0,
@@ -2959,12 +2961,6 @@ st.markdown("""<div class=\"contact-card\"><div class=\"label\">Liên hệ tác 
 # ACCESS / SIDEBAR
 # ============================================================
 
-with st.sidebar:
-    if GOOGLE_API_KEY:
-        st.caption("🟢 Google Places đã cấu hình")
-    else:
-        st.caption("ℹ️ Cơ sở y tế vẫn được gợi ý theo danh mục tỉnh/thành.")
-
 render_auth_sidebar()
 
 # ============================================================
@@ -3017,8 +3013,8 @@ with st.form("patient_basic_form_v22", clear_on_submit=False):
             birth_date = st.date_input(
                 "Ngày sinh *",
                 value=date(2000, 1, 1),
-                min_value=date(1900, 1, 1),
-                max_value=date.today(),
+                min_value=BIRTH_DATE_MIN,
+                max_value=BIRTH_DATE_MAX,
                 format="DD/MM/YYYY",
                 key="v22_birth_date",
             )
