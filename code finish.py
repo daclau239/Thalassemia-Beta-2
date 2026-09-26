@@ -2963,7 +2963,7 @@ with st.sidebar:
     if GOOGLE_API_KEY:
         st.caption("🟢 Google Places đã cấu hình")
     else:
-        st.caption("ℹ️ Hiện tại đang là bản thử nghiệm nhưng chúng tôi cũng sẽ cố gắng gợi ý cho bạn các cơ sở y tế gần nhất dể thực hiện tần soát, hy vọng phần mềm này sẽ có thể giúp ích cho bạn, Xin cảm ơn.")
+        st.caption("ℹ️ Cơ sở y tế vẫn được gợi ý theo danh mục tỉnh/thành.")
 
 render_auth_sidebar()
 
@@ -3012,6 +3012,8 @@ with st.form("patient_basic_form_v22", clear_on_submit=False):
                 placeholder="Nguyễn Văn A",
                 key="v22_full_name",
             )
+            # Mở rộng toàn bộ khoảng năm có thể chọn: 1900 → ngày hiện tại.
+            # Giữ năm mặc định ở 2000 để lịch mở ra không quá xa.
             birth_date = st.date_input(
                 "Ngày sinh *",
                 value=date(2000, 1, 1),
