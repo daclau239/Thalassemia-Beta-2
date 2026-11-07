@@ -1839,7 +1839,7 @@ st.markdown(
     '<div class="name">Nguyễn Đắc Lâu</div>'
     '<div>Điện thoại: <a href="tel:0357930820">0357930820</a></div>'
     '<div>Email: <a href="mailto:nguyendaclau2309@gmail.com">nguyendaclau2309@gmail.com</a></div>'
-    '<div class="small-note">Tác giả và người phát triển nguyên mẫu hệ thống hỗ trợ sàng lọc Thalassemia.</div></div>',
+    '<div class="small-note">Tác giả phát triển nguyên mẫu hệ thống hỗ trợ sàng lọc Thalassemia.</div></div>',
     unsafe_allow_html=True,
 )
 
@@ -2036,7 +2036,7 @@ patient = st.session_state.get("patient_profile")
 
 if not st.session_state.get("research_consent", False):
     st.warning(
-        "Bạn chưa đồng ý tham gia. Hệ thống không mở Vòng 1 và không xử lý/lưu dữ liệu sàng lọc.",
+        "Vui lòng đồng ý tham gia để được tham gia các vòng khảo sát sắp tới",
         icon=":material/lock:",
     )
     st.stop()
@@ -2166,7 +2166,7 @@ if st.session_state.get("round1_completed", False):
         with st.expander("Những điểm Vòng 1 cần lưu ý", expanded=True, icon=":material/search:"):
             bullet_list(reasons1)
     else:
-        st.info("Chưa ghi nhận yếu tố đáng lưu ý từ các câu trả lời có tính điểm.")
+        st.info("Chưa ghi nhận yếu tố đáng lưu ý từ các câu trả lời.")
 
     st.markdown("### :material/route: Sau Vòng 1, bạn nên làm gì?")
     for i, item in enumerate(round1_guidance(category1), 1):
