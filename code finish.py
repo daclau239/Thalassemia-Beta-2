@@ -14,7 +14,7 @@ import streamlit as st
 from docx import Document
 
 # ===== CODE BY NGUYEN DAC LAU 24XN1 =====
-# Yêu cầu: streamlit>=1.45, psycopg[binary], python-docx, XlsxWriter, requests
+# Yêu cầu: streamlit>=1.45, psycopg[binary], python-docx, XlsxWriter, requests, pandas, openpyxl
 
 # set_page_config PHẢI là lệnh Streamlit đầu tiên.
 st.set_page_config(
@@ -119,6 +119,10 @@ ADMIN_PASSWORD = _secret("ADMIN_PASSWORD")
 ADMIN_FULL_NAME = _secret("ADMIN_FULL_NAME", "Quản trị viên hệ thống")
 ADMIN_EMAIL = _secret("ADMIN_EMAIL", "admin@thalassemia.local")
 
+# Dịch vụ AI đọc phiếu xét nghiệm (tùy chọn). Không có key thì chỉ dùng được Excel/CSV.
+ANTHROPIC_API_KEY = _secret("ANTHROPIC_API_KEY")
+ANTHROPIC_MODEL = _secret("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+
 LOCAL_SQLITE_PATH = "thalassemia_patients.db"
 CONSENT_VERSION = "DACLAU239-BETA5"
 ADMIN_DATA_URL = "https://raw.githubusercontent.com/open-admin-data/vietnam-administrative-divisions/main/data/hierarchy.json"
@@ -150,6 +154,7 @@ DB_SCHEMA_READY = "db_schema_ready_v23"
 # Hằng số điều hướng (dùng chung để không sai chuỗi so sánh)
 PAGE_SCREENING = ":material/edit_note: Nhập sàng lọc"
 PAGE_ADMIN = ":material/admin_panel_settings: Quản trị hệ thống"
+PAGE_BATCH = ":material/batch_prediction: Phân tích hồ sơ hàng loạt"
 
 # Bộ icon thống nhất cho mức nguy cơ
 RISK_STYLE = {
@@ -968,11 +973,9 @@ def render_auth_sidebar():
         st.sidebar.success(f"Đang đăng nhập: **{user['full_name']}**\n\n{role_label}",
                            icon=":material/verified_user:")
 
-        if user["role"] == "admin":
-            page = st.sidebar.radio("Khu vực làm việc", [PAGE_SCREENING, PAGE_ADMIN],
-                                    key="auth_page_admin")
-        else:
-            page = PAGE_SCREENING
+        pages = [PAGE_SCREENING, PAGE_BATCH] + ([PAGE_ADMIN] if user["role"] == "admin" else [])
+        page = st.sidebar.radio("Khu vực làm việc", pages, key="auth_page_radio")
+        if user["role"] != "admin":
             st.sidebar.info(
                 "Bạn có thể nhập hồ sơ/sàng lọc giúp người tham gia. "
                 "Danh sách hồ sơ chỉ xem được ở khu vực quản trị có quyền.",
@@ -1716,6 +1719,546 @@ Các điểm số và ngưỡng của Vòng 1/Vòng 2 trong phiên bản hiện 
 
 
 # ============================================================
+# BATCH ANALYSIS — Excel/CSV + AI đọc phiếu xét nghiệm (PDF/ảnh)
+# ============================================================
+# Quy trình: tải file → đọc dữ liệu (AI hoặc bảng) → NGƯỜI DÙNG KIỂM TRA/SỬA
+# → phân tích bằng đúng các hàm Vòng 2 → xem chi tiết/xuất Excel.
+# File tải lên chỉ xử lý trong bộ nhớ, KHÔNG được lưu vào database hay đĩa.
+
+import base64
+import unicodedata
+from collections import Counter
+
+import pandas as pd
+
+BATCH_MAX_FILES = 20
+BATCH_MAX_MB = 5
+BATCH_MAX_TABLE_ROWS = 500
+AI_FILE_TYPES = {
+    ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg", ".webp": "image/webp",
+}
+TABLE_FILE_TYPES = (".xlsx", ".xls", ".csv")
+
+COL_LABEL, COL_SRC = "Tên/Mã hồ sơ", "Nguồn"
+COL_HB, COL_HBU = "Hb", "Đơn vị Hb"
+COL_MCV, COL_MCH = "MCV (fL)", "MCH (pg)"
+COL_RBC, COL_RBCU = "RBC", "Đơn vị RBC"
+COL_RDW, COL_ALT, COL_NOTE = "RDW-CV (%)", "Khoảng độ cao", "Ghi chú"
+BATCH_COLUMNS = [COL_LABEL, COL_SRC, COL_HB, COL_HBU, COL_MCV, COL_MCH,
+                 COL_RBC, COL_RBCU, COL_RDW, COL_ALT, COL_NOTE]
+
+COLUMN_ALIASES = {
+    COL_LABEL: {"hotenmahoso", "hoten", "tenmahoso", "ten", "mahoso", "ma", "name", "id", "mabn"},
+    COL_HB: {"hb", "hgb", "hemoglobin", "haemoglobin", "huyetsacto", "hbgdl", "hbgl"},
+    COL_HBU: {"donvihb", "hbunit"},
+    COL_MCV: {"mcv", "mcvfl"},
+    COL_MCH: {"mch", "mchpg"},
+    COL_RBC: {"rbc", "hongcau", "slhc", "rbctl"},
+    COL_RBCU: {"donvirbc", "rbcunit"},
+    COL_RDW: {"rdw", "rdwcv", "rdwcv"},
+    COL_ALT: {"khoangdocao", "docao", "altitude"},
+}
+
+
+def _norm(text):
+    text = str(text or "").replace("đ", "d").replace("Đ", "D")
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _to_float(value):
+    if value is None:
+        return None
+    try:
+        if isinstance(value, str):
+            value = value.strip().replace(",", ".")
+            if not value:
+                return None
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(number) else number
+
+
+def _norm_hb_unit(unit, value):
+    u = _norm(unit)
+    if "dl" in u:
+        return "g/dL"
+    if u in {"gl", "gl1"} or u.endswith("gl"):
+        return "g/L"
+    # Không có đơn vị: suy từ độ lớn (Hb người thường 5–20 g/dL hay 50–200 g/L).
+    if value is not None and value > 30:
+        return "g/L"
+    return "g/dL"
+
+
+def _norm_rbc_unit(unit):
+    raw = str(unit or "")
+    if "12" in raw:
+        return "10^12/L"
+    if "6" in raw:
+        return "10^6/µL"
+    return "T/L"
+
+
+def _blank_row(label, source, note=""):
+    return {
+        COL_LABEL: label, COL_SRC: source, COL_HB: None, COL_HBU: "g/dL",
+        COL_MCV: None, COL_MCH: None, COL_RBC: None, COL_RBCU: "T/L",
+        COL_RDW: None, COL_ALT: "<500 m", COL_NOTE: note,
+    }
+
+
+# ------------------------------------------------------------
+# AI: đọc phiếu xét nghiệm PDF/ảnh
+# ------------------------------------------------------------
+
+AI_PROMPT = """Bạn là công cụ trích xuất số liệu từ phiếu xét nghiệm công thức máu (CBC).
+
+Chỉ trích xuất các chỉ số sau: Hb (HGB/Hemoglobin), MCV, MCH, RBC (số lượng hồng cầu), RDW-CV (%).
+QUY TẮC:
+- KHÔNG trích xuất, KHÔNG nhắc lại họ tên, ngày sinh, số điện thoại, địa chỉ hay mã bệnh nhân.
+- Chỉ lấy kết quả của người bệnh, KHÔNG lấy khoảng tham chiếu/giá trị bình thường.
+- Không thấy chỉ số nào thì để null. Tuyệt đối không đoán hoặc tự tính.
+- Nếu chỉ có RDW-SD mà không có RDW-CV thì rdw = null và nêu rõ trong notes.
+- Ghi đơn vị đúng như trên phiếu (hb_unit: "g/dL" hoặc "g/L"; rbc_unit: "T/L", "10^12/L" hoặc "10^6/µL").
+- Nếu ảnh mờ/khó đọc hoặc không phải phiếu CBC, đặt legible=false và giải thích ngắn trong notes.
+
+Chỉ trả về MỘT đối tượng JSON, không thêm chữ nào khác, theo mẫu:
+{"hb": number|null, "hb_unit": string|null, "mcv": number|null, "mch": number|null,
+ "rbc": number|null, "rbc_unit": string|null, "rdw": number|null,
+ "legible": true|false, "notes": "ghi chú ngắn bằng tiếng Việt"}"""
+
+
+def ai_extract_cbc(file_bytes, mime):
+    """Gọi Anthropic Messages API để đọc CBC từ ảnh/PDF. Trả về dict hoặc raise RuntimeError."""
+    if not ANTHROPIC_API_KEY:
+        raise RuntimeError("Chưa cấu hình ANTHROPIC_API_KEY trong Streamlit Secrets.")
+
+    block_type = "document" if mime == "application/pdf" else "image"
+    payload = {
+        "model": ANTHROPIC_MODEL,
+        "max_tokens": 800,
+        "temperature": 0,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": block_type, "source": {
+                    "type": "base64", "media_type": mime,
+                    "data": base64.standard_b64encode(file_bytes).decode("ascii"),
+                }},
+                {"type": "text", "text": AI_PROMPT},
+            ],
+        }],
+    }
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=payload,
+            timeout=120,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Không kết nối được dịch vụ AI: {type(exc).__name__}") from exc
+
+    if resp.status_code != 200:
+        try:
+            detail = resp.json().get("error", {}).get("message", "")
+        except Exception:
+            detail = ""
+        raise RuntimeError(f"Dịch vụ AI trả lỗi {resp.status_code}. {detail[:200]}")
+
+    text = "".join(
+        b.get("text", "") for b in resp.json().get("content", []) if b.get("type") == "text"
+    )
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if not match:
+        raise RuntimeError("AI không trả về dữ liệu đúng định dạng.")
+    try:
+        return json.loads(match.group(0))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Không đọc được JSON do AI trả về.") from exc
+
+
+def row_from_ai(label, data, default_alt):
+    hb = _to_float(data.get("hb"))
+    notes = []
+    if data.get("legible") is False:
+        notes.append("AI báo phiếu khó đọc — kiểm tra kỹ")
+    if data.get("notes"):
+        notes.append(str(data["notes"])[:200])
+    row = _blank_row(label, "AI (PDF/ảnh)")
+    row.update({
+        COL_HB: hb, COL_HBU: _norm_hb_unit(data.get("hb_unit"), hb),
+        COL_MCV: _to_float(data.get("mcv")), COL_MCH: _to_float(data.get("mch")),
+        COL_RBC: _to_float(data.get("rbc")), COL_RBCU: _norm_rbc_unit(data.get("rbc_unit")),
+        COL_RDW: _to_float(data.get("rdw")), COL_ALT: default_alt,
+        COL_NOTE: "; ".join(notes) or "AI đọc — cần kiểm tra lại với phiếu gốc",
+    })
+    return row
+
+
+# ------------------------------------------------------------
+# Excel / CSV
+# ------------------------------------------------------------
+
+def rows_from_table(filename, data, default_alt):
+    if filename.lower().endswith(".csv"):
+        try:
+            df = pd.read_csv(io.BytesIO(data), encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            df = pd.read_csv(io.BytesIO(data), encoding="latin-1")
+    else:
+        df = pd.read_excel(io.BytesIO(data), sheet_name=0)
+
+    mapping = {}
+    for col in df.columns:
+        key = _norm(col)
+        for target, aliases in COLUMN_ALIASES.items():
+            if key in aliases and target not in mapping:
+                mapping[target] = col
+    missing = [c for c in (COL_HB, COL_MCV, COL_MCH, COL_RBC, COL_RDW) if c not in mapping]
+    if missing:
+        raise ValueError("Thiếu cột: " + ", ".join(missing))
+
+    rows = []
+    for i, rec in df.head(BATCH_MAX_TABLE_ROWS).iterrows():
+        def get(target):
+            col = mapping.get(target)
+            return rec[col] if col is not None else None
+
+        nums = [_to_float(get(c)) for c in (COL_HB, COL_MCV, COL_MCH, COL_RBC, COL_RDW)]
+        if all(v is None for v in nums):
+            continue  # dòng trống (ví dụ dòng chỉ có công thức)
+        label = get(COL_LABEL)
+        label = f"{filename} · dòng {i + 2}" if label is None or str(label).strip() in ("", "nan") else str(label).strip()
+        row = _blank_row(label, f"Bảng: {filename}")
+        alt = get(COL_ALT)
+        row.update({
+            COL_HB: nums[0], COL_HBU: _norm_hb_unit(get(COL_HBU), nums[0]),
+            COL_MCV: nums[1], COL_MCH: nums[2], COL_RBC: nums[3],
+            COL_RBCU: _norm_rbc_unit(get(COL_RBCU)), COL_RDW: nums[4],
+            COL_ALT: str(alt).strip() if str(alt).strip() in ALTITUDE_OPTIONS else default_alt,
+        })
+        rows.append(row)
+    return rows
+
+
+# ------------------------------------------------------------
+# PHÂN TÍCH
+# ------------------------------------------------------------
+
+def analyze_batch_row(idx, rec):
+    label = str(rec.get(COL_LABEL) or "").strip() or f"Hồ sơ {idx + 1}"
+    base = {"Hồ sơ": label, "Nguồn": rec.get(COL_SRC) or ""}
+
+    vals = {k: _to_float(rec.get(k)) for k in (COL_HB, COL_MCV, COL_MCH, COL_RBC, COL_RDW)}
+    missing = [k for k, v in vals.items() if v is None]
+    if missing:
+        return {**base, "Trạng thái": "Lỗi dữ liệu", "Cảnh báo": "Thiếu: " + ", ".join(missing)}
+
+    try:
+        hb = hb_to_g_dl(vals[COL_HB], rec.get(COL_HBU) or "g/dL")
+        rbc = rbc_to_t_l(vals[COL_RBC], rec.get(COL_RBCU) or "T/L")
+    except ValueError as exc:
+        return {**base, "Trạng thái": "Lỗi dữ liệu", "Cảnh báo": str(exc)}
+
+    mcv, mch, rdw = vals[COL_MCV], vals[COL_MCH], vals[COL_RDW]
+    limits = [("Hb", hb, 1, 25), ("MCV", mcv, 30, 150), ("MCH", mch, 10, 50),
+              ("RBC", rbc, 1, 10), ("RDW-CV", rdw, 5, 40)]
+    bad = [f"{n}={v:g} ngoài khoảng {lo}–{hi}" for n, v, lo, hi in limits if not lo <= v <= hi]
+    if bad:
+        return {**base, "Trạng thái": "Lỗi dữ liệu",
+                "Cảnh báo": "; ".join(bad) + " (kiểm tra đơn vị/số liệu)"}
+
+    alt_choice = rec.get(COL_ALT) if rec.get(COL_ALT) in ALTITUDE_OPTIONS else "<500 m"
+    adjustment = ALTITUDE_OPTIONS[alt_choice]
+    hb_adj = hb - adjustment
+
+    score, mentzer, reasons = calculate_round2_score(mcv, mch, rbc, rdw)
+    category, conclusion = round2_category(score, mcv, mch)
+    findings, advice = narrative_cbc_advice(hb_adj, mcv, mch, rbc, rdw, mentzer)
+
+    return {
+        **base, "Hb (g/dL)": round(hb, 2), "Hb sau hiệu chỉnh": round(hb_adj, 2),
+        "MCV": mcv, "MCH": mch, "RBC (T/L)": rbc, "RDW-CV": rdw, "Mentzer": mentzer,
+        "Điểm CBC": score, "Nguy cơ": category,
+        "Nhận định": " ".join(findings), "Khuyến nghị": " ".join(advice),
+        "Trạng thái": "OK", "Cảnh báo": str(rec.get(COL_NOTE) or ""),
+        "_detail": {"category": category, "conclusion": conclusion, "reasons": reasons,
+                    "findings": findings, "advice": advice, "altitude": alt_choice},
+    }
+
+
+def results_to_excel(results_df):
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+        results_df.to_excel(writer, sheet_name="Ket_qua", index=False)
+        wb, ws = writer.book, writer.sheets["Ket_qua"]
+        head = wb.add_format({"bold": True, "bg_color": "#D9EAF7", "border": 1, "text_wrap": True})
+        for c, name in enumerate(results_df.columns):
+            ws.write(0, c, name, head)
+            ws.set_column(c, c, 60 if name in ("Nhận định", "Khuyến nghị") else 18)
+        ws.freeze_panes(1, 0)
+        if "Nguy cơ" in results_df.columns:
+            col = list(results_df.columns).index("Nguy cơ")
+            for text, color in (("THẤP", "#C8E6C9"), ("TRUNG BÌNH", "#FFE0B2"), ("CAO", "#FFCDD2")):
+                ws.conditional_format(1, col, max(len(results_df), 1), col, {
+                    "type": "cell", "criteria": "==", "value": f'"{text}"',
+                    "format": wb.add_format({"bg_color": color}),
+                })
+    buf.seek(0)
+    return buf
+
+
+def build_template_xlsx():
+    """File mẫu có sẵn CÔNG THỨC: đổi đơn vị Hb, hiệu chỉnh độ cao, Mentzer, tiêu chí BYT 2022."""
+    import xlsxwriter
+    buf = io.BytesIO()
+    wb = xlsxwriter.Workbook(buf, {"in_memory": True})
+    head = wb.add_format({"bold": True, "bg_color": "#D9EAF7", "border": 1, "text_wrap": True, "valign": "vcenter"})
+    calc_head = wb.add_format({"bold": True, "bg_color": "#E8E8E8", "border": 1, "text_wrap": True, "valign": "vcenter"})
+    cell = wb.add_format({"border": 1})
+    calc = wb.add_format({"border": 1, "bg_color": "#F5F5F5"})
+
+    ws = wb.add_worksheet("Du_lieu")
+    inputs = ["Họ tên/Mã hồ sơ", "Hb", "Đơn vị Hb", "MCV (fL)", "MCH (pg)", "RBC (T/L)", "RDW-CV (%)", "Khoảng độ cao"]
+    computed = ["Hb (g/dL) quy đổi", "Hb sau hiệu chỉnh độ cao", "Mentzer Index (MCV/RBC)", "Tiêu chí sàng lọc BYT 2022"]
+    for c, h in enumerate(inputs):
+        ws.write(0, c, h, head)
+    for c, h in enumerate(computed, start=len(inputs)):
+        ws.write(0, c, h, calc_head)
+
+    n_rows = 200
+    for r in range(2, n_rows + 2):  # dòng Excel 2..201
+        for c in range(len(inputs)):
+            ws.write_blank(r - 1, c, None, cell)
+        ws.write_formula(r - 1, 8, f'=IF(B{r}="","",IF(C{r}="g/L",B{r}/10,B{r}))', calc)
+        ws.write_formula(r - 1, 9, f'=IF(I{r}="","",I{r}-IFERROR(VLOOKUP(H{r},Do_cao!$A$2:$B$11,2,FALSE),0))', calc)
+        ws.write_formula(r - 1, 10, f'=IF(OR(D{r}="",F{r}="",F{r}=0),"",ROUND(D{r}/F{r},2))', calc)
+        ws.write_formula(r - 1, 11,
+                         f'=IF(OR(D{r}="",E{r}=""),"",IF(OR(D{r}<85,E{r}<28),'
+                         f'"Đạt tiêu chí sàng lọc (MCV<85 và/hoặc MCH<28)","Chưa đạt tiêu chí"))', calc)
+
+    ws.data_validation(1, 2, n_rows, 2, {"validate": "list", "source": ["g/dL", "g/L"]})
+    ws.data_validation(1, 7, n_rows, 7, {"validate": "list", "source": "=Do_cao!$A$2:$A$11"})
+    ws.set_column(0, 0, 22)
+    ws.set_column(1, 6, 12)
+    ws.set_column(7, 7, 16)
+    ws.set_column(8, 11, 24)
+    ws.set_row(0, 34)
+    ws.freeze_panes(1, 1)
+
+    wa = wb.add_worksheet("Do_cao")
+    wa.write(0, 0, "Khoảng độ cao", head)
+    wa.write(0, 1, "Hiệu chỉnh Hb (g/dL)", head)
+    for i, (k, v) in enumerate(ALTITUDE_OPTIONS.items(), start=1):
+        wa.write(i, 0, k)
+        wa.write(i, 1, v)
+    wa.set_column(0, 1, 22)
+
+    wh = wb.add_worksheet("Huong_dan")
+    for i, line in enumerate([
+        "Nhập dữ liệu vào các cột màu xanh ở sheet Du_lieu (mỗi dòng một người).",
+        "Các cột màu xám là công thức tự tính — không cần nhập.",
+        "Có thể tải trực tiếp file này lên trang Phân tích hồ sơ hàng loạt.",
+        "Tiêu chí sàng lọc: MCV < 85 fL và/hoặc MCH < 28 pg (Phụ lục hướng dẫn BYT 2022).",
+        "Mentzer Index chỉ là chỉ số hỗ trợ, không phải tiêu chuẩn chẩn đoán.",
+    ]):
+        wh.write(i, 0, line)
+    wh.set_column(0, 0, 90)
+    wb.close()
+    buf.seek(0)
+    return buf
+
+
+# ------------------------------------------------------------
+# TRANG PHÂN TÍCH HÀNG LOẠT
+# ------------------------------------------------------------
+
+def _risk_cell_style(v):
+    colors = {"THẤP": "rgba(46,125,50,.25)", "TRUNG BÌNH": "rgba(230,150,30,.28)", "CAO": "rgba(211,47,47,.28)"}
+    return f"background-color: {colors[v]}; font-weight: 700" if v in colors else ""
+
+
+def render_batch_page(user):
+    st.header(":material/batch_prediction: Phân tích hồ sơ hàng loạt")
+    st.caption(
+        "Tải một hoặc nhiều hồ sơ cùng lúc: bảng Excel/CSV, hoặc phiếu xét nghiệm dạng PDF/ảnh "
+        "(AI đọc số liệu). Dữ liệu được đưa vào bảng để bạn kiểm tra trước khi phân tích."
+    )
+
+    with st.container(border=True):
+        st.subheader(":material/upload_file: 1. Tải hồ sơ")
+        files = st.file_uploader(
+            f"Chọn tối đa {BATCH_MAX_FILES} file (mỗi file ≤ {BATCH_MAX_MB} MB)",
+            type=["xlsx", "xls", "csv", "pdf", "png", "jpg", "jpeg", "webp"],
+            accept_multiple_files=True,
+            key="batch_files",
+        )
+        default_alt = st.selectbox(
+            "Khoảng độ cao mặc định cho các hồ sơ mới",
+            list(ALTITUDE_OPTIONS.keys()), key="batch_default_alt",
+            help="Có thể sửa riêng từng dòng trong bảng bên dưới.",
+        )
+        ai_ok = st.checkbox(
+            "Tôi xác nhận người bệnh đã đồng ý và cho phép gửi phiếu PDF/ảnh tới dịch vụ AI để đọc số liệu.",
+            key="batch_ai_consent",
+        )
+        st.caption(
+            "Với PDF/ảnh: file được gửi tới dịch vụ AI của Anthropic để trích xuất Hb, MCV, MCH, RBC, RDW. "
+            "Hệ thống không lưu file; AI được yêu cầu không trả về thông tin định danh. "
+            "Nên che/cắt phần họ tên, ngày sinh trên phiếu trước khi tải lên. "
+            "AI có thể đọc sai — luôn đối chiếu bảng với phiếu gốc."
+        )
+        b1, b2 = st.columns(2)
+        scan = b1.button("Đọc dữ liệu từ file", icon=":material/document_scanner:",
+                         type="primary", use_container_width=True)
+        b2.download_button(
+            "Tải file Excel mẫu (có công thức)", data=build_template_xlsx().getvalue(),
+            file_name="Mau_nhap_CBC_Thalassemia.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            icon=":material/download:", use_container_width=True,
+        )
+
+    if scan:
+        if not files:
+            st.warning("Hãy chọn ít nhất một file.")
+        elif len(files) > BATCH_MAX_FILES:
+            st.error(f"Tối đa {BATCH_MAX_FILES} file mỗi lần.")
+        else:
+            rows, progress = [], st.progress(0.0, text="Đang đọc file...")
+            for i, f in enumerate(files):
+                name, data = f.name, f.getvalue()
+                ext = os.path.splitext(name.lower())[1]
+                progress.progress(i / len(files), text=f"Đang đọc {name} ({i + 1}/{len(files)})")
+                try:
+                    if len(data) > BATCH_MAX_MB * 1024 * 1024:
+                        raise RuntimeError(f"File vượt {BATCH_MAX_MB} MB")
+                    if ext in AI_FILE_TYPES:
+                        if not ai_ok:
+                            raise RuntimeError("Chưa tick xác nhận đồng ý gửi PDF/ảnh tới AI")
+                        rows.append(row_from_ai(name, ai_extract_cbc(data, AI_FILE_TYPES[ext]), default_alt))
+                    elif ext in TABLE_FILE_TYPES:
+                        rows.extend(rows_from_table(name, data, default_alt))
+                    else:
+                        raise RuntimeError("Định dạng không được hỗ trợ")
+                except Exception as exc:
+                    rows.append(_blank_row(name, "Lỗi đọc file", f"Không đọc được: {exc}. Có thể nhập tay."))
+                    rows[-1][COL_ALT] = default_alt
+            progress.progress(1.0, text="Hoàn tất đọc file.")
+            st.session_state["batch_rows"] = rows
+            st.session_state["batch_ver"] = st.session_state.get("batch_ver", 0) + 1
+            st.session_state.pop("batch_results", None)
+
+    # ---------------- Bảng kiểm tra/sửa ----------------
+    st.subheader(":material/edit_note: 2. Kiểm tra và chỉnh sửa dữ liệu")
+    st.caption(
+        "Đối chiếu từng dòng với phiếu gốc, sửa nếu AI đọc sai. Có thể thêm dòng mới hoặc xóa dòng "
+        "(chọn dòng rồi nhấn Delete). Hb và RBC có đơn vị riêng để hệ thống tự quy đổi."
+    )
+    rows = st.session_state.get("batch_rows", [])
+    df = pd.DataFrame(rows, columns=BATCH_COLUMNS)
+    for col in (COL_HB, COL_MCV, COL_MCH, COL_RBC, COL_RDW):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    edited = st.data_editor(
+        df, num_rows="dynamic", hide_index=True, use_container_width=True,
+        key=f"batch_editor_{st.session_state.get('batch_ver', 0)}",
+        disabled=[COL_SRC],
+        column_config={
+            COL_HB: st.column_config.NumberColumn("Hb", format="%.2f", min_value=0.0),
+            COL_HBU: st.column_config.SelectboxColumn("Đơn vị Hb", options=["g/dL", "g/L"], required=True),
+            COL_MCV: st.column_config.NumberColumn("MCV (fL)", format="%.1f"),
+            COL_MCH: st.column_config.NumberColumn("MCH (pg)", format="%.1f"),
+            COL_RBC: st.column_config.NumberColumn("RBC", format="%.2f"),
+            COL_RBCU: st.column_config.SelectboxColumn("Đơn vị RBC", options=["T/L", "10^12/L", "10^6/µL"], required=True),
+            COL_RDW: st.column_config.NumberColumn("RDW-CV (%)", format="%.1f"),
+            COL_ALT: st.column_config.SelectboxColumn("Khoảng độ cao", options=list(ALTITUDE_OPTIONS.keys()), required=True),
+            COL_NOTE: st.column_config.TextColumn("Ghi chú", width="large"),
+        },
+    )
+
+    run = st.button("Phân tích tất cả hồ sơ", icon=":material/analytics:", type="primary",
+                    use_container_width=True, disabled=edited is None or len(edited) == 0)
+
+    if run:
+        records = edited.to_dict("records")
+        st.session_state["batch_results"] = [analyze_batch_row(i, r) for i, r in enumerate(records)]
+
+    results = st.session_state.get("batch_results")
+    if not results:
+        return
+
+    # ---------------- Kết quả ----------------
+    st.divider()
+    st.subheader(":material/monitoring: 3. Kết quả phân tích")
+    counts = Counter(r.get("Nguy cơ") for r in results if r.get("Trạng thái") == "OK")
+    errors = sum(1 for r in results if r.get("Trạng thái") != "OK")
+
+    m = st.columns(5)
+    m[0].metric("Tổng hồ sơ", len(results))
+    m[1].metric("Nguy cơ thấp", counts.get("THẤP", 0))
+    m[2].metric("Nguy cơ trung bình", counts.get("TRUNG BÌNH", 0))
+    m[3].metric("Nguy cơ cao", counts.get("CAO", 0))
+    m[4].metric("Lỗi dữ liệu", errors)
+
+    table_cols = ["Hồ sơ", "Nguồn", "Hb (g/dL)", "Hb sau hiệu chỉnh", "MCV", "MCH", "RBC (T/L)",
+                  "RDW-CV", "Mentzer", "Điểm CBC", "Nguy cơ", "Nhận định", "Khuyến nghị",
+                  "Trạng thái", "Cảnh báo"]
+    res_df = pd.DataFrame([{k: v for k, v in r.items() if k != "_detail"} for r in results])
+    res_df = res_df.reindex(columns=table_cols)
+
+    try:
+        styled = res_df.style.map(_risk_cell_style, subset=["Nguy cơ"])
+    except AttributeError:
+        styled = res_df.style.applymap(_risk_cell_style, subset=["Nguy cơ"])
+    st.dataframe(styled, use_container_width=True, hide_index=True)
+
+    if errors:
+        st.warning(
+            f"{errors} hồ sơ có lỗi dữ liệu (thiếu số liệu hoặc ngoài khoảng hợp lý). "
+            "Xem cột Cảnh báo, sửa ở bảng bước 2 rồi phân tích lại.",
+            icon=":material/warning:",
+        )
+
+    st.download_button(
+        "Tải kết quả Excel", data=results_to_excel(res_df).getvalue(),
+        file_name=f"Ket_qua_phan_tich_hang_loat_{date.today().isoformat()}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        icon=":material/download:", use_container_width=True,
+    )
+
+    ok_idx = [i for i, r in enumerate(results) if r.get("Trạng thái") == "OK"]
+    if ok_idx:
+        st.markdown("### :material/clinical_notes: Xem chi tiết từng hồ sơ")
+        pick = st.selectbox(
+            "Chọn hồ sơ", ok_idx, key="batch_detail_pick",
+            format_func=lambda i: f"{i + 1}. {results[i]['Hồ sơ']} — {results[i]['Nguy cơ']}",
+        )
+        det = results[pick]["_detail"]
+        risk_alert("Nguy cơ Vòng 2", det["category"], det["conclusion"])
+        st.caption(f"Khoảng độ cao: {det['altitude']}")
+        st.markdown("**Các yếu tố từ CBC**")
+        bullet_list(det["reasons"])
+        st.markdown("**Phân tích sơ bộ**")
+        bullet_list(det["findings"])
+        st.markdown("**Khuyến nghị**")
+        bullet_list(det["advice"])
+
+    st.caption(
+        "Kết quả chỉ hỗ trợ sàng lọc, không chẩn đoán; cần đối chiếu lâm sàng, xét nghiệm chuyên sâu "
+        "và nhân viên y tế. Trang này không lưu dữ liệu vào database."
+    )
+
+
+# ============================================================
 # HEADER
 # ============================================================
 
@@ -1839,7 +2382,7 @@ st.markdown(
     '<div class="name">Nguyễn Đắc Lâu</div>'
     '<div>Điện thoại: <a href="tel:0357930820">0357930820</a></div>'
     '<div>Email: <a href="mailto:nguyendaclau2309@gmail.com">nguyendaclau2309@gmail.com</a></div>'
-    '<div class="small-note">Tác giả phát triển nguyên mẫu hệ thống hỗ trợ sàng lọc Thalassemia.</div></div>',
+    '<div class="small-note">Tác giả và người phát triển nguyên mẫu hệ thống hỗ trợ sàng lọc Thalassemia.</div></div>',
     unsafe_allow_html=True,
 )
 
@@ -1853,6 +2396,10 @@ auth_user = current_auth_user()
 
 if auth_user and st.session_state.get("auth_page") == PAGE_ADMIN:
     render_admin_console(auth_user)
+    st.stop()
+
+if auth_user and st.session_state.get("auth_page") == PAGE_BATCH:
+    render_batch_page(auth_user)
     st.stop()
 
 operator_mode = auth_user is not None
@@ -2036,7 +2583,7 @@ patient = st.session_state.get("patient_profile")
 
 if not st.session_state.get("research_consent", False):
     st.warning(
-        "Vui lòng đồng ý tham gia để được tham gia các vòng khảo sát sắp tới",
+        "Bạn chưa đồng ý tham gia. Hệ thống không mở Vòng 1 và không xử lý/lưu dữ liệu sàng lọc.",
         icon=":material/lock:",
     )
     st.stop()
@@ -2166,7 +2713,7 @@ if st.session_state.get("round1_completed", False):
         with st.expander("Những điểm Vòng 1 cần lưu ý", expanded=True, icon=":material/search:"):
             bullet_list(reasons1)
     else:
-        st.info("Chưa ghi nhận yếu tố đáng lưu ý từ các câu trả lời.")
+        st.info("Chưa ghi nhận yếu tố đáng lưu ý từ các câu trả lời có tính điểm.")
 
     st.markdown("### :material/route: Sau Vòng 1, bạn nên làm gì?")
     for i, item in enumerate(round1_guidance(category1), 1):
