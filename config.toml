@@ -1,0 +1,10 @@
+[server]
+runOnSave = false
+fileWatcherType = "none"
+maxUploadSize = 100
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
