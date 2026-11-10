@@ -5,16 +5,16 @@ import os
 import re
 import hashlib
 import secrets
+import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import quote
 
 import requests
 import streamlit as st
-from docx import Document
 
 # ===== CODE BY NGUYEN DAC LAU 24XN1 =====
-# Yêu cầu: streamlit>=1.45, psycopg[binary], python-docx, XlsxWriter, requests, pandas, openpyxl
+# Yêu cầu: xem requirements.txt (streamlit>=1.45, psycopg[pool], python-docx, XlsxWriter, openpyxl, pyreadstat, pyreadr...)
 
 # set_page_config PHẢI là lệnh Streamlit đầu tiên.
 st.set_page_config(
@@ -191,6 +191,39 @@ except ModuleNotFoundError:
     DB_INTEGRITY_ERRORS = ()
 
 
+def _connection_kwargs(dsn=None):
+    # prepare_threshold=None: bắt buộc khi đi qua PgBouncer/Supabase pooler (transaction mode),
+    # nếu không các kết nối giữ lâu sẽ lỗi "prepared statement already exists".
+    if DB_HOST and DB_USER and DB_PASSWORD:
+        return {
+            "host": DB_HOST, "port": DB_PORT, "dbname": DB_NAME or "postgres",
+            "user": DB_USER, "password": DB_PASSWORD, "prepare_threshold": None,
+        }
+    if dsn:
+        return {"conninfo": dsn, "prepare_threshold": None}
+    raise RuntimeError(
+        "Chưa cấu hình database. Cần DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD "
+        "trong Streamlit Secrets, hoặc một DATABASE_URL hợp lệ."
+    )
+
+
+@st.cache_resource(show_spinner=False)
+def _get_pool(dsn=None):
+    """Pool kết nối dùng chung toàn server: bỏ chi phí TCP/TLS/đăng nhập ở mỗi lần truy vấn."""
+    try:
+        from psycopg_pool import ConnectionPool
+    except ModuleNotFoundError:
+        return None  # chưa cài psycopg_pool → quay về kết nối trực tiếp
+    kwargs = dict(_connection_kwargs(dsn))
+    conninfo = kwargs.pop("conninfo", "")
+    opts = dict(conninfo=conninfo, kwargs=kwargs, min_size=1, max_size=6,
+                max_idle=240, timeout=15, open=True)
+    try:
+        return ConnectionPool(check=ConnectionPool.check_connection, **opts)
+    except (TypeError, AttributeError):
+        return ConnectionPool(**opts)
+
+
 class PersistentPGConnection:
     """Lớp bọc psycopg: dùng host/port/user/password riêng hoặc DATABASE_URL."""
 
@@ -199,25 +232,19 @@ class PersistentPGConnection:
             raise RuntimeError(
                 "Thiếu thư viện psycopg. Hãy thêm `psycopg[binary]` vào requirements.txt."
             )
-        if DB_HOST and DB_USER and DB_PASSWORD:
-            kwargs = {
-                "host": DB_HOST, "port": DB_PORT, "dbname": DB_NAME or "postgres",
-                "user": DB_USER, "password": DB_PASSWORD,
-            }
-        elif dsn:
-            kwargs = {"conninfo": dsn}
-        else:
-            raise RuntimeError(
-                "Chưa cấu hình database. Cần DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD "
-                "trong Streamlit Secrets, hoặc một DATABASE_URL hợp lệ."
-            )
+        self._pool = None
+        pool = _get_pool(dsn)
         try:
-            self._conn = psycopg.connect(**kwargs)
+            if pool is not None:
+                self._conn = pool.getconn()
+                self._pool = pool
+            else:
+                self._conn = psycopg.connect(**_connection_kwargs(dsn))
+                self._conn.autocommit = False
         except Exception as exc:
             raise RuntimeError(
                 "Không thể kết nối PostgreSQL. Kiểm tra lại cấu hình database trong Secrets."
             ) from exc
-        self._conn.autocommit = False
 
     @staticmethod
     def _translate(sql):
@@ -235,6 +262,16 @@ class PersistentPGConnection:
         self._conn.rollback()
 
     def close(self):
+        if self._pool is not None:
+            try:
+                self._conn.rollback()  # trả kết nối về pool ở trạng thái sạch
+            except Exception:
+                pass
+            try:
+                self._pool.putconn(self._conn)
+            except Exception:
+                pass
+            return
         try:
             self._conn.close()
         except Exception:
@@ -425,21 +462,25 @@ def _sync_postgres_sequences(conn):
         )
 
 
-def _ensure_schema_once():
-    if st.session_state.get(DB_SCHEMA_READY):
-        return
+@st.cache_resource(show_spinner="Đang khởi tạo cơ sở dữ liệu...")
+def _init_database_once(_version):
+    """Tạo bảng/migrate đúng 1 lần cho mỗi lần khởi động server (không phải mỗi phiên)."""
     conn = PersistentPGConnection(DATABASE_URL or None)
     try:
         _create_postgres_schema(conn)
         _migrate_local_sqlite_once(conn)
         _sync_postgres_sequences(conn)
         conn.commit()
-        st.session_state[DB_SCHEMA_READY] = True
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+    return True
+
+
+def _ensure_schema_once():
+    _init_database_once(DB_SCHEMA_READY)
 
 
 def _database_is_configured():
@@ -561,6 +602,11 @@ def admin_exists():
     finally:
         conn.close()
     return row is not None
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def admin_exists_cached():
+    return admin_exists()
 
 
 def register_staff_account(username, full_name, email, password):
@@ -941,10 +987,14 @@ if not _database_is_configured():
         )
     st.stop()
 
+@st.cache_resource(show_spinner=False)
+def _init_admin_once(_username):
+    ensure_default_admin()
+    return True
+
+
 try:
-    if not st.session_state.get("default_admin_ready_v23"):
-        ensure_default_admin()
-        st.session_state["default_admin_ready_v23"] = True
+    _init_admin_once(ADMIN_USERNAME or "-")
 except Exception as exc:
     st.error("Không thể kết nối/khởi tạo database bền vững.")
     st.code(str(exc))
@@ -1014,7 +1064,7 @@ def render_auth_sidebar():
                 st.sidebar.error(message, icon=":material/error:")
 
         try:
-            if not admin_exists():
+            if not admin_exists_cached():
                 st.sidebar.warning(
                     "Chưa có tài khoản quản trị. Hãy đặt ADMIN_USERNAME và ADMIN_PASSWORD "
                     "trong Streamlit Secrets rồi tải lại ứng dụng.",
@@ -1072,7 +1122,6 @@ def render_admin_console(user):
     patients = list_patient_profiles_for_staff()
     users = list_user_accounts()
     screening_rows = list_latest_screening_records_for_staff()
-    screening_history_rows = list_screening_records_for_staff()
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Hồ sơ đã đồng ý", len(patients))
@@ -1170,12 +1219,21 @@ def render_admin_console(user):
         else:
             st.info("Chưa có lượt sàng lọc nào được lưu.")
 
-    if patients or screening_history_rows:
-        try:
-            excel_data = export_screening_xlsx(patients, screening_history_rows)
+    if patients:
+        if st.button("Chuẩn bị file Excel — toàn bộ lịch sử", icon=":material/table_view:",
+                     use_container_width=True):
+            with st.spinner("Đang tạo file Excel..."):
+                try:
+                    st.session_state["admin_excel"] = export_screening_xlsx(
+                        patients, list_screening_records_for_staff()
+                    ).getvalue()
+                except RuntimeError as exc:
+                    st.session_state.pop("admin_excel", None)
+                    st.error(str(exc))
+        if st.session_state.get("admin_excel"):
             st.download_button(
-                "Xuất dữ liệu Excel — toàn bộ lịch sử (.xlsx)",
-                data=excel_data.getvalue(),
+                "Tải file Excel (.xlsx)",
+                data=st.session_state["admin_excel"],
                 file_name=f"Thalassemia_du_lieu_{date.today().isoformat()}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 icon=":material/download:",
@@ -1183,23 +1241,52 @@ def render_admin_console(user):
             )
             st.caption(
                 "File Excel gồm 2 sheet: Hồ sơ hiện tại và toàn bộ lịch sử sàng lọc. "
-                "Không xuất mật khẩu/tài khoản nhân sự."
+                "Không xuất mật khẩu/tài khoản nhân sự. Bấm 'Chuẩn bị' lại để lấy dữ liệu mới nhất."
             )
-        except RuntimeError as exc:
-            st.error(str(exc))
 
 
 # ------------------------------------------------------------
 # ADMINISTRATIVE DATA (34 PROVINCES / 3,321 COMMUNES)
 # ------------------------------------------------------------
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def load_admin_hierarchy():
-    """Tải danh mục địa giới 2 cấp hiện hành: 34 tỉnh/thành, 3.321 đơn vị cấp xã."""
-    response = requests.get(ADMIN_DATA_URL, timeout=20)
-    response.raise_for_status()
-    payload = response.json()
+try:
+    _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    _BASE_DIR = os.getcwd()
+ADMIN_LOCAL_CACHE = os.path.join(_BASE_DIR, "admin_hierarchy_cache.json")
+ADMIN_LOCAL_CACHE_MAX_AGE_DAYS = 30
 
+
+def _valid_admin_data(data):
+    return (isinstance(data, dict) and len(data) == 34
+            and sum(len(v) for v in data.values()) == 3321)
+
+
+def _read_local_admin_cache(ignore_age=False):
+    try:
+        if not os.path.exists(ADMIN_LOCAL_CACHE):
+            return None
+        age_days = (time.time() - os.path.getmtime(ADMIN_LOCAL_CACHE)) / 86400
+        if not ignore_age and age_days > ADMIN_LOCAL_CACHE_MAX_AGE_DAYS:
+            return None
+        with open(ADMIN_LOCAL_CACHE, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if _valid_admin_data(data) else None
+    except Exception:
+        return None
+
+
+def _write_local_admin_cache(provinces):
+    try:
+        tmp = ADMIN_LOCAL_CACHE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(provinces, f, ensure_ascii=False)
+        os.replace(tmp, ADMIN_LOCAL_CACHE)
+    except Exception:
+        pass  # không ghi được (filesystem chỉ đọc) thì bỏ qua
+
+
+def _parse_admin_payload(payload):
     records = payload.get("data", payload)
     if not isinstance(records, list) or not records:
         raise ValueError("Dữ liệu địa giới không đúng định dạng.")
@@ -1222,6 +1309,32 @@ def load_admin_hierarchy():
     if total != 3321:
         raise ValueError(f"Dữ liệu địa giới hiện có {total} đơn vị cấp xã, không phải 3.321.")
     return provinces
+
+
+@st.cache_resource(ttl=86400, show_spinner="Đang tải danh mục địa giới...")
+def load_admin_hierarchy():
+    """Danh mục 34 tỉnh/thành, 3.321 đơn vị cấp xã.
+
+    Thứ tự: (1) file cache cục bộ (nhanh, không cần mạng) → (2) tải từ GitHub rồi lưu file cache
+    → (3) nếu mạng lỗi thì dùng file cache cũ. cache_resource trả về cùng một đối tượng,
+    không sao chép lại mỗi lần rerun như cache_data."""
+    cached = _read_local_admin_cache()
+    if cached:
+        return cached
+    last_exc = None
+    for _ in range(2):
+        try:
+            response = requests.get(ADMIN_DATA_URL, timeout=10)
+            response.raise_for_status()
+            provinces = _parse_admin_payload(response.json())
+            _write_local_admin_cache(provinces)
+            return provinces
+        except Exception as exc:
+            last_exc = exc
+    stale = _read_local_admin_cache(ignore_age=True)
+    if stale:
+        return stale
+    raise last_exc
 
 
 # ------------------------------------------------------------
@@ -1597,6 +1710,7 @@ def all_medical_facilities():
 # ------------------------------------------------------------
 
 def make_word(patient, r1_score, r1_category, r1_reasons, r2=None):
+    from docx import Document  # import chậm → chỉ nạp khi xuất Word
     doc = Document()
     doc.add_heading("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", level=3)
     doc.add_heading("PHIẾU SÀNG LỌC VÀ PHÂN TẦNG NGUY CƠ THALASSEMIA", level=1)
@@ -1649,6 +1763,12 @@ def make_word(patient, r1_score, r1_category, r1_reasons, r2=None):
     doc.save(out)
     out.seek(0)
     return out
+
+
+@st.cache_data(show_spinner=False, max_entries=20, ttl=600)
+def make_word_bytes(patient, r1_score, r1_category, r1_reasons, r2=None):
+    """Chỉ dựng file Word khi dữ liệu thay đổi (trước đây dựng lại sau MỖI lần rerun)."""
+    return make_word(patient, r1_score, r1_category, r1_reasons, r2).getvalue()
 
 
 # ============================================================
@@ -1719,46 +1839,112 @@ Các điểm số và ngưỡng của Vòng 1/Vòng 2 trong phiên bản hiện 
 
 
 # ============================================================
-# BATCH ANALYSIS — Excel/CSV + AI đọc phiếu xét nghiệm (PDF/ảnh)
+# BATCH ANALYSIS — hồ sơ ĐẦY ĐỦ nhiều người cùng lúc
+#   Vòng 1 (20 câu tầm soát) + CTM 18 chỉ số + sắt/ferritin + HPLC + PCR/di truyền
 # ============================================================
-# Quy trình: tải file → đọc dữ liệu (AI hoặc bảng) → NGƯỜI DÙNG KIỂM TRA/SỬA
-# → phân tích bằng đúng các hàm Vòng 2 → xem chi tiết/xuất Excel.
-# File tải lên chỉ xử lý trong bộ nhớ, KHÔNG được lưu vào database hay đĩa.
+# Quy trình: tải file → đọc dữ liệu (bảng hoặc AI) → NGƯỜI DÙNG KIỂM TRA/SỬA
+#            → phân tích theo các hàm của từng vòng → xem chi tiết / xuất Excel.
+# File tải lên chỉ xử lý trong bộ nhớ, KHÔNG lưu vào database hay đĩa.
+# Tối ưu: trang chạy trong st.fragment (tương tác không dựng lại cả app),
+#         đọc bảng/AI có cache ngắn hạn theo nội dung file.
 
 import base64
+import numbers
+import tempfile
 import unicodedata
 from collections import Counter
 
 import pandas as pd
 
 BATCH_MAX_FILES = 20
-BATCH_MAX_MB = 5
-BATCH_MAX_TABLE_ROWS = 500
-AI_FILE_TYPES = {
+BATCH_MAX_MB_TABLE = 30      # bảng / phần mềm thống kê / Word
+BATCH_MAX_MB_AI = 10         # PDF / ảnh gửi AI đọc
+BATCH_MAX_TABLE_ROWS = 2000  # mỗi file
+BATCH_MAX_TOTAL_ROWS = 2000  # mỗi lần tải
+AI_FILE_TYPES = {            # AI nhìn trực tiếp (PDF/ảnh)
     ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg", ".webp": "image/webp",
 }
-TABLE_FILE_TYPES = (".xlsx", ".xls", ".csv")
+TABLE_EXT = (".xlsx", ".xlsm", ".xls", ".ods", ".csv", ".tsv", ".txt", ".json", ".parquet")
+STAT_EXT = (".sav", ".zsav", ".por", ".dta", ".sas7bdat", ".xpt", ".rds", ".rdata", ".rda")
+WORD_EXT = (".docx",)
+UPLOAD_TYPES = sorted({e.lstrip(".") for e in (*AI_FILE_TYPES, *TABLE_EXT, *STAT_EXT, *WORD_EXT)})
 
-COL_LABEL, COL_SRC = "Tên/Mã hồ sơ", "Nguồn"
-COL_HB, COL_HBU = "Hb", "Đơn vị Hb"
-COL_MCV, COL_MCH = "MCV (fL)", "MCH (pg)"
-COL_RBC, COL_RBCU = "RBC", "Đơn vị RBC"
-COL_RDW, COL_ALT, COL_NOTE = "RDW-CV (%)", "Khoảng độ cao", "Ghi chú"
-BATCH_COLUMNS = [COL_LABEL, COL_SRC, COL_HB, COL_HBU, COL_MCV, COL_MCH,
-                 COL_RBC, COL_RBCU, COL_RDW, COL_ALT, COL_NOTE]
+BATCH_YNK = ["Không", "Có", "Không biết"]
+BATCH_Q9 = ["Chưa xét nghiệm", "Đã xét nghiệm, bình thường", "Đã nghi ngờ",
+            "Đã xác định mang gen", "Không nhớ"]
+BATCH_SEX = ["Nam", "Nữ", "Khác"]
+
+# ---------- Danh sách cột (nguồn sự thật duy nhất) ----------
+COL_LABEL, COL_SRC, COL_NOTE = "Tên/Mã hồ sơ", "Nguồn", "Ghi chú"
+COL_AGE, COL_SEX, COL_ALT = "Tuổi", "Giới tính", "Khoảng độ cao"
+COL_MARITAL, COL_PREG = "Tình trạng hôn nhân", "Đang mang thai"
+BATCH_MARITAL = ["Độc thân", "Chuẩn bị kết hôn", "Đã kết hôn", "Đã ly hôn/góa", "Khác"]
+Q_COLS = [f"Q{i}" for i in range(1, 21)]
+CBC_COLS = ["WBC", "NEU%", "LYM%", "MONO%", "EOS%", "BASO%", "RBC", "HGB", "HCT",
+            "MCV", "MCH", "MCHC", "RDW-CV", "RDW-SD", "PLT", "MPV", "PDW", "PCT"]
+UNIT_COLS = ["Đơn vị HGB", "Đơn vị RBC"]
+IRON_COLS = ["Ferritin", "Sắt huyết thanh", "TSAT (%)"]
+HB_NUM_COLS = ["HbA (%)", "HbA2 (%)", "HbF (%)", "HbE (%)"]
+COL_HPLC = "Kết luận HPLC/điện di"
+COL_PCR = "Kết quả PCR/di truyền"
+COL_LAB = "Kết luận phiếu XN"
+
+NUM_COLS = [COL_AGE] + CBC_COLS + IRON_COLS + HB_NUM_COLS
+TEXT_RESULT_COLS = [COL_HPLC, COL_PCR, COL_LAB]
+META_COLS = {COL_LABEL, COL_SRC, COL_AGE, COL_SEX, COL_MARITAL, COL_PREG, COL_ALT, COL_NOTE, *UNIT_COLS}
+COMPUTED_COLS = ["Điểm Vòng 1 (tự tính)", "Mức Vòng 1", "HGB g/dL quy đổi", "Hb sau hiệu chỉnh độ cao",
+                 "Mentzer (MCV/RBC)", "Tiêu chí CTM BYT 2022", "HbA2 > 3,5%?", "Ferritin < 30?"]
+SKIP_SHEETS = {"danhsach", "huongdan", "docao", "readme"}  # sheet phụ của file mẫu
+BIRTH_ALIASES = {"ngaysinh", "namsinh", "dob", "birthdate", "birthyear", "ngaythangnamsinh"}
+BATCH_COLUMNS = ([COL_LABEL, COL_SRC, COL_AGE, COL_SEX, COL_MARITAL, COL_PREG, COL_ALT] + Q_COLS + CBC_COLS + UNIT_COLS
+                 + IRON_COLS + HB_NUM_COLS + [COL_HPLC, COL_PCR, COL_LAB, COL_NOTE])
+
+COLUMN_GROUPS = {
+    "Thông tin": [COL_LABEL, COL_SRC, COL_AGE, COL_SEX, COL_MARITAL, COL_PREG, COL_ALT, COL_NOTE],
+    "Câu hỏi Vòng 1 (Q1–Q20)": [COL_LABEL] + Q_COLS,
+    "Công thức máu (18 chỉ số)": [COL_LABEL] + CBC_COLS + UNIT_COLS,
+    "Sắt · HPLC · PCR": [COL_LABEL] + IRON_COLS + HB_NUM_COLS + TEXT_RESULT_COLS,
+}
 
 COLUMN_ALIASES = {
-    COL_LABEL: {"hotenmahoso", "hoten", "tenmahoso", "ten", "mahoso", "ma", "name", "id", "mabn"},
-    COL_HB: {"hb", "hgb", "hemoglobin", "haemoglobin", "huyetsacto", "hbgdl", "hbgl"},
-    COL_HBU: {"donvihb", "hbunit"},
-    COL_MCV: {"mcv", "mcvfl"},
-    COL_MCH: {"mch", "mchpg"},
-    COL_RBC: {"rbc", "hongcau", "slhc", "rbctl"},
-    COL_RBCU: {"donvirbc", "rbcunit"},
-    COL_RDW: {"rdw", "rdwcv", "rdwcv"},
+    COL_LABEL: {"hotenmahoso", "hoten", "tenmahoso", "ten", "mahoso", "ma", "name", "id", "mabn", "mabenhnhan"},
+    COL_AGE: {"tuoi", "age"},
+    COL_SEX: {"gioitinh", "gioi", "sex", "gender", "gt"},
     COL_ALT: {"khoangdocao", "docao", "altitude"},
+    COL_MARITAL: {"tinhtranghonnhan", "honnhan", "tinhtranggiadinh", "marital", "maritalstatus"},
+    COL_PREG: {"mangthai", "dangmangthai", "thaiky", "pregnant", "pregnancy"},
+    "WBC": {"wbc", "bachcau", "slbc"},
+    "NEU%": {"neu", "neutrophil", "neutrophils", "neupct"},
+    "LYM%": {"lym", "lymph", "lymphocyte", "lymphocytes", "lympct"},
+    "MONO%": {"mono", "mon", "monocyte", "monocytes", "monopct"},
+    "EOS%": {"eos", "eosinophil", "eosinophils", "eospct"},
+    "BASO%": {"baso", "bas", "basophil", "basophils", "basopct"},
+    "RBC": {"rbc", "hongcau", "slhc", "rbctl"},
+    "HGB": {"hgb", "hb", "hemoglobin", "haemoglobin", "huyetsacto", "hbgdl", "hbgl"},
+    "HCT": {"hct", "hematocrit", "haematocrit"},
+    "MCV": {"mcv", "mcvfl"},
+    "MCH": {"mch", "mchpg"},
+    "MCHC": {"mchc"},
+    "RDW-CV": {"rdwcv", "rdw"},
+    "RDW-SD": {"rdwsd"},
+    "PLT": {"plt", "tieucau", "platelet", "platelets"},
+    "MPV": {"mpv"},
+    "PDW": {"pdw"},
+    "PCT": {"pct", "plateletcrit"},
+    "Đơn vị HGB": {"donvihgb", "donvihb", "hbunit", "hgbunit"},
+    "Đơn vị RBC": {"donvirbc", "rbcunit"},
+    "Ferritin": {"ferritin", "ferritinngml"},
+    "Sắt huyết thanh": {"sathuyetthanh", "serumiron", "iron", "sat", "fe"},
+    "TSAT (%)": {"tsat", "transferrinsaturation", "dobaohoatransferrin"},
+    "HbA (%)": {"hba"}, "HbA2 (%)": {"hba2"}, "HbF (%)": {"hbf"}, "HbE (%)": {"hbe"},
+    COL_HPLC: {"ketluanhplcdiendi", "ketluanhplc", "hplc", "diendi", "ketluandiendi"},
+    COL_PCR: {"ketquapcrditruyen", "pcr", "ditruyen", "ketquapcr", "xetnghiemgen", "ketquaditruyen", "gen"},
+    COL_LAB: {"ketluanphieuxn", "ketluanphieu", "ketluan"},
+    COL_NOTE: {"ghichu", "note", "notes"},
 }
+for _i in range(1, 21):
+    COLUMN_ALIASES[f"Q{_i}"] = {f"q{_i}", f"cau{_i}"}
 
 
 def _norm(text):
@@ -1766,6 +1952,16 @@ def _norm(text):
     text = unicodedata.normalize("NFKD", text)
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _s(value):
+    """Chuỗi sạch hoặc None (xử lý None/NaN/chuỗi rỗng)."""
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    text = str(value).strip()
+    return text if text and text.lower() not in {"nan", "none", "nat"} else None
 
 
 def _to_float(value):
@@ -1782,14 +1978,105 @@ def _to_float(value):
     return None if math.isnan(number) else number
 
 
+def _is_code(value):
+    """Giá trị dạng mã số (1/2/3...) thường gặp trong file SPSS/Stata chưa gắn nhãn."""
+    if isinstance(value, bool) or value is None:
+        return False
+    if isinstance(value, numbers.Number):
+        return not (isinstance(value, float) and math.isnan(value))
+    return _s(value) in {"0", "1", "2", "3", "8", "9", "99"}
+
+
+def _norm_choice(value, q9=False):
+    s = _s(value)
+    if s is None:
+        return None
+    if isinstance(value, numbers.Number) and not isinstance(value, bool) and float(value).is_integer():
+        s = str(int(value))  # 1.0 -> "1"
+    n = _norm(s)
+    if q9:
+        codes = {"1": "Chưa xét nghiệm", "2": "Đã xét nghiệm, bình thường", "3": "Đã nghi ngờ",
+                 "4": "Đã xác định mang gen", "5": "Không nhớ"}
+        if n in codes:
+            return codes[n]
+        if "nghi" in n:
+            return "Đã nghi ngờ"
+        if "mang" in n or "xacdinh" in n:
+            return "Đã xác định mang gen"
+        if "binhthuong" in n:
+            return "Đã xét nghiệm, bình thường"
+        if "chua" in n:
+            return "Chưa xét nghiệm"
+        if "khongnho" in n or "khongbiet" in n:
+            return "Không nhớ"
+        return None
+    # Mã số thường gặp: 1=Có, 2=Không, 3/9=Không biết (cảnh báo người dùng kiểm tra khi đọc từ mã số)
+    if s == "?" or n in {"khongbiet", "kb", "unknown", "3", "8", "9", "88", "99"}:
+        return "Không biết"
+    if n in {"co", "c", "yes", "y", "x", "1", "true", "dung"}:
+        return "Có"
+    if n in {"khong", "k", "no", "n", "0", "2", "false", "sai"}:
+        return "Không"
+    return None
+
+
+def _norm_sex(value):
+    s = _s(value)
+    if s is None:
+        return None
+    if isinstance(value, numbers.Number) and not isinstance(value, bool) and float(value).is_integer():
+        s = str(int(value))
+    n = _norm(s)
+    if n in {"nam", "male", "m", "1"}:
+        return "Nam"
+    if n in {"nu", "female", "f", "2"}:
+        return "Nữ"
+    return "Khác" if n in {"khac", "other", "3"} else None
+
+
+def _norm_marital(value):
+    s = _s(value)
+    if s is None:
+        return None
+    n = _norm(s)
+    if not n or n.isdigit():
+        return None
+    if "docthan" in n or ("chua" in n and "ket" in n) or "single" in n:
+        return "Độc thân"
+    if "chuanbi" in n or "sapket" in n or "dinhket" in n:
+        return "Chuẩn bị kết hôn"
+    if "lyhon" in n or "goa" in n or "lydi" in n or "divorc" in n or "widow" in n:
+        return "Đã ly hôn/góa"
+    if "kethon" in n or "vochong" in n or "married" in n or "cogiadinh" in n:
+        return "Đã kết hôn"
+    return "Khác"
+
+
+def _age_from_birth(v):
+    try:
+        if v is None:
+            return None
+        if isinstance(v, numbers.Number) and not isinstance(v, bool):
+            y = int(v)
+            age = date.today().year - y if 1900 <= y <= date.today().year else None
+        else:
+            ts = pd.to_datetime(v, errors="coerce", dayfirst=True)
+            if pd.isna(ts):
+                return None
+            t0 = date.today()
+            age = t0.year - ts.year - ((t0.month, t0.day) < (ts.month, ts.day))
+        return float(age) if age is not None and 0 <= age <= 120 else None
+    except Exception:
+        return None
+
+
 def _norm_hb_unit(unit, value):
     u = _norm(unit)
     if "dl" in u:
         return "g/dL"
-    if u in {"gl", "gl1"} or u.endswith("gl"):
+    if u.endswith("gl"):
         return "g/L"
-    # Không có đơn vị: suy từ độ lớn (Hb người thường 5–20 g/dL hay 50–200 g/L).
-    if value is not None and value > 30:
+    if value is not None and value > 30:  # Hb người 5–20 g/dL hay 50–200 g/L
         return "g/L"
     return "g/dL"
 
@@ -1803,66 +2090,83 @@ def _norm_rbc_unit(unit):
     return "T/L"
 
 
-def _blank_row(label, source, note=""):
-    return {
-        COL_LABEL: label, COL_SRC: source, COL_HB: None, COL_HBU: "g/dL",
-        COL_MCV: None, COL_MCH: None, COL_RBC: None, COL_RBCU: "T/L",
-        COL_RDW: None, COL_ALT: "<500 m", COL_NOTE: note,
-    }
+def _blank_row(label, source, default_alt="<500 m", note=""):
+    row = {c: None for c in BATCH_COLUMNS}
+    row.update({COL_LABEL: label, COL_SRC: source, COL_ALT: default_alt, COL_NOTE: note,
+                "Đơn vị HGB": "g/dL", "Đơn vị RBC": "T/L"})
+    return row
+
+
+def _normalize_row_units(row):
+    """Tự quy đổi các đơn vị thường gặp; ghi chú lại để người dùng kiểm tra."""
+    notes = []
+
+    def conv(col, cond, fn, text):
+        v = _to_float(row.get(col))
+        if v is not None and cond(v):
+            row[col] = fn(v)
+            notes.append(text)
+
+    conv("WBC", lambda v: v > 500, lambda v: v / 1000, "WBC quy đổi /µL → 10^9/L")
+    conv("PLT", lambda v: v > 5000, lambda v: v / 1000, "PLT quy đổi /µL → 10^9/L")
+    conv("HCT", lambda v: 0 < v < 1, lambda v: v * 100, "HCT quy đổi tỷ lệ → %")
+    conv("MCHC", lambda v: v > 100, lambda v: v / 10, "MCHC quy đổi g/L → g/dL")
+    conv("RBC", lambda v: v > 100000, lambda v: v / 1_000_000, "RBC quy đổi /µL → T/L")
+    if notes:
+        old = _s(row.get(COL_NOTE))
+        row[COL_NOTE] = "; ".join(([old] if old else []) + notes)
+    return row
 
 
 # ------------------------------------------------------------
-# AI: đọc phiếu xét nghiệm PDF/ảnh
+# AI: đọc phiếu xét nghiệm PDF/ảnh (CTM + sắt + HPLC + PCR + bảng câu hỏi nếu có)
 # ------------------------------------------------------------
 
-AI_PROMPT = """Bạn là công cụ trích xuất số liệu từ phiếu xét nghiệm công thức máu (CBC).
+AI_PROMPT = """Bạn là công cụ trích xuất số liệu từ tài liệu (ảnh, PDF hoặc văn bản Word) gồm phiếu xét nghiệm (công thức máu CTM/CBC, ferritin/sắt, HPLC/điện di huyết sắc tố, PCR/xét nghiệm gen Thalassemia) và/hoặc phiếu khảo sát tầm soát cộng đồng.
 
-Chỉ trích xuất các chỉ số sau: Hb (HGB/Hemoglobin), MCV, MCH, RBC (số lượng hồng cầu), RDW-CV (%).
-QUY TẮC:
-- KHÔNG trích xuất, KHÔNG nhắc lại họ tên, ngày sinh, số điện thoại, địa chỉ hay mã bệnh nhân.
-- Chỉ lấy kết quả của người bệnh, KHÔNG lấy khoảng tham chiếu/giá trị bình thường.
-- Không thấy chỉ số nào thì để null. Tuyệt đối không đoán hoặc tự tính.
-- Nếu chỉ có RDW-SD mà không có RDW-CV thì rdw = null và nêu rõ trong notes.
-- Ghi đơn vị đúng như trên phiếu (hb_unit: "g/dL" hoặc "g/L"; rbc_unit: "T/L", "10^12/L" hoặc "10^6/µL").
-- Nếu ảnh mờ/khó đọc hoặc không phải phiếu CBC, đặt legible=false và giải thích ngắn trong notes.
+QUY TẮC BẮT BUỘC:
+- KHÔNG trích xuất, KHÔNG nhắc lại họ tên, ngày sinh, số điện thoại, địa chỉ, mã bệnh nhân, tên bác sĩ. Với các trường văn bản, chỉ chép phần KẾT QUẢ/KẾT LUẬN và bỏ mọi thông tin định danh.
+- Chỉ lấy KẾT QUẢ của người bệnh, KHÔNG lấy khoảng tham chiếu/giá trị bình thường.
+- Không thấy thì để null. Tuyệt đối không đoán, không tự tính, không suy diễn.
+- Ghi đơn vị đúng như trên phiếu (hgb_unit: "g/dL" hoặc "g/L"; rbc_unit: "T/L", "10^12/L" hoặc "10^6/µL").
+- Các chỉ số %: neu_pct, lym_pct, mono_pct, eos_pct, baso_pct là tỷ lệ phần trăm (không lấy số tuyệt đối #).
+- Nếu chỉ có RDW-SD thì rdw_cv = null.
+- "answers": chỉ điền khi tài liệu là phiếu khảo sát đã trả lời 20 câu tầm soát; q1..q20 nhận "Có", "Không" hoặc "Không biết"; q9 nhận một trong: "Chưa xét nghiệm", "Đã xét nghiệm, bình thường", "Đã nghi ngờ", "Đã xác định mang gen", "Không nhớ". Không phải phiếu khảo sát thì answers = null.
+- Thông tin nhân khẩu: chỉ lấy tuổi (age_years, số), giới tính (sex: "Nam"/"Nữ"/"Khác"), tình trạng hôn nhân/gia đình (marital_status: "Độc thân", "Chuẩn bị kết hôn", "Đã kết hôn", "Đã ly hôn/góa", "Khác"), đang mang thai (pregnant: "Có"/"Không"). TUYỆT ĐỐI không lấy tên, ngày sinh đầy đủ, địa chỉ, số điện thoại.
+- Ảnh mờ/không phải phiếu xét nghiệm: legible=false và giải thích ngắn trong notes.
 
-Chỉ trả về MỘT đối tượng JSON, không thêm chữ nào khác, theo mẫu:
-{"hb": number|null, "hb_unit": string|null, "mcv": number|null, "mch": number|null,
- "rbc": number|null, "rbc_unit": string|null, "rdw": number|null,
- "legible": true|false, "notes": "ghi chú ngắn bằng tiếng Việt"}"""
+Chỉ trả về MỘT đối tượng JSON, không thêm chữ nào khác:
+{"wbc":null,"neu_pct":null,"lym_pct":null,"mono_pct":null,"eos_pct":null,"baso_pct":null,
+ "rbc":null,"rbc_unit":null,"hgb":null,"hgb_unit":null,"hct":null,"mcv":null,"mch":null,"mchc":null,
+ "rdw_cv":null,"rdw_sd":null,"plt":null,"mpv":null,"pdw":null,"pct":null,
+ "ferritin":null,"serum_iron":null,"tsat":null,
+ "hba":null,"hba2":null,"hbf":null,"hbe":null,
+ "hplc_conclusion":null,"pcr_result":null,"lab_conclusion":null,
+ "age_years":null,"sex":null,"marital_status":null,"pregnant":null,
+ "answers":null,"legible":true,"notes":"ghi chú ngắn bằng tiếng Việt"}"""
+
+AI_NUM_MAP = {
+    "wbc": "WBC", "neu_pct": "NEU%", "lym_pct": "LYM%", "mono_pct": "MONO%", "eos_pct": "EOS%",
+    "baso_pct": "BASO%", "rbc": "RBC", "hgb": "HGB", "hct": "HCT", "mcv": "MCV", "mch": "MCH",
+    "mchc": "MCHC", "rdw_cv": "RDW-CV", "rdw_sd": "RDW-SD", "plt": "PLT", "mpv": "MPV",
+    "pdw": "PDW", "pct": "PCT", "ferritin": "Ferritin", "serum_iron": "Sắt huyết thanh",
+    "tsat": "TSAT (%)", "hba": "HbA (%)", "hba2": "HbA2 (%)", "hbf": "HbF (%)", "hbe": "HbE (%)",
+}
+AI_TEXT_MAP = {"hplc_conclusion": COL_HPLC, "pcr_result": COL_PCR, "lab_conclusion": COL_LAB}
 
 
-def ai_extract_cbc(file_bytes, mime):
-    """Gọi Anthropic Messages API để đọc CBC từ ảnh/PDF. Trả về dict hoặc raise RuntimeError."""
+def _ai_request(user_content, max_tokens=2000):
+    """Gọi Anthropic Messages API; trả về dict JSON hoặc raise RuntimeError."""
     if not ANTHROPIC_API_KEY:
         raise RuntimeError("Chưa cấu hình ANTHROPIC_API_KEY trong Streamlit Secrets.")
-
-    block_type = "document" if mime == "application/pdf" else "image"
-    payload = {
-        "model": ANTHROPIC_MODEL,
-        "max_tokens": 800,
-        "temperature": 0,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": block_type, "source": {
-                    "type": "base64", "media_type": mime,
-                    "data": base64.standard_b64encode(file_bytes).decode("ascii"),
-                }},
-                {"type": "text", "text": AI_PROMPT},
-            ],
-        }],
-    }
+    payload = {"model": ANTHROPIC_MODEL, "max_tokens": max_tokens, "temperature": 0,
+               "messages": [{"role": "user", "content": user_content}]}
     try:
         resp = requests.post(
             "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json=payload,
-            timeout=120,
+            headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            json=payload, timeout=120,
         )
     except requests.RequestException as exc:
         raise RuntimeError(f"Không kết nối được dịch vụ AI: {type(exc).__name__}") from exc
@@ -1874,9 +2178,7 @@ def ai_extract_cbc(file_bytes, mime):
             detail = ""
         raise RuntimeError(f"Dịch vụ AI trả lỗi {resp.status_code}. {detail[:200]}")
 
-    text = "".join(
-        b.get("text", "") for b in resp.json().get("content", []) if b.get("type") == "text"
-    )
+    text = "".join(b.get("text", "") for b in resp.json().get("content", []) if b.get("type") == "text")
     match = re.search(r"\{.*\}", text, flags=re.DOTALL)
     if not match:
         raise RuntimeError("AI không trả về dữ liệu đúng định dạng.")
@@ -1886,196 +2188,672 @@ def ai_extract_cbc(file_bytes, mime):
         raise RuntimeError("Không đọc được JSON do AI trả về.") from exc
 
 
+def ai_extract_report(file_bytes, mime):
+    """AI đọc PDF/ảnh phiếu xét nghiệm."""
+    block_type = "document" if mime == "application/pdf" else "image"
+    return _ai_request([
+        {"type": block_type, "source": {"type": "base64", "media_type": mime,
+                                        "data": base64.standard_b64encode(file_bytes).decode("ascii")}},
+        {"type": "text", "text": AI_PROMPT},
+    ])
+
+
+def ai_extract_report_text(text):
+    """AI đọc nội dung chữ của Word/văn bản."""
+    return _ai_request([{"type": "text",
+                         "text": 'NỘI DUNG TÀI LIỆU:\n"""\n' + text[:60000] + '\n"""\n\n' + AI_PROMPT}])
+
+
+def ai_map_columns(headers, labels):
+    """AI ghép TÊN CỘT (không gửi dữ liệu) vào các trường chuẩn."""
+    texts = _question_texts()
+    fields = [c for c in BATCH_COLUMNS if c not in (COL_SRC, COL_NOTE)]
+    field_desc = "\n".join(f"- {c}" + (f": {texts[c]}" if c in texts else "") for c in fields)
+    cols = "\n".join(f"- {h}" + (f" (nhãn biến: {l})" if l else "") for h, l in zip(headers, labels))
+    prompt = (
+        "Bạn ghép TÊN CỘT của một bộ dữ liệu sàng lọc Thalassemia vào danh sách TRƯỜNG CHUẨN. "
+        "Bạn chỉ thấy tên cột và nhãn biến, không có dữ liệu. Chỉ ghép khi chắc chắn "
+        "(ví dụ 'hemo_gdl' → HGB; 'fam_thal' → Q1). Không chắc thì trả null.\n\n"
+        f"TRƯỜNG CHUẨN:\n{field_desc}\n\nCỘT CẦN GHÉP:\n{cols}\n\n"
+        'Chỉ trả về MỘT đối tượng JSON dạng {"tên cột gốc": "trường chuẩn hoặc null"}, không thêm chữ nào khác.'
+    )
+    return _ai_request([{"type": "text", "text": prompt}], max_tokens=2500)
+
+
+@st.cache_data(show_spinner=False, max_entries=30, ttl=600)
+def ai_extract_report_cached(file_bytes, mime):
+    # Cache ngắn (10 phút) theo nội dung file: bấm đọc lại cùng file không tốn thêm chi phí/thời gian.
+    return ai_extract_report(file_bytes, mime)
+
+
+@st.cache_data(show_spinner=False, max_entries=30, ttl=600)
+def ai_extract_report_text_cached(text):
+    return ai_extract_report_text(text)
+
+
+@st.cache_data(show_spinner=False, max_entries=50, ttl=3600)
+def ai_map_columns_cached(headers, labels):
+    return ai_map_columns(headers, labels)
+
+
 def row_from_ai(label, data, default_alt):
-    hb = _to_float(data.get("hb"))
+    row = _blank_row(label, "AI (PDF/ảnh/Word)", default_alt)
+    row[COL_AGE] = _to_float(data.get("age_years"))
+    row[COL_SEX] = _norm_sex(data.get("sex"))
+    row[COL_MARITAL] = _norm_marital(data.get("marital_status"))
+    preg = _norm_choice(data.get("pregnant"))
+    row[COL_PREG] = preg if preg in ("Có", "Không") else None
+    for key, col in AI_NUM_MAP.items():
+        row[col] = _to_float(data.get(key))
+    for key, col in AI_TEXT_MAP.items():
+        row[col] = (_s(data.get(key)) or "")[:600] or None
+    row["Đơn vị HGB"] = _norm_hb_unit(data.get("hgb_unit"), row["HGB"])
+    row["Đơn vị RBC"] = _norm_rbc_unit(data.get("rbc_unit"))
+
+    answers = data.get("answers")
+    if isinstance(answers, dict):
+        for i in range(1, 21):
+            row[f"Q{i}"] = _norm_choice(answers.get(f"q{i}"), q9=(i == 9))
+
     notes = []
     if data.get("legible") is False:
         notes.append("AI báo phiếu khó đọc — kiểm tra kỹ")
     if data.get("notes"):
         notes.append(str(data["notes"])[:200])
-    row = _blank_row(label, "AI (PDF/ảnh)")
-    row.update({
-        COL_HB: hb, COL_HBU: _norm_hb_unit(data.get("hb_unit"), hb),
-        COL_MCV: _to_float(data.get("mcv")), COL_MCH: _to_float(data.get("mch")),
-        COL_RBC: _to_float(data.get("rbc")), COL_RBCU: _norm_rbc_unit(data.get("rbc_unit")),
-        COL_RDW: _to_float(data.get("rdw")), COL_ALT: default_alt,
-        COL_NOTE: "; ".join(notes) or "AI đọc — cần kiểm tra lại với phiếu gốc",
-    })
-    return row
+    row[COL_NOTE] = "; ".join(notes) or "AI đọc — cần đối chiếu lại với phiếu gốc"
+    return _normalize_row_units(row)
 
 
 # ------------------------------------------------------------
-# Excel / CSV
+# ĐỌC FILE: Excel · CSV · Word · SPSS · Stata · SAS · R · JSON · Parquet
 # ------------------------------------------------------------
 
-def rows_from_table(filename, data, default_alt):
-    if filename.lower().endswith(".csv"):
+def _decode_csv(data):
+    for enc in ("utf-8-sig", "utf-16", "cp1258", "latin-1"):
         try:
-            df = pd.read_csv(io.BytesIO(data), encoding="utf-8-sig")
-        except UnicodeDecodeError:
-            df = pd.read_csv(io.BytesIO(data), encoding="latin-1")
-    else:
-        df = pd.read_excel(io.BytesIO(data), sheet_name=0)
+            return pd.read_csv(io.BytesIO(data), sep=None, engine="python", encoding=enc)
+        except UnicodeError:
+            continue
+    raise ValueError("Không đọc được bảng văn bản (sai mã hóa ký tự).")
 
+
+def _docx_tables(data):
+    from docx import Document
+    out = []
+    for ti, table in enumerate(Document(io.BytesIO(data)).tables, 1):
+        grid = [[c.text.strip() for c in row.cells] for row in table.rows]
+        if len(grid) < 2:
+            continue
+        seen, header = {}, []
+        for i, h in enumerate(grid[0]):
+            h = h or f"cot_{i}"
+            k = seen.get(h, 0)
+            seen[h] = k + 1
+            header.append(h if k == 0 else f"{h}_{k}")
+        out.append({"sheet": f"Bảng Word {ti}", "df": pd.DataFrame(grid[1:], columns=header), "labels": {}})
+    return out
+
+
+def docx_text(data):
+    from docx import Document
+    doc = Document(io.BytesIO(data))
+    parts = [p.text for p in doc.paragraphs if p.text.strip()]
+    for table in doc.tables:
+        for row in table.rows:
+            cells = []
+            for c in row.cells:
+                txt = c.text.strip()
+                if txt and (not cells or cells[-1] != txt):  # ô gộp bị lặp lại
+                    cells.append(txt)
+            if cells:
+                parts.append(" | ".join(cells))
+    return "\n".join(parts)
+
+
+def _read_with_tempfile(ext, data):
+    # Thư viện đọc SPSS/R cần đường dẫn file → ghi tạm vào thư mục tạm của hệ điều hành và XÓA NGAY khi xong.
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "data" + ext)
+        with open(path, "wb") as f:
+            f.write(data)
+        if ext in (".sav", ".zsav", ".por"):
+            import pyreadstat
+            if ext == ".por":
+                df, meta = pyreadstat.read_por(path)
+            else:
+                df, meta = pyreadstat.read_sav(path, apply_value_formats=True)
+            labels = {k: v for k, v in zip(meta.column_names, meta.column_labels) if v}
+            return [{"sheet": "", "df": df, "labels": labels}]
+        import pyreadr
+        result = pyreadr.read_r(path)
+        return [{"sheet": str(k or ""), "df": v, "labels": {}} for k, v in result.items() if hasattr(v, "columns")]
+
+
+def read_tables(name, data):
+    """Trả về danh sách {sheet, df, labels}. Hỗ trợ nhiều sheet/bảng trong một file."""
+    ext = os.path.splitext(name.lower())[1]
+    bio = io.BytesIO(data)
+    try:
+        if ext in (".xlsx", ".xlsm", ".xls", ".ods"):
+            return [{"sheet": k, "df": v, "labels": {}} for k, v in pd.read_excel(bio, sheet_name=None).items()]
+        if ext in (".csv", ".tsv", ".txt"):
+            return [{"sheet": "", "df": _decode_csv(data), "labels": {}}]
+        if ext == ".json":
+            try:
+                df = pd.read_json(bio)
+            except ValueError:
+                df = pd.json_normalize(json.loads(data.decode("utf-8-sig")))
+            return [{"sheet": "", "df": df, "labels": {}}]
+        if ext == ".parquet":
+            return [{"sheet": "", "df": pd.read_parquet(bio), "labels": {}}]
+        if ext in WORD_EXT:
+            return _docx_tables(data)
+        if ext == ".dta":
+            with pd.read_stata(bio, iterator=True) as reader:
+                df = reader.read()
+                labels = {k: v for k, v in reader.variable_labels().items() if v}
+            return [{"sheet": "", "df": df, "labels": labels}]
+        if ext in (".sas7bdat", ".xpt"):
+            fmt = "xport" if ext == ".xpt" else "sas7bdat"
+            try:
+                df = pd.read_sas(io.BytesIO(data), format=fmt, encoding="utf-8")
+            except UnicodeDecodeError:
+                df = pd.read_sas(io.BytesIO(data), format=fmt, encoding="latin-1")
+            return [{"sheet": "", "df": df, "labels": {}}]
+        if ext in (".sav", ".zsav", ".por", ".rds", ".rdata", ".rda"):
+            return _read_with_tempfile(ext, data)
+    except ImportError as exc:
+        raise RuntimeError(f"Thiếu thư viện để đọc định dạng {ext}: {exc.name or exc}. Hãy thêm vào requirements.txt.") from exc
+    raise RuntimeError("Định dạng không được hỗ trợ")
+
+
+@st.cache_data(show_spinner=False, max_entries=10, ttl=600)
+def read_tables_cached(name, data):
+    return read_tables(name, data)
+
+
+def _map_columns(df, labels, ai_ok, notes, source):
+    """Ghép cột bằng bí danh; cột còn lại (nếu được phép) nhờ AI ghép theo TÊN cột."""
     mapping = {}
+    computed_norm = {_norm(c) for c in COMPUTED_COLS}
     for col in df.columns:
         key = _norm(col)
-        for target, aliases in COLUMN_ALIASES.items():
-            if key in aliases and target not in mapping:
+        for target in BATCH_COLUMNS:
+            if target in mapping or target == COL_SRC:
+                continue
+            if key in COLUMN_ALIASES.get(target, set()) or key == _norm(target):
                 mapping[target] = col
-    missing = [c for c in (COL_HB, COL_MCV, COL_MCH, COL_RBC, COL_RDW) if c not in mapping]
-    if missing:
-        raise ValueError("Thiếu cột: " + ", ".join(missing))
+                break
+    used = set(mapping.values())
+    unmapped = [c for c in df.columns
+                if c not in used and _s(c) and _norm(c) not in computed_norm and _norm(c) not in BIRTH_ALIASES]
+    if unmapped and mapping:
+        if ai_ok and ANTHROPIC_API_KEY:
+            by_str = {str(c): c for c in unmapped[:200]}
+            try:
+                result = ai_map_columns_cached(tuple(by_str), tuple(str(labels.get(c, "")) for c in by_str.values()))
+                added = []
+                for src, target in result.items():
+                    if src in by_str and target in BATCH_COLUMNS and target not in mapping and target != COL_SRC:
+                        mapping[target] = by_str[src]
+                        added.append(f"{src}→{target}")
+                if added:
+                    notes.append(f"{source}: AI đã ghép {len(added)} cột theo tên: " + ", ".join(added[:25])
+                                 + (" ..." if len(added) > 25 else "") + ". Hãy kiểm tra lại.")
+            except Exception as exc:
+                notes.append(f"{source}: AI không ghép được cột ({exc}).")
+        else:
+            notes.append(f"{source}: {len(unmapped)} cột chưa nhận diện (ví dụ: "
+                         + ", ".join(str(c) for c in unmapped[:5])
+                         + "). Tick xác nhận AI để tự ghép theo tên cột, hoặc đổi tên cột theo file mẫu.")
+    return mapping
+
+
+def rows_from_dataframe(df, labels, filename, sheet, default_alt, ai_ok, notes):
+    source = filename + (f" [{sheet}]" if sheet else "")
+    mapping = _map_columns(df, labels, ai_ok, notes, source)
+    data_cols = [c for c in mapping if c not in META_COLS]
+    if not data_cols:
+        return []
+    birth_col = next((c for c in df.columns if _norm(c) in BIRTH_ALIASES), None)
+
+    rows, coded_q, coded_sex = [], False, False
+    for i, rec in df.head(BATCH_MAX_TABLE_ROWS).iterrows():
+        row = _blank_row("", f"Bảng: {source}", default_alt)
+        for col, src in mapping.items():
+            v = rec[src]
+            if col in NUM_COLS:
+                row[col] = _to_float(v)
+            elif col in Q_COLS:
+                coded_q = coded_q or _is_code(v)
+                row[col] = _norm_choice(v, q9=(col == "Q9"))
+            elif col == COL_SEX:
+                coded_sex = coded_sex or _is_code(v)
+                row[col] = _norm_sex(v)
+            elif col == COL_MARITAL:
+                row[col] = _norm_marital(v)
+            elif col == COL_PREG:
+                c = _norm_choice(v)
+                row[col] = c if c in ("Có", "Không") else None
+            elif col == COL_ALT:
+                row[col] = _s(v) if _s(v) in ALTITUDE_OPTIONS else default_alt
+            elif col != COL_SRC:
+                row[col] = _s(v)
+        if row[COL_AGE] is None and birth_col is not None:
+            row[COL_AGE] = _age_from_birth(rec[birth_col])
+        if all(row[c] is None for c in data_cols):
+            continue  # dòng trống (ví dụ dòng chỉ có công thức)
+        row[COL_LABEL] = row[COL_LABEL] or f"{filename} · dòng {i + 2}"
+        row["Đơn vị HGB"] = _norm_hb_unit(row.get("Đơn vị HGB"), row["HGB"])
+        row["Đơn vị RBC"] = _norm_rbc_unit(row.get("Đơn vị RBC"))
+        rows.append(_normalize_row_units(row))
+
+    if coded_q:
+        notes.append(f"{source}: câu Q đọc từ mã số (1=Có, 2=Không, 3/9=Không biết; Q9: 1–5 theo thứ tự lựa chọn) — hãy kiểm tra lại.")
+    if coded_sex:
+        notes.append(f"{source}: giới tính đọc từ mã số (1=Nam, 2=Nữ) — hãy kiểm tra lại.")
+    if len(df) > BATCH_MAX_TABLE_ROWS:
+        notes.append(f"{source}: chỉ đọc {BATCH_MAX_TABLE_ROWS} dòng đầu (file có {len(df)} dòng).")
+    return rows
+
+
+def load_file_rows(name, data, default_alt, ai_ok):
+    """Đọc một file bất kỳ được hỗ trợ → (danh sách dòng, danh sách ghi chú)."""
+    ext = os.path.splitext(name.lower())[1]
+    notes = []
+
+    if ext in AI_FILE_TYPES:
+        if len(data) > BATCH_MAX_MB_AI * 1024 * 1024:
+            raise RuntimeError(f"File vượt {BATCH_MAX_MB_AI} MB")
+        if not ai_ok:
+            raise RuntimeError("Chưa tick xác nhận đồng ý gửi tới AI")
+        return [row_from_ai(name, ai_extract_report_cached(data, AI_FILE_TYPES[ext]), default_alt)], notes
+
+    if ext == ".doc":
+        raise RuntimeError("Định dạng .doc cũ chưa hỗ trợ — hãy mở và Lưu thành .docx")
+    if ext not in (*TABLE_EXT, *STAT_EXT, *WORD_EXT):
+        raise RuntimeError("Định dạng không được hỗ trợ")
+    if len(data) > BATCH_MAX_MB_TABLE * 1024 * 1024:
+        raise RuntimeError(f"File vượt {BATCH_MAX_MB_TABLE} MB")
+
+    tables = []
+    try:
+        tables = read_tables_cached(name, data)
+    except Exception:
+        if ext not in (".txt", *WORD_EXT):  # txt/docx còn đường lui: AI đọc văn bản
+            raise
 
     rows = []
-    for i, rec in df.head(BATCH_MAX_TABLE_ROWS).iterrows():
-        def get(target):
-            col = mapping.get(target)
-            return rec[col] if col is not None else None
+    for tb in tables:
+        if _norm(tb["sheet"]) in SKIP_SHEETS:
+            continue
+        rows.extend(rows_from_dataframe(tb["df"], tb["labels"], name, tb["sheet"], default_alt, ai_ok, notes))
+    if rows:
+        return rows, notes
 
-        nums = [_to_float(get(c)) for c in (COL_HB, COL_MCV, COL_MCH, COL_RBC, COL_RDW)]
-        if all(v is None for v in nums):
-            continue  # dòng trống (ví dụ dòng chỉ có công thức)
-        label = get(COL_LABEL)
-        label = f"{filename} · dòng {i + 2}" if label is None or str(label).strip() in ("", "nan") else str(label).strip()
-        row = _blank_row(label, f"Bảng: {filename}")
-        alt = get(COL_ALT)
-        row.update({
-            COL_HB: nums[0], COL_HBU: _norm_hb_unit(get(COL_HBU), nums[0]),
-            COL_MCV: nums[1], COL_MCH: nums[2], COL_RBC: nums[3],
-            COL_RBCU: _norm_rbc_unit(get(COL_RBCU)), COL_RDW: nums[4],
-            COL_ALT: str(alt).strip() if str(alt).strip() in ALTITUDE_OPTIONS else default_alt,
-        })
-        rows.append(row)
-    return rows
+    if ext in (".txt", *WORD_EXT):
+        text = docx_text(data) if ext in WORD_EXT else data.decode("utf-8-sig", errors="replace")
+        if not text.strip():
+            raise RuntimeError("Tài liệu không có nội dung chữ")
+        if not ai_ok:
+            raise RuntimeError("Tài liệu dạng phiếu cần AI đọc — hãy tick xác nhận gửi nội dung tới AI")
+        return [row_from_ai(name, ai_extract_report_text_cached(text), default_alt)], notes
+
+    raise RuntimeError("Không nhận diện được cột dữ liệu nào (Q1–Q20, CTM, ferritin, HbA2, PCR...)")
 
 
 # ------------------------------------------------------------
 # PHÂN TÍCH
 # ------------------------------------------------------------
 
+RISK_RANK = {"THẤP": 1, "TRUNG BÌNH": 2, "CAO": 3}
+
+
+def who_anemia_flag(hb_adj, age, sex, pregnant=False):
+    """Ngưỡng Hb theo WHO 2024 (mực nước biển; Hb đã hiệu chỉnh độ cao). Thai kỳ: 11,0 g/dL
+    (tam cá nguyệt 1 và 3; tam cá nguyệt 2 là 10,5)."""
+    if age is None:
+        return ""
+    suffix = ""
+    if 0.5 <= age < 5:
+        cutoff = 11.0
+    elif 5 <= age < 12:
+        cutoff = 11.5
+    elif 12 <= age < 15:
+        cutoff = 12.0
+    elif age >= 15 and pregnant:
+        cutoff, suffix = 11.0, " — thai kỳ; TCN 2: 10,5"
+    elif age >= 15 and sex == "Nam":
+        cutoff = 13.0
+    elif age >= 15 and sex == "Nữ":
+        cutoff = 12.0
+    else:
+        return ""
+    return (f"Có (<{cutoff:g} g/dL{suffix})" if hb_adj < cutoff else f"Không (≥{cutoff:g} g/dL{suffix})")
+
+
+def integrated_next_steps(cat1, cat2, has_cbc, ferritin, hba2, hbe, hplc_done, pcr_done, anything,
+                          marital=None, pregnant=False):
+    """Gợi ý bước tiếp theo — chỉ là hỗ trợ sàng lọc, bám các ngưỡng BYT 2022 đã dùng trong app."""
+    steps = []
+    iron_low = ferritin is not None and ferritin < 30
+
+    if cat1 == "CAO" and not has_cbc:
+        steps.append("Vòng 1 mức cao nhưng chưa có CTM đầy đủ: nên ưu tiên thực hiện/nhập công thức máu.")
+    if cat2 in ("TRUNG BÌNH", "CAO"):
+        if ferritin is None:
+            steps.append("CTM đạt tiêu chí sàng lọc: nên đánh giá tình trạng sắt (ferritin) để phân biệt với thiếu sắt.")
+        elif iron_low:
+            steps.append("Ferritin <30 ng/mL: gợi ý có thiếu sắt (có thể đi kèm Thalassemia). Thiếu sắt có thể làm giảm HbA2 "
+                         "nên cần bác sĩ đối chiếu trước khi diễn giải HPLC; không tự bổ sung sắt kéo dài khi chưa có chỉ định.")
+        elif not hplc_done:
+            steps.append("CTM đạt tiêu chí sàng lọc và ferritin chưa thấp: nên làm HPLC/điện di huyết sắc tố.")
+        if hplc_done and not pcr_done and hba2 is not None and hba2 <= 3.5 and not (hbe and hbe > 0) and not iron_low:
+            steps.append("CTM gợi ý nhưng HbA2 không tăng: cần lưu ý alpha-thalassemia hoặc thể khác (điện di thường không phát hiện được); "
+                         "bác sĩ có thể cân nhắc xét nghiệm gen/PCR.")
+    if hba2 is not None and hba2 > 3.5:
+        steps.append("HbA2 >3,5%: gợi ý Beta-thalassemia; nên gặp bác sĩ Huyết học, cân nhắc xét nghiệm gen và tư vấn di truyền "
+                     "(đặc biệt khi chuẩn bị kết hôn/mang thai).")
+    if hbe is not None and hbe > 0:
+        steps.append("Có HbE: cần bác sĩ Huyết học đánh giá hemoglobinopathy và tư vấn di truyền.")
+    if cat1 == "CAO" and cat2 == "THẤP":
+        steps.append("Vòng 1 mức cao nhưng CTM chưa đạt tiêu chí: không loại trừ mang gen; nên trao đổi với bác sĩ nếu tiền sử gia đình rõ.")
+    positive = (cat2 in ("TRUNG BÌNH", "CAO") or cat1 == "CAO" or (hba2 is not None and hba2 > 3.5)
+                or (hbe is not None and hbe > 0))
+    if positive and (pregnant or marital == "Chuẩn bị kết hôn"):
+        steps.append("Có yếu tố gợi ý Thalassemia và đang chuẩn bị kết hôn/mang thai: nên được tư vấn di truyền sớm "
+                     "và cân nhắc xét nghiệm cho người bạn đời.")
+    if iron_low and cat2 not in ("TRUNG BÌNH", "CAO"):
+        steps.append("Ferritin <30 ng/mL: gợi ý thiếu sắt (kể cả khi CTM chưa đạt tiêu chí sàng lọc); nên trao đổi với bác sĩ "
+                     "về đánh giá và bổ sung sắt theo chỉ định.")
+    if pcr_done:
+        steps.append("Có kết quả PCR/di truyền: hệ thống không tự diễn giải; cần bác sĩ Huyết học/tư vấn di truyền xem phiếu gốc.")
+    if not steps and anything:
+        steps.append("Chưa có dấu hiệu cần thêm bước từ dữ liệu đã nhập; tiếp tục theo dõi và đối chiếu với bác sĩ khi có triệu chứng hoặc nhu cầu tư vấn.")
+    return steps
+
+
 def analyze_batch_row(idx, rec):
-    label = str(rec.get(COL_LABEL) or "").strip() or f"Hồ sơ {idx + 1}"
-    base = {"Hồ sơ": label, "Nguồn": rec.get(COL_SRC) or ""}
+    label = _s(rec.get(COL_LABEL)) or f"Hồ sơ {idx + 1}"
+    age = _to_float(rec.get(COL_AGE))
+    sex = _s(rec.get(COL_SEX))
+    marital = _s(rec.get(COL_MARITAL))
+    pregnant = _s(rec.get(COL_PREG)) == "Có"
+    warnings, levels, det = [], [], {}
+    out = {"Hồ sơ": label, "Nguồn": _s(rec.get(COL_SRC)) or "",
+           "Tuổi": age if age is not None else "", "Giới tính": sex or "",
+           "Hôn nhân": marital or "", "Mang thai": "Có" if pregnant else (_s(rec.get(COL_PREG)) or "")}
 
-    vals = {k: _to_float(rec.get(k)) for k in (COL_HB, COL_MCV, COL_MCH, COL_RBC, COL_RDW)}
-    missing = [k for k, v in vals.items() if v is None]
-    if missing:
-        return {**base, "Trạng thái": "Lỗi dữ liệu", "Cảnh báo": "Thiếu: " + ", ".join(missing)}
+    # ---------------- Vòng 1 ----------------
+    answers = {f"q{i}": _s(rec.get(f"Q{i}")) for i in range(1, 21)}
+    answered = sum(1 for v in answers.values() if v)
+    cat1 = None
+    if answered:
+        score1, reasons1 = calculate_round1_score(answers)
+        cat1, concl1 = round1_category(score1)
+        levels.append(cat1)
+        det["r1"] = {"score": score1, "category": cat1, "conclusion": concl1,
+                     "reasons": reasons1, "answered": answered}
+        out["Vòng 1 - điểm"], out["Vòng 1 - nguy cơ"] = f"{score1}/{ROUND1_MAX_SCORE}", cat1
+        if answered < 20:
+            warnings.append(f"Vòng 1 mới trả lời {answered}/20 câu — điểm có thể thấp hơn thực tế")
 
-    try:
-        hb = hb_to_g_dl(vals[COL_HB], rec.get(COL_HBU) or "g/dL")
-        rbc = rbc_to_t_l(vals[COL_RBC], rec.get(COL_RBCU) or "T/L")
-    except ValueError as exc:
-        return {**base, "Trạng thái": "Lỗi dữ liệu", "Cảnh báo": str(exc)}
+    # ---------------- CTM 18 chỉ số / Vòng 2 ----------------
+    nums = {c: _to_float(rec.get(c)) for c in CBC_COLS}
+    n_cbc = sum(v is not None for v in nums.values())
+    out["Số chỉ số CTM"] = f"{n_cbc}/18" if n_cbc else ""
+    cat2, has_cbc = None, False
+    if n_cbc:
+        core = ["HGB", "MCV", "MCH", "RBC", "RDW-CV"]
+        missing = [c for c in core if nums[c] is None]
+        if missing:
+            warnings.append("CTM thiếu " + ", ".join(missing) + " — chưa chạy Vòng 2")
+        else:
+            try:
+                hb = hb_to_g_dl(nums["HGB"], _s(rec.get("Đơn vị HGB")) or "g/dL")
+                rbc = rbc_to_t_l(nums["RBC"], _s(rec.get("Đơn vị RBC")) or "T/L")
+            except ValueError as exc:
+                hb = rbc = None
+                warnings.append(str(exc))
+            if hb is not None:
+                mcv, mch, rdw = nums["MCV"], nums["MCH"], nums["RDW-CV"]
+                limits = [("HGB", hb, 1, 25), ("MCV", mcv, 30, 150), ("MCH", mch, 10, 50),
+                          ("RBC", rbc, 1, 10), ("RDW-CV", rdw, 5, 40)]
+                bad = [f"{n}={v:g} ngoài khoảng {lo}–{hi}" for n, v, lo, hi in limits if not lo <= v <= hi]
+                if bad:
+                    warnings.append("; ".join(bad) + " (kiểm tra đơn vị/số liệu) — chưa chạy Vòng 2")
+                else:
+                    alt_choice = rec.get(COL_ALT) if rec.get(COL_ALT) in ALTITUDE_OPTIONS else "<500 m"
+                    hb_adj = hb - ALTITUDE_OPTIONS[alt_choice]
+                    score2, mentzer, reasons2 = calculate_round2_score(mcv, mch, rbc, rdw)
+                    cat2, concl2 = round2_category(score2, mcv, mch)
+                    findings, advice = narrative_cbc_advice(hb_adj, mcv, mch, rbc, rdw, mentzer)
+                    mchc = nums["MCHC"]
+                    if mchc is not None and mchc < 32:
+                        findings.append("MCHC <32 g/dL — gợi ý nhược sắc (đối chiếu khoảng tham chiếu của labo).")
+                    anemia = who_anemia_flag(hb_adj, age, sex, pregnant)
+                    has_cbc = True
+                    levels.append(cat2)
+                    det["r2"] = {"category": cat2, "conclusion": concl2, "reasons": reasons2,
+                                 "findings": findings, "advice": advice, "altitude": alt_choice,
+                                 "score": score2, "mentzer": mentzer}
+                    out.update({
+                        "Hb (g/dL)": round(hb, 2), "Hb sau hiệu chỉnh": round(hb_adj, 2),
+                        "Thiếu máu (WHO 2024)": anemia, "MCV": mcv, "MCH": mch,
+                        "MCHC": mchc if mchc is not None else "", "RDW-CV": rdw,
+                        "RBC (T/L)": rbc, "Mentzer": mentzer, "Điểm CBC": score2,
+                        "Vòng 2 - nguy cơ": cat2,
+                    })
+        det["cbc_values"] = {c: v for c, v in nums.items() if v is not None}
 
-    mcv, mch, rdw = vals[COL_MCV], vals[COL_MCH], vals[COL_RDW]
-    limits = [("Hb", hb, 1, 25), ("MCV", mcv, 30, 150), ("MCH", mch, 10, 50),
-              ("RBC", rbc, 1, 10), ("RDW-CV", rdw, 5, 40)]
-    bad = [f"{n}={v:g} ngoài khoảng {lo}–{hi}" for n, v, lo, hi in limits if not lo <= v <= hi]
-    if bad:
-        return {**base, "Trạng thái": "Lỗi dữ liệu",
-                "Cảnh báo": "; ".join(bad) + " (kiểm tra đơn vị/số liệu)"}
+    # ---------------- Sắt · HPLC · PCR (Vòng 3) ----------------
+    hba, hba2, hbf, hbe = (_to_float(rec.get(c)) for c in HB_NUM_COLS)
+    ferritin, iron, tsat = (_to_float(rec.get(c)) for c in IRON_COLS)
+    hplc_text, pcr_text, lab_text = _s(rec.get(COL_HPLC)), _s(rec.get(COL_PCR)), _s(rec.get(COL_LAB))
+    num3 = [hba, hba2, hbf, hbe, ferritin, iron, tsat]
+    has3 = any(v is not None for v in num3) or any((hplc_text, pcr_text, lab_text))
+    flag3, notes3 = None, []
+    hplc_done = any(v is not None for v in (hba, hba2, hbf, hbe)) or bool(hplc_text)
+    if has3:
+        for name, v, hi in [("HbA", hba, 100), ("HbA2", hba2, 30), ("HbF", hbf, 100),
+                            ("HbE", hbe, 100), ("Ferritin", ferritin, 10000)]:
+            if v is not None and not 0 <= v <= hi:
+                warnings.append(f"{name}={v:g} ngoài khoảng 0–{hi}")
+        combined_text = " ".join(filter(None, [hplc_text, pcr_text, lab_text])).lower()
+        notes3 = round3_byt_interpretation({
+            "hba": hba, "hba2": hba2, "hbf": hbf, "hbe": hbe, "ferritin": ferritin,
+            "transferrin_saturation": tsat, "genetic_result": pcr_text,
+            "lab_conclusion": " ".join(filter(None, [hplc_text, lab_text])),
+        })
+        marker = any(m in combined_text for m in ("hbh", "hb bart", "hbcs", "constant spring"))
+        if (hba2 is not None and hba2 > 3.5) or (hbe is not None and hbe > 0) or marker:
+            flag3 = "CAO"
+        elif hbf is not None and hbf >= 1:
+            flag3 = "TRUNG BÌNH"
+        elif any(v is not None for v in (hba, hba2, hbf, hbe)):
+            flag3 = "THẤP"
+        if flag3:
+            levels.append(flag3)
+        det["r3"] = {"flag": flag3, "notes": notes3}
+        out.update({
+            "Ferritin": ferritin if ferritin is not None else "",
+            "HbA2 (%)": hba2 if hba2 is not None else "",
+            "HbE (%)": hbe if hbe is not None else "",
+            "Vòng 3 - mức lưu ý": flag3 or "",
+            "Vòng 3 - đối chiếu BYT": " | ".join(notes3),
+        })
 
-    alt_choice = rec.get(COL_ALT) if rec.get(COL_ALT) in ALTITUDE_OPTIONS else "<500 m"
-    adjustment = ALTITUDE_OPTIONS[alt_choice]
-    hb_adj = hb - adjustment
-
-    score, mentzer, reasons = calculate_round2_score(mcv, mch, rbc, rdw)
-    category, conclusion = round2_category(score, mcv, mch)
-    findings, advice = narrative_cbc_advice(hb_adj, mcv, mch, rbc, rdw, mentzer)
-
-    return {
-        **base, "Hb (g/dL)": round(hb, 2), "Hb sau hiệu chỉnh": round(hb_adj, 2),
-        "MCV": mcv, "MCH": mch, "RBC (T/L)": rbc, "RDW-CV": rdw, "Mentzer": mentzer,
-        "Điểm CBC": score, "Nguy cơ": category,
-        "Nhận định": " ".join(findings), "Khuyến nghị": " ".join(advice),
-        "Trạng thái": "OK", "Cảnh báo": str(rec.get(COL_NOTE) or ""),
-        "_detail": {"category": category, "conclusion": conclusion, "reasons": reasons,
-                    "findings": findings, "advice": advice, "altitude": alt_choice},
-    }
+    anything = bool(answered or n_cbc or has3)
+    steps = integrated_next_steps(cat1, cat2, has_cbc, ferritin, hba2, hbe, hplc_done, bool(pcr_text), anything,
+                                  marital, pregnant)
+    det["steps"], det["warnings"] = steps, warnings
+    out["Mức lưu ý cao nhất"] = max(levels, key=RISK_RANK.get) if levels else ""
+    out["Bước tiếp theo"] = " ".join(steps)
+    out["Trạng thái"] = "OK" if levels or has3 else "Không đủ dữ liệu"
+    out["Cảnh báo"] = "; ".join(filter(None, [_s(rec.get(COL_NOTE))] + warnings))
+    out["_detail"] = det
+    return out
 
 
-def results_to_excel(results_df):
+# ------------------------------------------------------------
+# XUẤT EXCEL / FILE MẪU CÓ CÔNG THỨC
+# ------------------------------------------------------------
+
+def results_to_excel(results_df, input_df):
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
         results_df.to_excel(writer, sheet_name="Ket_qua", index=False)
-        wb, ws = writer.book, writer.sheets["Ket_qua"]
-        head = wb.add_format({"bold": True, "bg_color": "#D9EAF7", "border": 1, "text_wrap": True})
-        for c, name in enumerate(results_df.columns):
-            ws.write(0, c, name, head)
-            ws.set_column(c, c, 60 if name in ("Nhận định", "Khuyến nghị") else 18)
-        ws.freeze_panes(1, 0)
-        if "Nguy cơ" in results_df.columns:
-            col = list(results_df.columns).index("Nguy cơ")
-            for text, color in (("THẤP", "#C8E6C9"), ("TRUNG BÌNH", "#FFE0B2"), ("CAO", "#FFCDD2")):
-                ws.conditional_format(1, col, max(len(results_df), 1), col, {
-                    "type": "cell", "criteria": "==", "value": f'"{text}"',
-                    "format": wb.add_format({"bg_color": color}),
-                })
+        input_df.to_excel(writer, sheet_name="Du_lieu_dau_vao", index=False)
+        wb = writer.book
+        head = wb.add_format({"bold": True, "bg_color": "#D9EAF7", "border": 1, "text_wrap": True, "valign": "vcenter"})
+        wide = {"Bước tiếp theo", "Vòng 3 - đối chiếu BYT", "Cảnh báo"}
+        for sheet, df in (("Ket_qua", results_df), ("Du_lieu_dau_vao", input_df)):
+            ws = writer.sheets[sheet]
+            for c, name in enumerate(df.columns):
+                ws.write(0, c, name, head)
+                ws.set_column(c, c, 60 if name in wide else 16)
+            ws.freeze_panes(1, 1)
+        ws = writer.sheets["Ket_qua"]
+        for name in ("Vòng 1 - nguy cơ", "Vòng 2 - nguy cơ", "Vòng 3 - mức lưu ý", "Mức lưu ý cao nhất"):
+            if name in results_df.columns:
+                col = list(results_df.columns).index(name)
+                for text, color in (("THẤP", "#C8E6C9"), ("TRUNG BÌNH", "#FFE0B2"), ("CAO", "#FFCDD2")):
+                    ws.conditional_format(1, col, max(len(results_df), 1), col, {
+                        "type": "cell", "criteria": "==", "value": f'"{text}"',
+                        "format": wb.add_format({"bg_color": color}),
+                    })
     buf.seek(0)
     return buf
 
 
+def _question_texts():
+    texts = {"Q9": "9. Bạn từng xét nghiệm Thalassemia/hemoglobinopathy chưa?"}
+    for _title, questions in ROUND1_SECTIONS:
+        for qkey, qtext in questions:
+            if qtext:
+                texts[qkey.upper()] = qtext
+    return texts
+
+
+@st.cache_data(show_spinner=False)
 def build_template_xlsx():
-    """File mẫu có sẵn CÔNG THỨC: đổi đơn vị Hb, hiệu chỉnh độ cao, Mentzer, tiêu chí BYT 2022."""
+    """File mẫu ĐẦY ĐỦ có CÔNG THỨC: điểm Vòng 1, quy đổi Hb, hiệu chỉnh độ cao, Mentzer, tiêu chí BYT 2022."""
     import xlsxwriter
+    from xlsxwriter.utility import xl_col_to_name
+
     buf = io.BytesIO()
     wb = xlsxwriter.Workbook(buf, {"in_memory": True})
-    head = wb.add_format({"bold": True, "bg_color": "#D9EAF7", "border": 1, "text_wrap": True, "valign": "vcenter"})
-    calc_head = wb.add_format({"bold": True, "bg_color": "#E8E8E8", "border": 1, "text_wrap": True, "valign": "vcenter"})
+    head = wb.add_format({"bold": True, "bg_color": "#D9EAF7", "border": 1, "text_wrap": True, "valign": "vcenter", "align": "center"})
+    head_q = wb.add_format({"bold": True, "bg_color": "#FDE9D9", "border": 1, "text_wrap": True, "valign": "vcenter", "align": "center"})
+    head_c = wb.add_format({"bold": True, "bg_color": "#E8E8E8", "border": 1, "text_wrap": True, "valign": "vcenter", "align": "center"})
     cell = wb.add_format({"border": 1})
     calc = wb.add_format({"border": 1, "bg_color": "#F5F5F5"})
 
-    ws = wb.add_worksheet("Du_lieu")
-    inputs = ["Họ tên/Mã hồ sơ", "Hb", "Đơn vị Hb", "MCV (fL)", "MCH (pg)", "RBC (T/L)", "RDW-CV (%)", "Khoảng độ cao"]
-    computed = ["Hb (g/dL) quy đổi", "Hb sau hiệu chỉnh độ cao", "Mentzer Index (MCV/RBC)", "Tiêu chí sàng lọc BYT 2022"]
-    for c, h in enumerate(inputs):
-        ws.write(0, c, h, head)
-    for c, h in enumerate(computed, start=len(inputs)):
-        ws.write(0, c, h, calc_head)
+    inputs = ([COL_LABEL, COL_AGE, COL_SEX, COL_MARITAL, COL_PREG, COL_ALT] + Q_COLS + CBC_COLS + UNIT_COLS
+              + IRON_COLS + HB_NUM_COLS + [COL_HPLC, COL_PCR, COL_LAB, COL_NOTE])
+    computed = COMPUTED_COLS
+    col = {name: xl_col_to_name(i) for i, name in enumerate(inputs)}
+    n_in = len(inputs)
 
+    ws = wb.add_worksheet("Du_lieu")
+    texts = _question_texts()
+    for c, name in enumerate(inputs):
+        ws.write(0, c, name, head_q if name in Q_COLS else head)
+        if name in texts:
+            ws.write_comment(0, c, texts[name], {"x_scale": 3, "y_scale": 1.2})
+    for c, name in enumerate(computed, start=n_in):
+        ws.write(0, c, name, head_c)
+    ccol = {name: xl_col_to_name(n_in + i) for i, name in enumerate(computed)}
+
+    weights = {1: 3, 2: 3, 3: 1, 4: 2, 5: 2, 6: 1, 7: 2, 8: 1, 10: 2, 11: 1, 12: 2,
+               13: 1, 14: 1, 15: 1, 16: 1, 17: 2, 18: 1}
     n_rows = 200
     for r in range(2, n_rows + 2):  # dòng Excel 2..201
-        for c in range(len(inputs)):
+        for c in range(n_in):
             ws.write_blank(r - 1, c, None, cell)
-        ws.write_formula(r - 1, 8, f'=IF(B{r}="","",IF(C{r}="g/L",B{r}/10,B{r}))', calc)
-        ws.write_formula(r - 1, 9, f'=IF(I{r}="","",I{r}-IFERROR(VLOOKUP(H{r},Do_cao!$A$2:$B$11,2,FALSE),0))', calc)
-        ws.write_formula(r - 1, 10, f'=IF(OR(D{r}="",F{r}="",F{r}=0),"",ROUND(D{r}/F{r},2))', calc)
-        ws.write_formula(r - 1, 11,
-                         f'=IF(OR(D{r}="",E{r}=""),"",IF(OR(D{r}<85,E{r}<28),'
-                         f'"Đạt tiêu chí sàng lọc (MCV<85 và/hoặc MCH<28)","Chưa đạt tiêu chí"))', calc)
+        terms = [f'{w}*({col[f"Q{q}"]}{r}="Có")' for q, w in weights.items()]
+        terms.append(f'IF({col["Q9"]}{r}="Đã nghi ngờ",2,IF({col["Q9"]}{r}="Đã xác định mang gen",4,0))')
+        score_f = (f'=IF(COUNTA({col["Q1"]}{r}:{col["Q20"]}{r})=0,"",'
+                   f'MIN({ROUND1_MAX_SCORE},{"+".join(terms)}))')
+        sc = f'{ccol["Điểm Vòng 1 (tự tính)"]}{r}'
+        hgb, unit = f'{col["HGB"]}{r}', f'{col["Đơn vị HGB"]}{r}'
+        hb_g = f'{ccol["HGB g/dL quy đổi"]}{r}'
+        mcv, mch, rbc = f'{col["MCV"]}{r}', f'{col["MCH"]}{r}', f'{col["RBC"]}{r}'
+        alt = f'{col[COL_ALT]}{r}'
+        formulas = {
+            "Điểm Vòng 1 (tự tính)": score_f,
+            "Mức Vòng 1": f'=IF({sc}="","",IF({sc}>={ROUND1_HIGH_THRESHOLD},"CAO",IF({sc}>=4,"TRUNG BÌNH","THẤP")))',
+            "HGB g/dL quy đổi": f'=IF({hgb}="","",IF({unit}="g/L",{hgb}/10,{hgb}))',
+            "Hb sau hiệu chỉnh độ cao": f'=IF({hb_g}="","",{hb_g}-IFERROR(VLOOKUP({alt},Danh_sach!$A$2:$B$11,2,FALSE),0))',
+            "Mentzer (MCV/RBC)": f'=IF(OR({mcv}="",{rbc}="",{rbc}=0),"",ROUND({mcv}/{rbc},2))',
+            "Tiêu chí CTM BYT 2022": (f'=IF(OR({mcv}="",{mch}=""),"",IF(OR({mcv}<85,{mch}<28),'
+                                      f'"Đạt tiêu chí sàng lọc (MCV<85 và/hoặc MCH<28)","Chưa đạt tiêu chí"))'),
+            "HbA2 > 3,5%?": f'=IF({col["HbA2 (%)"]}{r}="","",IF({col["HbA2 (%)"]}{r}>3.5,"Có","Không"))',
+            "Ferritin < 30?": f'=IF({col["Ferritin"]}{r}="","",IF({col["Ferritin"]}{r}<30,"Có","Không"))',
+        }
+        for name in computed:
+            ws.write_formula(r - 1, n_in + computed.index(name), formulas[name], calc)
 
-    ws.data_validation(1, 2, n_rows, 2, {"validate": "list", "source": ["g/dL", "g/L"]})
-    ws.data_validation(1, 7, n_rows, 7, {"validate": "list", "source": "=Do_cao!$A$2:$A$11"})
+    def validate(name, source):
+        c = inputs.index(name)
+        ws.data_validation(1, c, n_rows, c, {"validate": "list", "source": source})
+
+    validate(COL_SEX, BATCH_SEX)
+    validate(COL_MARITAL, BATCH_MARITAL)
+    validate(COL_PREG, ["Có", "Không"])
+    validate("Đơn vị HGB", ["g/dL", "g/L"])
+    validate("Đơn vị RBC", ["T/L", "10^12/L", "10^6/µL"])
+    validate(COL_ALT, "=Danh_sach!$A$2:$A$11")
+    for q in Q_COLS:
+        validate(q, "=Danh_sach!$F$2:$F$6" if q == "Q9" else "=Danh_sach!$D$2:$D$4")
+
     ws.set_column(0, 0, 22)
-    ws.set_column(1, 6, 12)
-    ws.set_column(7, 7, 16)
-    ws.set_column(8, 11, 24)
-    ws.set_row(0, 34)
+    ws.set_column(1, inputs.index(COL_ALT), 15)
+    ws.set_column(inputs.index("Q1"), inputs.index("Q20"), 7)
+    ws.set_column(inputs.index("WBC"), inputs.index("Đơn vị RBC"), 9)
+    ws.set_column(inputs.index("Ferritin"), inputs.index(COL_NOTE), 16)
+    ws.set_column(inputs.index(COL_HPLC), inputs.index(COL_LAB), 28)
+    ws.set_column(n_in, n_in + len(computed) - 1, 22)
+    ws.set_row(0, 38)
     ws.freeze_panes(1, 1)
 
-    wa = wb.add_worksheet("Do_cao")
-    wa.write(0, 0, "Khoảng độ cao", head)
-    wa.write(0, 1, "Hiệu chỉnh Hb (g/dL)", head)
+    wl = wb.add_worksheet("Danh_sach")
+    wl.write(0, 0, "Khoảng độ cao", head)
+    wl.write(0, 1, "Hiệu chỉnh Hb (g/dL)", head)
     for i, (k, v) in enumerate(ALTITUDE_OPTIONS.items(), start=1):
-        wa.write(i, 0, k)
-        wa.write(i, 1, v)
-    wa.set_column(0, 1, 22)
+        wl.write(i, 0, k)
+        wl.write(i, 1, v)
+    wl.write(0, 3, "Lựa chọn Có/Không", head)
+    for i, v in enumerate(BATCH_YNK, start=1):
+        wl.write(i, 3, v)
+    wl.write(0, 5, "Lựa chọn câu 9", head)
+    for i, v in enumerate(BATCH_Q9, start=1):
+        wl.write(i, 5, v)
+    wl.set_column(0, 5, 26)
 
     wh = wb.add_worksheet("Huong_dan")
-    for i, line in enumerate([
-        "Nhập dữ liệu vào các cột màu xanh ở sheet Du_lieu (mỗi dòng một người).",
-        "Các cột màu xám là công thức tự tính — không cần nhập.",
-        "Có thể tải trực tiếp file này lên trang Phân tích hồ sơ hàng loạt.",
-        "Tiêu chí sàng lọc: MCV < 85 fL và/hoặc MCH < 28 pg (Phụ lục hướng dẫn BYT 2022).",
-        "Mentzer Index chỉ là chỉ số hỗ trợ, không phải tiêu chuẩn chẩn đoán.",
-    ]):
+    lines = [
+        "HƯỚNG DẪN",
+        "• Mỗi dòng ở sheet Du_lieu là một người. Cột xám bên phải là công thức tự tính — không cần nhập.",
+        "• Câu hỏi Q1–Q20 (cột cam): chọn Có / Không / Không biết (Q9 có danh sách riêng). Q19–Q20 không tính điểm.",
+        "• CTM 18 chỉ số: WBC, NEU%, LYM%, MONO%, EOS%, BASO%, RBC, HGB, HCT, MCV, MCH, MCHC, RDW-CV, RDW-SD, PLT, MPV, PDW, PCT.",
+        "  Bắt buộc để chạy Vòng 2: HGB, MCV, MCH, RBC, RDW-CV. Các chỉ số còn lại tùy chọn.",
+        "• Sắt · HPLC · PCR: ferritin (ng/mL), sắt huyết thanh, TSAT; HbA/HbA2/HbF/HbE (%); kết luận HPLC/PCR ghi đúng theo phiếu.",
+        "• Tuổi, Giới tính, Tình trạng hôn nhân, Đang mang thai (không bắt buộc): dùng đối chiếu ngưỡng thiếu máu WHO 2024 và gợi ý tư vấn di truyền.",
+        "• Cũng có thể tải file Word, PDF, ảnh, SPSS (.sav), Stata (.dta), SAS, R... — hệ thống tự nhận cột (AI hỗ trợ ghép cột khi được phép).",
+        "• Tiêu chí sàng lọc CTM: MCV < 85 fL và/hoặc MCH < 28 pg (Phụ lục hướng dẫn BYT 2022). Mentzer chỉ là chỉ số hỗ trợ.",
+        "• Có thể tải trực tiếp file này lên trang Phân tích hồ sơ hàng loạt. Kết quả chỉ hỗ trợ sàng lọc, không chẩn đoán.",
+        "",
+        "CÂU HỎI TẦM SOÁT:",
+    ]
+    for q in Q_COLS:
+        lines.append(f"{q}: {texts.get(q, '')}")
+    for i, line in enumerate(lines):
         wh.write(i, 0, line)
-    wh.set_column(0, 0, 90)
+    wh.set_column(0, 0, 120)
     wb.close()
     buf.seek(0)
-    return buf
+    return buf.getvalue()
 
 
 # ------------------------------------------------------------
@@ -2087,42 +2865,63 @@ def _risk_cell_style(v):
     return f"background-color: {colors[v]}; font-weight: 700" if v in colors else ""
 
 
+def _editor_column_config():
+    texts = _question_texts()
+    cfg = {c: st.column_config.NumberColumn(c, format="%g", min_value=0.0) for c in NUM_COLS}
+    cfg[COL_AGE] = st.column_config.NumberColumn("Tuổi", format="%g", min_value=0.0, max_value=120.0)
+    cfg[COL_SEX] = st.column_config.SelectboxColumn("Giới tính", options=BATCH_SEX)
+    cfg[COL_MARITAL] = st.column_config.SelectboxColumn("Tình trạng hôn nhân", options=BATCH_MARITAL)
+    cfg[COL_PREG] = st.column_config.SelectboxColumn("Đang mang thai", options=["Không", "Có"])
+    cfg[COL_ALT] = st.column_config.SelectboxColumn("Khoảng độ cao", options=list(ALTITUDE_OPTIONS.keys()))
+    cfg["Đơn vị HGB"] = st.column_config.SelectboxColumn("Đơn vị HGB", options=["g/dL", "g/L"])
+    cfg["Đơn vị RBC"] = st.column_config.SelectboxColumn("Đơn vị RBC", options=["T/L", "10^12/L", "10^6/µL"])
+    for q in Q_COLS:
+        cfg[q] = st.column_config.SelectboxColumn(
+            q, options=BATCH_Q9 if q == "Q9" else BATCH_YNK, help=texts.get(q), width="small")
+    for c in (COL_LABEL, COL_SRC, COL_NOTE, *TEXT_RESULT_COLS):
+        cfg[c] = st.column_config.TextColumn(c, width="medium")
+    return cfg
+
+
+@st.fragment
 def render_batch_page(user):
+    # @st.fragment: mọi thao tác trên trang này chỉ chạy lại riêng trang này, không dựng lại cả ứng dụng.
     st.header(":material/batch_prediction: Phân tích hồ sơ hàng loạt")
     st.caption(
-        "Tải một hoặc nhiều hồ sơ cùng lúc: bảng Excel/CSV, hoặc phiếu xét nghiệm dạng PDF/ảnh "
-        "(AI đọc số liệu). Dữ liệu được đưa vào bảng để bạn kiểm tra trước khi phân tích."
+        "Phân tích nhiều hồ sơ đầy đủ cùng lúc: thông tin nhân khẩu, 20 câu tầm soát Vòng 1, công thức máu "
+        "18 chỉ số, ferritin/sắt, HPLC và PCR/di truyền. Đọc được Excel, CSV, Word, PDF, ảnh và file phần mềm "
+        "thống kê (SPSS, Stata, SAS, R); kiểm tra trong bảng trước khi phân tích."
     )
 
     with st.container(border=True):
         st.subheader(":material/upload_file: 1. Tải hồ sơ")
         files = st.file_uploader(
-            f"Chọn tối đa {BATCH_MAX_FILES} file (mỗi file ≤ {BATCH_MAX_MB} MB)",
-            type=["xlsx", "xls", "csv", "pdf", "png", "jpg", "jpeg", "webp"],
-            accept_multiple_files=True,
-            key="batch_files",
+            f"Chọn tối đa {BATCH_MAX_FILES} file — Excel/CSV/Word/PDF/ảnh/SPSS/Stata/SAS/R "
+            f"(bảng ≤ {BATCH_MAX_MB_TABLE} MB, PDF/ảnh ≤ {BATCH_MAX_MB_AI} MB)",
+            type=UPLOAD_TYPES,
+            accept_multiple_files=True, key="batch_files",
         )
         default_alt = st.selectbox(
-            "Khoảng độ cao mặc định cho các hồ sơ mới",
-            list(ALTITUDE_OPTIONS.keys()), key="batch_default_alt",
-            help="Có thể sửa riêng từng dòng trong bảng bên dưới.",
+            "Khoảng độ cao mặc định cho các hồ sơ mới", list(ALTITUDE_OPTIONS.keys()),
+            key="batch_default_alt", help="Có thể sửa riêng từng dòng trong bảng bên dưới.",
         )
         ai_ok = st.checkbox(
-            "Tôi xác nhận người bệnh đã đồng ý và cho phép gửi phiếu PDF/ảnh tới dịch vụ AI để đọc số liệu.",
+            "Tôi xác nhận người bệnh đã đồng ý và cho phép gửi PDF/ảnh/nội dung Word, hoặc TÊN CỘT của file bảng, tới dịch vụ AI để đọc/ghép dữ liệu.",
             key="batch_ai_consent",
         )
         st.caption(
-            "Với PDF/ảnh: file được gửi tới dịch vụ AI của Anthropic để trích xuất Hb, MCV, MCH, RBC, RDW. "
-            "Hệ thống không lưu file; AI được yêu cầu không trả về thông tin định danh. "
-            "Nên che/cắt phần họ tên, ngày sinh trên phiếu trước khi tải lên. "
+            "PDF/ảnh và Word dạng phiếu: nội dung được gửi tới dịch vụ AI của Anthropic để trích xuất CTM, ferritin, "
+            "HPLC, PCR, thông tin nhân khẩu (và câu trả lời nếu là phiếu khảo sát). File bảng/SPSS/Stata/SAS/R được đọc "
+            "ngay trên máy chủ; chỉ khi có cột lạ mới gửi TÊN CỘT (không gửi dữ liệu) cho AI ghép. Hệ thống không lưu file "
+            "(file SPSS/R được ghi tạm vào thư mục tạm và xóa ngay). Nên che họ tên, ngày sinh trên PDF/ảnh. "
             "AI có thể đọc sai — luôn đối chiếu bảng với phiếu gốc."
         )
         b1, b2 = st.columns(2)
         scan = b1.button("Đọc dữ liệu từ file", icon=":material/document_scanner:",
                          type="primary", use_container_width=True)
         b2.download_button(
-            "Tải file Excel mẫu (có công thức)", data=build_template_xlsx().getvalue(),
-            file_name="Mau_nhap_CBC_Thalassemia.xlsx",
+            "Tải file Excel mẫu đầy đủ (có công thức)", data=build_template_xlsx(),
+            file_name="Mau_ho_so_Thalassemia_day_du.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             icon=":material/download:", use_container_width=True,
         )
@@ -2133,56 +2932,47 @@ def render_batch_page(user):
         elif len(files) > BATCH_MAX_FILES:
             st.error(f"Tối đa {BATCH_MAX_FILES} file mỗi lần.")
         else:
-            rows, progress = [], st.progress(0.0, text="Đang đọc file...")
+            rows, all_notes, progress = [], [], st.progress(0.0, text="Đang đọc file...")
             for i, f in enumerate(files):
                 name, data = f.name, f.getvalue()
-                ext = os.path.splitext(name.lower())[1]
                 progress.progress(i / len(files), text=f"Đang đọc {name} ({i + 1}/{len(files)})")
                 try:
-                    if len(data) > BATCH_MAX_MB * 1024 * 1024:
-                        raise RuntimeError(f"File vượt {BATCH_MAX_MB} MB")
-                    if ext in AI_FILE_TYPES:
-                        if not ai_ok:
-                            raise RuntimeError("Chưa tick xác nhận đồng ý gửi PDF/ảnh tới AI")
-                        rows.append(row_from_ai(name, ai_extract_cbc(data, AI_FILE_TYPES[ext]), default_alt))
-                    elif ext in TABLE_FILE_TYPES:
-                        rows.extend(rows_from_table(name, data, default_alt))
-                    else:
-                        raise RuntimeError("Định dạng không được hỗ trợ")
+                    part, notes = load_file_rows(name, data, default_alt, ai_ok)
+                    rows.extend(part)
+                    all_notes.extend(notes)
                 except Exception as exc:
-                    rows.append(_blank_row(name, "Lỗi đọc file", f"Không đọc được: {exc}. Có thể nhập tay."))
-                    rows[-1][COL_ALT] = default_alt
+                    rows.append(_blank_row(name, "Lỗi đọc file", default_alt,
+                                           f"Không đọc được: {exc}. Có thể nhập tay."))
+            if len(rows) > BATCH_MAX_TOTAL_ROWS:
+                all_notes.append(f"Chỉ giữ {BATCH_MAX_TOTAL_ROWS} dòng đầu (tổng {len(rows)} dòng).")
+                rows = rows[:BATCH_MAX_TOTAL_ROWS]
             progress.progress(1.0, text="Hoàn tất đọc file.")
             st.session_state["batch_rows"] = rows
+            st.session_state["batch_notes"] = all_notes
             st.session_state["batch_ver"] = st.session_state.get("batch_ver", 0) + 1
             st.session_state.pop("batch_results", None)
 
     # ---------------- Bảng kiểm tra/sửa ----------------
     st.subheader(":material/edit_note: 2. Kiểm tra và chỉnh sửa dữ liệu")
     st.caption(
-        "Đối chiếu từng dòng với phiếu gốc, sửa nếu AI đọc sai. Có thể thêm dòng mới hoặc xóa dòng "
-        "(chọn dòng rồi nhấn Delete). Hb và RBC có đơn vị riêng để hệ thống tự quy đổi."
+        "Chọn nhóm cột để xem/sửa (dữ liệu ở các nhóm khác vẫn được giữ nguyên). Đối chiếu với phiếu gốc, "
+        "thêm dòng mới hoặc xóa dòng (chọn dòng rồi nhấn Delete). Ô trống = chưa có dữ liệu."
     )
+    for note in st.session_state.get("batch_notes", []):
+        st.info(note, icon=":material/info:")
+    group = st.radio("Nhóm cột", list(COLUMN_GROUPS.keys()), horizontal=True,
+                     key="batch_group", label_visibility="collapsed")
+
     rows = st.session_state.get("batch_rows", [])
     df = pd.DataFrame(rows, columns=BATCH_COLUMNS)
-    for col in (COL_HB, COL_MCV, COL_MCH, COL_RBC, COL_RDW):
+    for col in NUM_COLS:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     edited = st.data_editor(
         df, num_rows="dynamic", hide_index=True, use_container_width=True,
         key=f"batch_editor_{st.session_state.get('batch_ver', 0)}",
-        disabled=[COL_SRC],
-        column_config={
-            COL_HB: st.column_config.NumberColumn("Hb", format="%.2f", min_value=0.0),
-            COL_HBU: st.column_config.SelectboxColumn("Đơn vị Hb", options=["g/dL", "g/L"], required=True),
-            COL_MCV: st.column_config.NumberColumn("MCV (fL)", format="%.1f"),
-            COL_MCH: st.column_config.NumberColumn("MCH (pg)", format="%.1f"),
-            COL_RBC: st.column_config.NumberColumn("RBC", format="%.2f"),
-            COL_RBCU: st.column_config.SelectboxColumn("Đơn vị RBC", options=["T/L", "10^12/L", "10^6/µL"], required=True),
-            COL_RDW: st.column_config.NumberColumn("RDW-CV (%)", format="%.1f"),
-            COL_ALT: st.column_config.SelectboxColumn("Khoảng độ cao", options=list(ALTITUDE_OPTIONS.keys()), required=True),
-            COL_NOTE: st.column_config.TextColumn("Ghi chú", width="large"),
-        },
+        column_order=COLUMN_GROUPS[group], disabled=[COL_SRC],
+        column_config=_editor_column_config(),
     )
 
     run = st.button("Phân tích tất cả hồ sơ", icon=":material/analytics:", type="primary",
@@ -2190,7 +2980,9 @@ def render_batch_page(user):
 
     if run:
         records = edited.to_dict("records")
-        st.session_state["batch_results"] = [analyze_batch_row(i, r) for i, r in enumerate(records)]
+        with st.spinner("Đang phân tích..."):
+            st.session_state["batch_results"] = [analyze_batch_row(i, r) for i, r in enumerate(records)]
+            st.session_state["batch_input_df"] = edited.copy()
 
     results = st.session_state.get("batch_results")
     if not results:
@@ -2199,62 +2991,166 @@ def render_batch_page(user):
     # ---------------- Kết quả ----------------
     st.divider()
     st.subheader(":material/monitoring: 3. Kết quả phân tích")
-    counts = Counter(r.get("Nguy cơ") for r in results if r.get("Trạng thái") == "OK")
-    errors = sum(1 for r in results if r.get("Trạng thái") != "OK")
+    counts = Counter(r.get("Mức lưu ý cao nhất") for r in results if r.get("Trạng thái") == "OK")
+    insufficient = sum(1 for r in results if r.get("Trạng thái") != "OK")
 
     m = st.columns(5)
     m[0].metric("Tổng hồ sơ", len(results))
-    m[1].metric("Nguy cơ thấp", counts.get("THẤP", 0))
-    m[2].metric("Nguy cơ trung bình", counts.get("TRUNG BÌNH", 0))
-    m[3].metric("Nguy cơ cao", counts.get("CAO", 0))
-    m[4].metric("Lỗi dữ liệu", errors)
+    m[1].metric("Mức thấp", counts.get("THẤP", 0))
+    m[2].metric("Mức trung bình", counts.get("TRUNG BÌNH", 0))
+    m[3].metric("Mức cao", counts.get("CAO", 0))
+    m[4].metric("Không đủ dữ liệu", insufficient)
+    st.caption("“Mức lưu ý cao nhất” = mức cao nhất trong các vòng có dữ liệu (Vòng 1, CTM Vòng 2, dấu hiệu HPLC/PCR Vòng 3).")
 
-    table_cols = ["Hồ sơ", "Nguồn", "Hb (g/dL)", "Hb sau hiệu chỉnh", "MCV", "MCH", "RBC (T/L)",
-                  "RDW-CV", "Mentzer", "Điểm CBC", "Nguy cơ", "Nhận định", "Khuyến nghị",
-                  "Trạng thái", "Cảnh báo"]
-    res_df = pd.DataFrame([{k: v for k, v in r.items() if k != "_detail"} for r in results])
-    res_df = res_df.reindex(columns=table_cols)
+    all_cols = ["Hồ sơ", "Nguồn", "Tuổi", "Giới tính", "Hôn nhân", "Mang thai", "Vòng 1 - điểm", "Vòng 1 - nguy cơ", "Số chỉ số CTM",
+                "Hb (g/dL)", "Hb sau hiệu chỉnh", "Thiếu máu (WHO 2024)", "MCV", "MCH", "MCHC", "RDW-CV",
+                "RBC (T/L)", "Mentzer", "Điểm CBC", "Vòng 2 - nguy cơ", "Ferritin", "HbA2 (%)", "HbE (%)",
+                "Vòng 3 - mức lưu ý", "Vòng 3 - đối chiếu BYT", "Mức lưu ý cao nhất", "Bước tiếp theo",
+                "Trạng thái", "Cảnh báo"]
+    show_cols = ["Hồ sơ", "Vòng 1 - điểm", "Vòng 1 - nguy cơ", "Hb sau hiệu chỉnh", "MCV", "MCH", "Mentzer",
+                 "Vòng 2 - nguy cơ", "Ferritin", "HbA2 (%)", "HbE (%)", "Vòng 3 - mức lưu ý",
+                 "Mức lưu ý cao nhất", "Bước tiếp theo", "Trạng thái", "Cảnh báo"]
+    full_df = pd.DataFrame([{k: v for k, v in r.items() if k != "_detail"} for r in results]).reindex(columns=all_cols)
+    view_df = full_df[show_cols]
 
+    risk_subset = ["Vòng 1 - nguy cơ", "Vòng 2 - nguy cơ", "Vòng 3 - mức lưu ý", "Mức lưu ý cao nhất"]
     try:
-        styled = res_df.style.map(_risk_cell_style, subset=["Nguy cơ"])
+        styled = view_df.style.map(_risk_cell_style, subset=[c for c in risk_subset if c in view_df.columns])
     except AttributeError:
-        styled = res_df.style.applymap(_risk_cell_style, subset=["Nguy cơ"])
+        styled = view_df.style.applymap(_risk_cell_style, subset=[c for c in risk_subset if c in view_df.columns])
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
-    if errors:
-        st.warning(
-            f"{errors} hồ sơ có lỗi dữ liệu (thiếu số liệu hoặc ngoài khoảng hợp lý). "
-            "Xem cột Cảnh báo, sửa ở bảng bước 2 rồi phân tích lại.",
-            icon=":material/warning:",
-        )
+    if insufficient:
+        st.warning(f"{insufficient} hồ sơ không đủ dữ liệu để phân tích. Xem cột Cảnh báo, bổ sung ở bảng bước 2 rồi phân tích lại.",
+                   icon=":material/warning:")
 
-    st.download_button(
-        "Tải kết quả Excel", data=results_to_excel(res_df).getvalue(),
-        file_name=f"Ket_qua_phan_tich_hang_loat_{date.today().isoformat()}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        icon=":material/download:", use_container_width=True,
-    )
+    input_df = st.session_state.get("batch_input_df")
+    if input_df is not None:
+        st.download_button(
+            "Tải kết quả Excel (đầy đủ cột + dữ liệu đầu vào)",
+            data=results_to_excel(full_df, input_df).getvalue(),
+            file_name=f"Ket_qua_phan_tich_hang_loat_{date.today().isoformat()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            icon=":material/download:", use_container_width=True,
+        )
 
     ok_idx = [i for i, r in enumerate(results) if r.get("Trạng thái") == "OK"]
     if ok_idx:
         st.markdown("### :material/clinical_notes: Xem chi tiết từng hồ sơ")
         pick = st.selectbox(
             "Chọn hồ sơ", ok_idx, key="batch_detail_pick",
-            format_func=lambda i: f"{i + 1}. {results[i]['Hồ sơ']} — {results[i]['Nguy cơ']}",
+            format_func=lambda i: f"{i + 1}. {results[i]['Hồ sơ']} — {results[i].get('Mức lưu ý cao nhất') or 'chưa phân tầng'}",
         )
         det = results[pick]["_detail"]
-        risk_alert("Nguy cơ Vòng 2", det["category"], det["conclusion"])
-        st.caption(f"Khoảng độ cao: {det['altitude']}")
-        st.markdown("**Các yếu tố từ CBC**")
-        bullet_list(det["reasons"])
-        st.markdown("**Phân tích sơ bộ**")
-        bullet_list(det["findings"])
-        st.markdown("**Khuyến nghị**")
-        bullet_list(det["advice"])
+
+        if "r1" in det:
+            d = det["r1"]
+            risk_alert(f"Vòng 1 ({d['score']}/{ROUND1_MAX_SCORE} điểm, {d['answered']}/20 câu)", d["category"], d["conclusion"])
+            if d["reasons"]:
+                bullet_list(d["reasons"])
+        if "r2" in det:
+            d = det["r2"]
+            risk_alert("CTM — Vòng 2", d["category"], d["conclusion"])
+            st.caption(f"Khoảng độ cao: {d['altitude']} · Mentzer {d['mentzer']:.2f} · Điểm CBC {d['score']}")
+            with st.expander("Các yếu tố, phân tích sơ bộ và khuyến nghị CTM", icon=":material/search:"):
+                st.markdown("**Các yếu tố từ CBC**")
+                bullet_list(d["reasons"])
+                st.markdown("**Phân tích sơ bộ**")
+                bullet_list(d["findings"])
+                st.markdown("**Khuyến nghị**")
+                bullet_list(d["advice"])
+        if det.get("cbc_values"):
+            with st.expander(f"Các chỉ số CTM đã nhập ({len(det['cbc_values'])}/18)", icon=":material/water_drop:"):
+                st.dataframe(pd.DataFrame([det["cbc_values"]]), hide_index=True, use_container_width=True)
+        if "r3" in det:
+            st.markdown("**Sắt · HPLC · PCR — đối chiếu BYT 2022**")
+            bullet_list(det["r3"]["notes"])
+        if det["steps"]:
+            st.markdown("**Gợi ý bước tiếp theo**")
+            bullet_list(det["steps"])
+        if det["warnings"]:
+            st.warning("; ".join(det["warnings"]), icon=":material/warning:")
 
     st.caption(
         "Kết quả chỉ hỗ trợ sàng lọc, không chẩn đoán; cần đối chiếu lâm sàng, xét nghiệm chuyên sâu "
         "và nhân viên y tế. Trang này không lưu dữ liệu vào database."
+    )
+
+
+FACILITY_DISPLAY_LIMIT = 12
+
+
+@st.fragment
+def render_facilities(patient):
+    """Lọc/tìm cơ sở y tế chỉ chạy lại riêng khối này (không dựng lại toàn bộ trang)."""
+    st.subheader(":material/local_hospital: Danh sách cơ sở y tế")
+    st.caption(
+        "Tra cứu bệnh viện/cơ sở y tế theo tỉnh, tên cơ sở hoặc tuyến. Danh mục là dữ liệu điều hướng "
+        "của prototype và cần được đối soát với bệnh viện trước khi sử dụng thực tế."
+    )
+
+    all_facilities = all_medical_facilities()
+    province_options = ["Tất cả tỉnh/thành"] + sorted({x["province"] for x in all_facilities})
+    default_province = PROVINCE_FACILITY_ALIASES.get(patient["province"], patient["province"])
+    selected_facility_province = st.selectbox(
+        "Tỉnh/thành", province_options,
+        index=province_options.index(default_province) if default_province in province_options else 0,
+        key="facility_province_filter",
+    )
+    facility_keyword = st.text_input(
+        "Tìm bệnh viện", placeholder="Ví dụ: Bạch Mai, Huyết học, Đa khoa...",
+        key="facility_keyword", icon=":material/search:",
+    )
+
+    filtered = all_facilities
+    if selected_facility_province != "Tất cả tỉnh/thành":
+        filtered = [x for x in filtered if x["province"] == selected_facility_province]
+    if facility_keyword.strip():
+        kw = facility_keyword.strip().lower()
+        filtered = [
+            x for x in filtered
+            if kw in " ".join([x["name"], x["tier"], x["note"], x["province"]]).lower()
+        ]
+
+    st.write(
+        f"**{len(filtered)} cơ sở** phù hợp với bộ lọc."
+        + (f" Chỉ hiển thị {FACILITY_DISPLAY_LIMIT} cơ sở đầu tiên; hãy lọc thêm để thu hẹp."
+           if len(filtered) > FACILITY_DISPLAY_LIMIT else "")
+    )
+    if filtered:
+        for i, facility in enumerate(filtered[:FACILITY_DISPLAY_LIMIT], start=1):
+            with st.container(border=True):
+                st.markdown(f"**{i}. {facility['name']}**")
+                st.caption(f"{facility['province']} · {facility['tier']}")
+                st.write(facility["note"])
+                st.link_button("Xem vị trí / chỉ đường", facility["maps"], icon=":material/map:")
+    else:
+        st.info("Chưa tìm thấy cơ sở phù hợp. Hãy thử bỏ bộ lọc hoặc tìm bằng tên bệnh viện khác.")
+
+    st.divider()
+    st.markdown("### :material/star: Cơ sở ưu tiên theo nơi ở của người bệnh")
+
+    facilities = recommended_facilities(patient["province"])
+    if facilities:
+        st.success(f"Đã tìm thấy {len(facilities)} cơ sở ưu tiên cho **{patient['province']}**.",
+                   icon=":material/check_circle:")
+        for i, facility in enumerate(facilities, start=1):
+            with st.container(border=True):
+                st.markdown(f"**{i}. {facility['name']}**")
+                st.caption(f"{facility['tier']} · {facility['note']}")
+                st.link_button("Xem vị trí / chỉ đường", facility["maps"], icon=":material/map:")
+    else:
+        maps_url = ("https://www.google.com/maps/search/?api=1&query="
+                    + quote(f"bệnh viện {patient['province']}"))
+        st.info(
+            f"Chưa có cơ sở được chọn sẵn cho **{patient['province']}**. "
+            "Bạn có thể mở Google Maps để xem các bệnh viện gần khu vực."
+        )
+        st.link_button("Tìm bệnh viện trên Google Maps", maps_url, icon=":material/map:")
+
+    st.caption(
+        "Danh mục chỉ hỗ trợ định hướng. Khả năng thực hiện CBC, HPLC/điện di Hb, xét nghiệm gen "
+        "Thalassemia và tiếp nhận chuyên khoa có thể khác nhau theo cơ sở; nên gọi xác nhận trước khi đến."
     )
 
 
@@ -2269,7 +3165,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-with st.expander("Giới thiệu đề tài và cơ sở nghiên cứu", expanded=False, icon=":material/menu_book:"):
+@st.dialog("Giới thiệu đề tài và cơ sở nghiên cứu", width="large")
+def show_project_intro():
     st.markdown("## Lời nói đầu")
     st.markdown("""
     Thalassemia là nhóm bệnh lý huyết sắc tố di truyền do giảm hoặc mất khả năng tổng hợp một hoặc nhiều chuỗi globin. Phổ biểu hiện rất rộng, từ người mang gen có biểu hiện huyết học nhẹ hoặc gần như không có triệu chứng đến các thể bệnh thiếu máu nặng cần chăm sóc y tế lâu dài. Vì có tính di truyền, việc nhận diện người mang gen không chỉ có ý nghĩa đối với cá nhân mà còn có giá trị trong tư vấn di truyền và dự phòng nguy cơ cho thế hệ sau.
@@ -2374,7 +3271,11 @@ with st.expander("Giới thiệu đề tài và cơ sở nghiên cứu", expande
         st.markdown(f"{i}. [{title}]({url})")
         st.caption(url)
 
-if st.button("Tìm hiểu về nghiên cứu và cơ sở khoa học", icon=":material/school:"):
+# Nội dung dài chỉ được dựng khi người dùng bấm nút → trang chính nhẹ hơn nhiều.
+_bi1, _bi2, _ = st.columns([1, 1, 2])
+if _bi1.button("Giới thiệu đề tài", icon=":material/menu_book:", use_container_width=True):
+    show_project_intro()
+if _bi2.button("Cơ sở khoa học", icon=":material/school:", use_container_width=True):
     show_research_overview()
 
 st.markdown(
@@ -2448,53 +3349,61 @@ with st.form("patient_basic_form_v22", clear_on_submit=False):
             "Tiếp tục", icon=":material/arrow_forward:", type="primary", use_container_width=True
         )
 
-# B. Địa giới — cố ý đặt NGOÀI form để selectbox tỉnh rerun ngay khi đổi.
-st.subheader(":material/location_on: Địa giới hành chính hiện tại")
+# B. Địa giới — fragment: đổi tỉnh/thành chỉ chạy lại riêng khối này, không chạy lại cả trang.
+@st.fragment
+def address_picker():
+    st.subheader(":material/location_on: Địa giới hành chính hiện tại")
+    province, commune, ok = "", "", False
 
-try:
-    admin_hierarchy = load_admin_hierarchy()
-    admin_data_ok = True
-except Exception as exc:
-    admin_hierarchy = {}
-    admin_data_ok = False
-    st.error("Không tải được danh mục tỉnh/thành và phường/xã/đặc khu. Vui lòng tải lại trang hoặc thử lại sau.")
-    st.caption(f"Nguồn dữ liệu: {ADMIN_DATA_SOURCE_URL}")
-    st.code(str(exc))
+    try:
+        admin_hierarchy = load_admin_hierarchy()
+        ok = True
+    except Exception as exc:
+        admin_hierarchy = {}
+        st.error("Không tải được danh mục tỉnh/thành và phường/xã/đặc khu. Vui lòng tải lại trang hoặc thử lại sau.")
+        st.caption(f"Nguồn dữ liệu: {ADMIN_DATA_SOURCE_URL}")
+        st.code(str(exc))
 
-selected_province = ""
-commune_value = ""
-
-if admin_data_ok:
-    provinces_list = sorted(admin_hierarchy.keys(), key=str.casefold)
-    province_choice = st.selectbox(
-        "Tỉnh / thành phố *", ["— Chọn tỉnh/thành —"] + provinces_list, key="v22_profile_province"
-    )
-
-    if province_choice == "— Chọn tỉnh/thành —":
-        st.selectbox("Phường / xã / đặc khu *", ["— Chọn tỉnh/thành trước —"],
-                     disabled=True, key="v22_profile_commune_empty")
-    else:
-        selected_province = province_choice
-        available_communes = list(admin_hierarchy.get(selected_province, []))
-        # Key phụ thuộc tỉnh để không tái sử dụng lựa chọn của tỉnh trước đó.
-        safe_province = selected_province.replace(" ", "_").replace("/", "_").replace("\\", "_")
-        commune_choice = st.selectbox(
-            "Phường / xã / đặc khu *",
-            ["— Chọn phường/xã/đặc khu —"] + available_communes,
-            key=f"v22_profile_commune_{safe_province}",
+    if ok:
+        provinces_list = sorted(admin_hierarchy.keys(), key=str.casefold)
+        province_choice = st.selectbox(
+            "Tỉnh / thành phố *", ["— Chọn tỉnh/thành —"] + provinces_list, key="v22_profile_province"
         )
-        if commune_choice != "— Chọn phường/xã/đặc khu —":
-            commune_value = commune_choice
-        if not available_communes:
-            st.error("Tỉnh/thành này chưa có danh mục phường/xã/đặc khu trong dữ liệu hiện tại.")
+        if province_choice == "— Chọn tỉnh/thành —":
+            st.selectbox("Phường / xã / đặc khu *", ["— Chọn tỉnh/thành trước —"],
+                         disabled=True, key="v22_profile_commune_empty")
+        else:
+            province = province_choice
+            available_communes = list(admin_hierarchy.get(province, []))
+            # Key phụ thuộc tỉnh để không tái sử dụng lựa chọn của tỉnh trước đó.
+            safe_province = province.replace(" ", "_").replace("/", "_").replace("\\", "_")
+            commune_choice = st.selectbox(
+                "Phường / xã / đặc khu *",
+                ["— Chọn phường/xã/đặc khu —"] + available_communes,
+                key=f"v22_profile_commune_{safe_province}",
+            )
+            if commune_choice != "— Chọn phường/xã/đặc khu —":
+                commune = commune_choice
+            if not available_communes:
+                st.error("Tỉnh/thành này chưa có danh mục phường/xã/đặc khu trong dữ liệu hiện tại.")
 
-    st.caption(
-        "Danh mục địa giới được tải theo cấu trúc 2 cấp hiện hành; "
-        "không nhập tay tên phường/xã để tránh sai địa danh."
-    )
+        st.caption(
+            "Danh mục địa giới được tải theo cấu trúc 2 cấp hiện hành; "
+            "không nhập tay tên phường/xã để tránh sai địa danh."
+        )
 
-if selected_province and commune_value:
-    st.success(f"Đã chọn: **{commune_value}, {selected_province}**", icon=":material/location_on:")
+    st.session_state["addr_data_ok"] = ok
+    st.session_state["addr_province"] = province
+    st.session_state["addr_commune"] = commune
+
+    if province and commune:
+        st.success(f"Đã chọn: **{commune}, {province}**", icon=":material/location_on:")
+
+
+address_picker()
+admin_data_ok = st.session_state.get("addr_data_ok", False)
+selected_province = st.session_state.get("addr_province", "")
+commune_value = st.session_state.get("addr_commune", "")
 
 # C. Đồng ý + lưu hồ sơ — form riêng
 with st.form("patient_consent_save_form_v22", clear_on_submit=False):
@@ -2970,71 +3879,7 @@ if st.session_state.get("round2_unlocked", False):
         # MEDICAL FACILITIES
         # ----------------------------------------------------
 
-        st.subheader(":material/local_hospital: Danh sách cơ sở y tế")
-        st.caption(
-            "Tra cứu bệnh viện/cơ sở y tế theo tỉnh, tên cơ sở hoặc tuyến. Danh mục là dữ liệu điều hướng "
-            "của prototype và cần được đối soát với bệnh viện trước khi sử dụng thực tế."
-        )
-
-        all_facilities = all_medical_facilities()
-        province_options = ["Tất cả tỉnh/thành"] + sorted({x["province"] for x in all_facilities})
-        default_province = PROVINCE_FACILITY_ALIASES.get(patient["province"], patient["province"])
-        selected_facility_province = st.selectbox(
-            "Tỉnh/thành", province_options,
-            index=province_options.index(default_province) if default_province in province_options else 0,
-            key="facility_province_filter",
-        )
-        facility_keyword = st.text_input(
-            "Tìm bệnh viện", placeholder="Ví dụ: Bạch Mai, Huyết học, Đa khoa...",
-            key="facility_keyword", icon=":material/search:",
-        )
-
-        filtered = all_facilities
-        if selected_facility_province != "Tất cả tỉnh/thành":
-            filtered = [x for x in filtered if x["province"] == selected_facility_province]
-        if facility_keyword.strip():
-            kw = facility_keyword.strip().lower()
-            filtered = [
-                x for x in filtered
-                if kw in " ".join([x["name"], x["tier"], x["note"], x["province"]]).lower()
-            ]
-
-        st.write(f"**{len(filtered)} cơ sở** phù hợp với bộ lọc.")
-        if filtered:
-            for i, facility in enumerate(filtered, start=1):
-                with st.container(border=True):
-                    st.markdown(f"**{i}. {facility['name']}**")
-                    st.caption(f"{facility['province']} · {facility['tier']}")
-                    st.write(facility["note"])
-                    st.link_button("Xem vị trí / chỉ đường", facility["maps"], icon=":material/map:")
-        else:
-            st.info("Chưa tìm thấy cơ sở phù hợp. Hãy thử bỏ bộ lọc hoặc tìm bằng tên bệnh viện khác.")
-
-        st.divider()
-        st.markdown("### :material/star: Cơ sở ưu tiên theo nơi ở của người bệnh")
-
-        facilities = recommended_facilities(patient["province"])
-        if facilities:
-            st.success(f"Đã tìm thấy {len(facilities)} cơ sở ưu tiên cho **{patient['province']}**.",
-                       icon=":material/check_circle:")
-            for i, facility in enumerate(facilities, start=1):
-                with st.container(border=True):
-                    st.markdown(f"**{i}. {facility['name']}**")
-                    st.caption(f"{facility['tier']} · {facility['note']}")
-                    st.link_button("Xem vị trí / chỉ đường", facility["maps"], icon=":material/map:")
-        else:
-            maps_url = ("https://www.google.com/maps/search/?api=1&query="
-                        + quote(f"bệnh viện {patient['province']}"))
-            st.info(
-                f"Chưa có cơ sở được chọn sẵn cho **{patient['province']}**. "
-                "Bạn có thể mở Google Maps để xem các bệnh viện gần khu vực."
-            )
-            st.link_button("Tìm bệnh viện trên Google Maps", maps_url, icon=":material/map:")
-
-        st.caption(
-            "Danh mục chỉ hỗ trợ định hướng. Khả năng thực hiện CBC, HPLC/điện di Hb, xét nghiệm gen "
-            "Thalassemia và tiếp nhận chuyên khoa có thể khác nhau theo cơ sở; nên gọi xác nhận trước khi đến."
-        )
+        render_facilities(patient)
 
         # ----------------------------------------------------
         # WORD REPORT
@@ -3042,7 +3887,7 @@ if st.session_state.get("round2_unlocked", False):
 
         st.subheader(":material/description: Phiếu kết quả")
 
-        report = make_word(
+        report = make_word_bytes(
             patient=patient,
             r1_score=st.session_state["round1_score"],
             r1_category=st.session_state["round1_category"],
