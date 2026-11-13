@@ -2685,7 +2685,7 @@ def render_codebook_panel():
             "Giá trị chữ (Nam, Nữ, Có, Không, Male, Yes…) vẫn nhận diện tự động. Quy ước áp dụng cho các file Excel/CSV/SPSS/Stata/SAS/R/Word-bảng "
             "và được ghi vào file kết quả để lưu vết."
         )
-        tabs = st.tabs(["Giới tính", "Có/Không (Q)", "Câu 9", "Hôn nhân", "Thai kỳ", "Số liệu & đơn vị", "Ghép cột thủ công"])
+        tabs = st.tabs(["Giới tính", "Có/Không (Q)", "Tình trạng xét nghiệm Thalassemia", "Hôn nhân", "Thai kỳ", "Số liệu & đơn vị", "Ghép cột thủ công"])
         for tab, key in zip(tabs[:5], ["sex", "yn", "q9", "marital", "preg"]):
             with tab:
                 _codebook_editor(key)
