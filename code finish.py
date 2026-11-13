@@ -23,53 +23,223 @@ st.set_page_config(
     layout="wide",
 )
 
-st.markdown("""
+GLASS_CSS = r"""
 <style>
-/* ===== Professional Hematology UI — adaptive Light / Dark ===== */
-:root {
-  --heme-navy:#17324D;
-  --heme-red:#8E2C3A;
-  --heme-accent:#A33A49;
-  --heme-border:color-mix(in srgb, var(--text-color) 18%, transparent);
-  --heme-muted:color-mix(in srgb, var(--text-color) 66%, transparent);
-  --heme-surface:var(--secondary-background-color);
-  --heme-surface-soft:color-mix(in srgb, var(--secondary-background-color) 86%, var(--background-color));
+/* =====================================================================
+   LIQUID GLASS UI — kính mờ, viền sáng, nền sắc màu; tự thích ứng sáng/tối
+   (dùng biến màu của chính theme Streamlit: --text-color, --background-color)
+   ===================================================================== */
+:root{
+  --lg-accent:#C0394F;          /* đỏ huyết học */
+  --lg-accent-dark:#8E2C3A;
+  --lg-blue:#4F7CFF;
+  --lg-teal:#2BB3A3;
+  --lg-text:var(--text-color,#1d1d1f);
+  --lg-bg:var(--background-color,#ffffff);
+  --lg-fill:color-mix(in srgb,var(--lg-bg) 52%,transparent);
+  --lg-fill-soft:color-mix(in srgb,var(--lg-bg) 30%,transparent);
+  --lg-fill-strong:color-mix(in srgb,var(--lg-bg) 74%,transparent);
+  --lg-pop:color-mix(in srgb,var(--lg-bg) 90%,transparent);
+  --lg-stroke:color-mix(in srgb,var(--lg-text) 13%,transparent);
+  --lg-muted:color-mix(in srgb,var(--lg-text) 62%,transparent);
+  --lg-radius:22px;
+  --lg-fx:blur(22px) saturate(1.7);
+  --lg-fx-sm:blur(12px) saturate(1.5);
+  --lg-spec:inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(255,255,255,.08),inset 0 0 0 1px rgba(255,255,255,.08);
+  --lg-shadow:0 14px 44px -16px rgba(20,25,45,.32),0 2px 8px rgba(20,25,45,.06);
 }
-.main .block-container { max-width:1180px; padding-top:2rem; padding-bottom:3rem; }
-[data-testid="stHeader"] { background:transparent; }
-.hematology-brand { border-left:5px solid var(--heme-red); padding:.15rem 0 .15rem 1rem; margin-bottom:.35rem; }
-.hematology-brand .eyebrow { font-size:.78rem; letter-spacing:.16em; color:var(--heme-muted); font-weight:700; text-transform:uppercase; }
-.hematology-brand .title { font-size:2rem; line-height:1.15; color:var(--text-color); font-weight:750; margin-top:.18rem; }
-.hematology-brand .title-main { font-size:2.35rem; font-weight:850; letter-spacing:-0.035em; line-height:1.12; text-transform:uppercase; }
-.hematology-brand .subtitle { color:var(--heme-muted); font-size:.95rem; margin-top:.45rem; }
-.section-rule { height:1px; background:var(--heme-border); margin:1.2rem 0; }
-[data-testid="stExpander"] { border:1px solid var(--heme-border); border-radius:10px; background:var(--heme-surface-soft); }
-[data-testid="stExpander"] summary p { color:var(--text-color); font-weight:700; }
-[data-testid="stSidebar"] { border-right:1px solid var(--heme-border); }
-[data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 { color:var(--text-color); }
-.stButton > button { border-radius:7px; font-weight:600; }
-.contact-card { border:1px solid var(--heme-border); border-radius:10px; padding:1rem 1.15rem; background:var(--heme-surface-soft); margin-top:1rem; }
-.contact-card .label { color:var(--heme-muted); font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
-.contact-card .name { color:var(--text-color); font-size:1.1rem; font-weight:750; margin:.2rem 0 .55rem; }
-.contact-card a { color:var(--heme-accent); text-decoration:none; font-weight:600; }
-.contact-card a:hover { text-decoration:underline; }
-.small-note { color:var(--heme-muted); font-size:.82rem; }
+@media (prefers-color-scheme: dark){
+  :root{ --lg-spec:inset 0 1px 0 rgba(255,255,255,.22),inset 0 -1px 0 rgba(255,255,255,.04),inset 0 0 0 1px rgba(255,255,255,.05);
+         --lg-shadow:0 14px 44px -16px rgba(0,0,0,.6),0 2px 8px rgba(0,0,0,.25); }
+}
 
-/* Huy hiệu mức nguy cơ */
-.risk-badge { display:inline-block; padding:.2rem .7rem; border-radius:999px; font-size:.78rem; font-weight:700; letter-spacing:.06em; }
-.risk-low  { background:color-mix(in srgb,#2E7D32 16%,transparent); color:#2E7D32; }
-.risk-mid  { background:color-mix(in srgb,#B26A00 16%,transparent); color:#B26A00; }
-.risk-high { background:color-mix(in srgb,#B3261E 16%,transparent); color:#B3261E; }
+/* ---------- Nền: lớp "aurora" cố định phía sau nội dung ---------- */
+.stApp{ position:relative; isolation:isolate;
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Inter","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif; }
+.stApp::before{ content:""; position:fixed; inset:0; z-index:-1; pointer-events:none;
+  background:
+    radial-gradient(900px 620px at 6% -6%,color-mix(in srgb,var(--lg-accent) 30%,transparent),transparent 62%),
+    radial-gradient(820px 580px at 102% 2%,color-mix(in srgb,var(--lg-blue) 26%,transparent),transparent 62%),
+    radial-gradient(920px 700px at 72% 108%,color-mix(in srgb,var(--lg-teal) 24%,transparent),transparent 62%),
+    radial-gradient(700px 520px at 0% 100%,color-mix(in srgb,#9B6BFF 16%,transparent),transparent 62%); }
+[data-testid="stAppViewContainer"],[data-testid="stMain"],.main,[data-testid="stHeader"]{ background:transparent !important; }
+.main .block-container{ max-width:1180px; padding-top:2rem; padding-bottom:4rem; }
+h1,h2,h3,h4{ letter-spacing:-0.02em; }
+hr{ border:0 !important; height:1px !important; background:linear-gradient(90deg,transparent,var(--lg-stroke),transparent) !important; }
+[data-testid="stCaptionContainer"],.stCaption{ color:var(--lg-muted); }
+a{ color:var(--lg-accent); }
+::-webkit-scrollbar{ width:10px; height:10px; }
+::-webkit-scrollbar-thumb{ background:color-mix(in srgb,var(--lg-text) 22%,transparent); border-radius:999px; border:3px solid transparent; background-clip:padding-box; }
 
-@media (prefers-color-scheme: dark) {
-  :root { --heme-red:#C45A69; --heme-accent:#E07987; }
-  .risk-low  { color:#7BC47F; }
-  .risk-mid  { color:#E5A64B; }
-  .risk-high { color:#F2877F; }
-  [data-testid="stExpander"], .contact-card { box-shadow:0 1px 0 rgba(255,255,255,.025) inset; }
+/* ---------- Thẻ kính: container, expander, form, metric, uploader ---------- */
+[data-testid="stVerticalBlockBorderWrapper"],
+[data-testid="stExpander"],
+[data-testid="stMetric"],
+[data-testid="stFileUploaderDropzone"],
+.contact-card{
+  background:var(--lg-fill) !important;
+  -webkit-backdrop-filter:var(--lg-fx); backdrop-filter:var(--lg-fx);
+  border:1px solid var(--lg-stroke) !important;
+  border-radius:var(--lg-radius) !important;
+  box-shadow:var(--lg-spec),var(--lg-shadow);
+}
+[data-testid="stForm"]{
+  background:var(--lg-fill-soft) !important;
+  -webkit-backdrop-filter:var(--lg-fx-sm); backdrop-filter:var(--lg-fx-sm);
+  border:1px solid var(--lg-stroke) !important;
+  border-radius:calc(var(--lg-radius) + 4px) !important;
+  box-shadow:var(--lg-spec);
+}
+[data-testid="stForm"] [data-testid="stVerticalBlockBorderWrapper"]{ background:var(--lg-fill-strong) !important; box-shadow:var(--lg-spec); }
+[data-testid="stExpander"] details{ border:0 !important; background:transparent !important; }
+[data-testid="stExpander"] summary{ border-radius:var(--lg-radius); }
+[data-testid="stExpander"] summary p{ font-weight:700; }
+[data-testid="stMetric"]{ padding:14px 18px; }
+[data-testid="stMetricValue"]{ font-weight:750; letter-spacing:-0.02em; }
+[data-testid="stFileUploaderDropzone"]{ border-style:dashed !important; }
+[data-testid="stDataFrame"]{ border-radius:18px; overflow:hidden; border:1px solid var(--lg-stroke); box-shadow:var(--lg-spec); }
+
+/* ---------- Thanh bên nổi ---------- */
+[data-testid="stSidebar"]{
+  background:var(--lg-fill) !important;
+  -webkit-backdrop-filter:var(--lg-fx); backdrop-filter:var(--lg-fx);
+  border-right:1px solid var(--lg-stroke); box-shadow:var(--lg-spec); }
+[data-testid="stSidebarContent"],[data-testid="stSidebar"]>div{ background:transparent !important; }
+
+/* ---------- Hộp thông báo ---------- */
+[data-testid="stAlert"]>div,[data-testid="stAlert"] [data-baseweb="notification"]{
+  border-radius:18px !important; border:1px solid var(--lg-stroke) !important;
+  -webkit-backdrop-filter:var(--lg-fx-sm); backdrop-filter:var(--lg-fx-sm); box-shadow:var(--lg-spec); }
+
+/* ---------- Nút bấm dạng viên thuốc kính ---------- */
+[data-testid^="stBaseButton"],[data-testid^="stBaseLinkButton"],.stButton>button,.stDownloadButton>button{
+  border-radius:999px !important; font-weight:600 !important;
+  border:1px solid var(--lg-stroke) !important;
+  background:var(--lg-fill) !important;
+  -webkit-backdrop-filter:var(--lg-fx-sm); backdrop-filter:var(--lg-fx-sm);
+  box-shadow:var(--lg-spec),0 6px 16px -8px rgba(20,25,45,.35);
+  transition:transform .18s ease,box-shadow .18s ease,background .18s ease,filter .18s ease; }
+[data-testid^="stBaseButton"]:hover,[data-testid^="stBaseLinkButton"]:hover{
+  transform:translateY(-1px); background:var(--lg-fill-strong) !important;
+  box-shadow:var(--lg-spec),0 10px 22px -8px rgba(20,25,45,.45); }
+[data-testid^="stBaseButton"]:active,[data-testid^="stBaseLinkButton"]:active{ transform:scale(.98); }
+[data-testid^="stBaseButton"]:disabled{ opacity:.5; transform:none; }
+[data-testid="stBaseButton-primary"],[data-testid="stBaseButton-primaryFormSubmit"],
+button[kind="primary"],button[kind="primaryFormSubmit"]{
+  background:linear-gradient(135deg,color-mix(in srgb,var(--lg-accent) 86%,#fff),var(--lg-accent-dark)) !important;
+  border:1px solid rgba(255,255,255,.38) !important; color:#fff !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.55),inset 0 -6px 14px rgba(0,0,0,.18),0 12px 26px -10px var(--lg-accent) !important; }
+[data-testid="stBaseButton-primary"] *,[data-testid="stBaseButton-primaryFormSubmit"] *{ color:#fff !important; }
+[data-testid="stBaseButton-primary"]:hover,[data-testid="stBaseButton-primaryFormSubmit"]:hover{
+  background:linear-gradient(135deg,color-mix(in srgb,var(--lg-accent) 74%,#fff),var(--lg-accent)) !important; filter:saturate(1.1); }
+
+/* ---------- Ô nhập liệu kính ---------- */
+[data-baseweb="input"],[data-baseweb="textarea"],[data-baseweb="select"]>div,[data-testid="stDateInput"] [data-baseweb="input"]{
+  background:var(--lg-fill-soft) !important; border:1px solid var(--lg-stroke) !important;
+  border-radius:14px !important; box-shadow:inset 0 1px 0 rgba(255,255,255,.18);
+  -webkit-backdrop-filter:var(--lg-fx-sm); backdrop-filter:var(--lg-fx-sm); transition:box-shadow .18s ease,border-color .18s ease; }
+[data-baseweb="base-input"],[data-baseweb="base-input"] input,[data-baseweb="textarea"] textarea{ background:transparent !important; }
+[data-baseweb="input"]:focus-within,[data-baseweb="textarea"]:focus-within,[data-baseweb="select"]>div:focus-within{
+  border-color:var(--lg-accent) !important; box-shadow:0 0 0 3px color-mix(in srgb,var(--lg-accent) 28%,transparent) !important; }
+[data-testid="stNumberInput"] button{ background:transparent !important; box-shadow:none !important; backdrop-filter:none; }
+[data-baseweb="popover"]>div,[data-baseweb="popover"] [role="listbox"],[data-baseweb="menu"]{
+  background:var(--lg-pop) !important; -webkit-backdrop-filter:var(--lg-fx); backdrop-filter:var(--lg-fx);
+  border:1px solid var(--lg-stroke); border-radius:16px !important; box-shadow:var(--lg-shadow); }
+
+/* ---------- Tab dạng viên kính ---------- */
+[data-baseweb="tab-list"]{ gap:4px; padding:5px; width:fit-content; max-width:100%; border-radius:999px;
+  background:var(--lg-fill); border:1px solid var(--lg-stroke); box-shadow:var(--lg-spec);
+  -webkit-backdrop-filter:var(--lg-fx-sm); backdrop-filter:var(--lg-fx-sm); }
+button[data-baseweb="tab"]{ border-radius:999px !important; padding:6px 16px !important; background:transparent !important; }
+button[data-baseweb="tab"][aria-selected="true"]{ background:var(--lg-fill-strong) !important;
+  box-shadow:var(--lg-spec),0 4px 12px -4px rgba(20,25,45,.35); }
+[data-baseweb="tab-highlight"],[data-baseweb="tab-border"]{ display:none !important; }
+
+/* ---------- Hộp thoại ---------- */
+div[role="dialog"]{ background:var(--lg-pop) !important; -webkit-backdrop-filter:blur(34px) saturate(1.8); backdrop-filter:blur(34px) saturate(1.8);
+  border:1px solid var(--lg-stroke); border-radius:28px !important; box-shadow:var(--lg-shadow),var(--lg-spec); }
+[data-testid="stProgress"] [role="progressbar"],[data-testid="stProgress"] [role="progressbar"]>div{ border-radius:999px; }
+
+/* ---------- Khối thương hiệu ---------- */
+.hematology-brand{ display:flex; align-items:center; gap:1.2rem; position:relative; overflow:hidden;
+  padding:1.35rem 1.7rem; margin-bottom:.4rem; border-radius:30px;
+  background:var(--lg-fill); border:1px solid var(--lg-stroke);
+  -webkit-backdrop-filter:var(--lg-fx); backdrop-filter:var(--lg-fx); box-shadow:var(--lg-spec),var(--lg-shadow); }
+.hematology-brand::after{ content:""; position:absolute; inset:0; pointer-events:none;
+  background:linear-gradient(115deg,rgba(255,255,255,.38) 0%,rgba(255,255,255,0) 36%); opacity:.55; }
+.hematology-brand .brand-text{ position:relative; z-index:1; min-width:0; }
+.brand-orb{ position:relative; z-index:1; flex:none; width:60px; height:60px; border-radius:50%;
+  background:radial-gradient(circle at 30% 24%,rgba(255,255,255,.95),rgba(255,255,255,.12) 38%,transparent 40%),
+             linear-gradient(135deg,#E7707F,var(--lg-accent-dark));
+  box-shadow:inset 0 2px 7px rgba(255,255,255,.65),inset 0 -9px 18px rgba(0,0,0,.28),0 14px 28px -10px var(--lg-accent); }
+.brand-orb::before{ content:""; position:absolute; left:50%; top:56%; width:20px; height:20px;
+  border-radius:50% 0 50% 50%; transform:translate(-50%,-50%) rotate(-45deg);
+  background:rgba(255,255,255,.93); box-shadow:0 2px 6px rgba(0,0,0,.25); }
+.hematology-brand .eyebrow{ font-size:.74rem; letter-spacing:.18em; color:var(--lg-muted); font-weight:700; text-transform:uppercase; }
+.hematology-brand .title{ line-height:1.12; font-weight:800; margin-top:.2rem; color:var(--lg-text); }
+.hematology-brand .title-main{ font-size:clamp(1.45rem,3.1vw,2.3rem); letter-spacing:-0.035em; text-transform:uppercase;
+  background:linear-gradient(95deg,var(--lg-text) 10%,color-mix(in srgb,var(--lg-accent) 78%,var(--lg-text)) 90%);
+  -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+.hematology-brand .chips{ display:flex; flex-wrap:wrap; gap:.4rem; margin-top:.7rem; }
+.chip{ display:inline-block; padding:.18rem .7rem; font-size:.74rem; font-weight:650; border-radius:999px;
+  color:var(--lg-text); background:var(--lg-fill-soft); border:1px solid var(--lg-stroke); box-shadow:var(--lg-spec); }
+.section-rule{ height:1px; margin:1.2rem 0; background:linear-gradient(90deg,transparent,var(--lg-stroke),transparent); }
+.contact-card{ padding:1rem 1.2rem; margin-top:1rem; }
+.contact-card .label{ color:var(--lg-muted); font-size:.74rem; text-transform:uppercase; letter-spacing:.1em; font-weight:700; }
+.contact-card .name{ color:var(--lg-text); font-size:1.1rem; font-weight:750; margin:.2rem 0 .55rem; }
+.contact-card a{ color:var(--lg-accent); text-decoration:none; font-weight:600; }
+.contact-card a:hover{ text-decoration:underline; }
+.small-note{ color:var(--lg-muted); font-size:.82rem; }
+
+/* ---------- Huy hiệu mức nguy cơ ---------- */
+.risk-badge{ display:inline-block; padding:.2rem .75rem; border-radius:999px; font-size:.76rem; font-weight:700; letter-spacing:.06em;
+  border:1px solid var(--lg-stroke); box-shadow:var(--lg-spec); }
+.risk-low{ background:color-mix(in srgb,#2E7D32 18%,transparent); color:#2E7D32; }
+.risk-mid{ background:color-mix(in srgb,#B26A00 18%,transparent); color:#B26A00; }
+.risk-high{ background:color-mix(in srgb,#B3261E 18%,transparent); color:#B3261E; }
+@media (prefers-color-scheme: dark){ .risk-low{ color:#7BC47F; } .risk-mid{ color:#E5A64B; } .risk-high{ color:#F2877F; } }
+
+/* ---------- Ẩn khoảng trống do khối <style> ---------- */
+[data-testid="stElementContainer"]:has(style){ display:none; }
+
+/* ---------- Tiết kiệm tài nguyên ---------- */
+@media (max-width:768px){
+  :root{ --lg-radius:18px; --lg-fx:blur(12px) saturate(1.4); --lg-fx-sm:blur(8px); }
+  .hematology-brand{ padding:1rem 1.1rem; gap:.8rem; border-radius:24px; }
+  .brand-orb{ width:46px; height:46px; } .brand-orb::before{ width:15px; height:15px; }
+}
+@media (prefers-reduced-motion:reduce){ *{ transition:none !important; } }
+@media (prefers-reduced-transparency:reduce){
+  :root{ --lg-fx:none; --lg-fx-sm:none; --lg-fill:color-mix(in srgb,var(--lg-bg) 94%,transparent);
+         --lg-fill-soft:color-mix(in srgb,var(--lg-bg) 88%,transparent); --lg-fill-strong:var(--lg-bg); }
+}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  :root{ --lg-fill:color-mix(in srgb,var(--lg-bg) 88%,transparent); --lg-fill-soft:color-mix(in srgb,var(--lg-bg) 80%,transparent); }
 }
 </style>
-""", unsafe_allow_html=True)
+"""
+
+# Khi người dùng tắt hiệu ứng kính (máy yếu): bỏ blur + nền aurora, tăng độ đặc để vẫn dễ đọc.
+GLASS_OFF_CSS = r"""
+<style>
+:root{ --lg-fx:none; --lg-fx-sm:none;
+  --lg-fill:color-mix(in srgb,var(--lg-bg) 92%,transparent);
+  --lg-fill-soft:color-mix(in srgb,var(--lg-bg) 86%,transparent);
+  --lg-fill-strong:var(--lg-bg); }
+.stApp::before{ display:none; }
+[data-testid="stVerticalBlockBorderWrapper"],[data-testid="stExpander"],[data-testid="stMetric"],[data-testid="stSidebar"],.hematology-brand,.contact-card{ box-shadow:none !important; }
+</style>
+"""
+
+
+def _minify_css(css):
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    return re.sub(r"\s+", " ", css).strip()
+
+
+# Có thể tắt hiệu ứng kính ở thanh bên (máy yếu / mạng chậm) → nhẹ và nhanh hơn.
+_glass_on = st.session_state.get("glass_fx", True)
+st.markdown(_minify_css(GLASS_CSS + ("" if _glass_on else GLASS_OFF_CSS)), unsafe_allow_html=True)
 
 # ============================================================
 # THALASSEMIA SCREENING PREVIEW
@@ -2726,46 +2896,6 @@ def results_to_excel(results_df, input_df):
     return buf
 
 
-
-# Khai báo sớm để trang phân tích hàng loạt dùng được trước khi render Vòng 1.
-YNK = ["Không", "Có", "Không biết"]
-
-ROUND1_SECTIONS = [
-    (":material/family_restroom: A. Tiền sử gia đình", [
-        ("q1", "1. Trong gia đình/dòng họ có người từng được chẩn đoán Thalassemia không?"),
-        ("q2", "2. Trong gia đình/dòng họ có người từng được thông báo mang gen Thalassemia/hemoglobinopathy không?"),
-        ("q3", "3. Cha hoặc mẹ bạn có từng được xét nghiệm Thalassemia/hemoglobinopathy không?"),
-        ("q4", "4. Anh/chị/em ruột có từng được chẩn đoán thiếu máu hoặc hồng cầu nhỏ không?"),
-        ("q5", "5. Gia đình có trẻ từng phải truyền máu nhiều lần hoặc định kỳ không?"),
-    ]),
-    (":material/history: B. Tiền sử bản thân", [
-        ("q6", "6. Bạn từng được nhân viên y tế thông báo bị thiếu máu chưa?"),
-        ("q7", "7. Bạn từng được thông báo MCV thấp/hồng cầu nhỏ chưa?"),
-        ("q8", "8. Bạn từng được thông báo MCH thấp/hồng cầu nhược sắc chưa?"),
-        ("q9", None),  # selectbox riêng
-        ("q10", "10. Bạn từng được chẩn đoán HbE hoặc hemoglobinopathy khác chưa?"),
-        ("q11", "11. Bản thân từng truyền máu nhiều lần hoặc định kỳ chưa?"),
-        ("q12", "12. Bạn có tiền sử thiếu máu kéo dài từ nhỏ hoặc từ tuổi thiếu niên không?"),
-    ]),
-    (":material/monitor_heart: C. Dấu hiệu hỗ trợ", [
-        ("q13", "13. Bạn có thường xuyên mệt mỏi hoặc giảm khả năng hoạt động không?"),
-        ("q14", "14. Bạn có thường xuyên hoa mắt/chóng mặt không rõ nguyên nhân không?"),
-        ("q15", "15. Bạn từng được nhận xét da hoặc niêm mạc nhợt hơn bình thường chưa?"),
-        ("q16", "16. Bạn từng có vàng da/vàng mắt không rõ nguyên nhân chưa?"),
-        ("q17", "17. Bạn từng được bác sĩ ghi nhận lách to hoặc gan lách to chưa?"),
-        ("q18", "18. Bạn từng được bác sĩ lưu ý có biến chứng liên quan bệnh huyết học mạn chưa?"),
-    ]),
-    (":material/travel_explore: D. Khả năng tiếp cận xét nghiệm — không tính điểm", [
-        ("q19", "19. Bạn hiện có CBC trong vòng 6–12 tháng gần đây không?"),
-        ("q20", "20. Bạn có gặp khó khăn khi đến cơ sở có xét nghiệm chuyên sâu do khoảng cách, chi phí hoặc thời gian di chuyển không?"),
-    ]),
-]
-
-Q9_OPTIONS = [
-    "Chưa xét nghiệm", "Đã xét nghiệm, bình thường", "Đã nghi ngờ",
-    "Đã xác định mang gen", "Không nhớ",
-]
-
 def _question_texts():
     texts = {"Q9": "9. Bạn từng xét nghiệm Thalassemia/hemoglobinopathy chưa?"}
     for _title, questions in ROUND1_SECTIONS:
@@ -3199,8 +3329,11 @@ def render_facilities(patient):
 # ============================================================
 
 st.markdown(
-    '<div class="hematology-brand"><div class="eyebrow">HEMATOLOGY · COMMUNITY SCREENING RESEARCH</div>'
-    '<div class="title title-main">HỆ THỐNG HỖ TRỢ SÀNG LỌC THALASSEMIA</div></div>'
+    '<div class="hematology-brand"><div class="brand-orb"></div><div class="brand-text">'
+    '<div class="eyebrow">HEMATOLOGY · COMMUNITY SCREENING RESEARCH</div>'
+    '<div class="title title-main">HỆ THỐNG HỖ TRỢ SÀNG LỌC THALASSEMIA</div>'
+    '<div class="chips"><span class="chip">Vòng 1 · Tầm soát</span><span class="chip">Vòng 2 · Công thức máu</span>'
+    '<span class="chip">Vòng 3 · Theo dõi</span><span class="chip">Prototype</span></div></div></div>'
     '<div class="section-rule"></div>',
     unsafe_allow_html=True,
 )
@@ -3332,6 +3465,12 @@ st.markdown(
 # ============================================================
 
 render_auth_sidebar()
+
+st.sidebar.divider()
+st.sidebar.toggle(
+    "Hiệu ứng kính (Liquid Glass)", value=True, key="glass_fx",
+    help="Tắt nếu máy yếu hoặc mạng chậm để trang nhẹ và mở nhanh hơn.",
+)
 
 auth_user = current_auth_user()
 
@@ -3557,6 +3696,44 @@ st.caption(
     "Vòng 1 dùng để ghi nhận các yếu tố cần lưu ý và đưa khuyến nghị. "
     "Tất cả người tham gia đều được tiếp tục Vòng 2."
 )
+
+YNK = ["Không", "Có", "Không biết"]
+
+ROUND1_SECTIONS = [
+    (":material/family_restroom: A. Tiền sử gia đình", [
+        ("q1", "1. Trong gia đình/dòng họ có người từng được chẩn đoán Thalassemia không?"),
+        ("q2", "2. Trong gia đình/dòng họ có người từng được thông báo mang gen Thalassemia/hemoglobinopathy không?"),
+        ("q3", "3. Cha hoặc mẹ bạn có từng được xét nghiệm Thalassemia/hemoglobinopathy không?"),
+        ("q4", "4. Anh/chị/em ruột có từng được chẩn đoán thiếu máu hoặc hồng cầu nhỏ không?"),
+        ("q5", "5. Gia đình có trẻ từng phải truyền máu nhiều lần hoặc định kỳ không?"),
+    ]),
+    (":material/history: B. Tiền sử bản thân", [
+        ("q6", "6. Bạn từng được nhân viên y tế thông báo bị thiếu máu chưa?"),
+        ("q7", "7. Bạn từng được thông báo MCV thấp/hồng cầu nhỏ chưa?"),
+        ("q8", "8. Bạn từng được thông báo MCH thấp/hồng cầu nhược sắc chưa?"),
+        ("q9", None),  # selectbox riêng
+        ("q10", "10. Bạn từng được chẩn đoán HbE hoặc hemoglobinopathy khác chưa?"),
+        ("q11", "11. Bản thân từng truyền máu nhiều lần hoặc định kỳ chưa?"),
+        ("q12", "12. Bạn có tiền sử thiếu máu kéo dài từ nhỏ hoặc từ tuổi thiếu niên không?"),
+    ]),
+    (":material/monitor_heart: C. Dấu hiệu hỗ trợ", [
+        ("q13", "13. Bạn có thường xuyên mệt mỏi hoặc giảm khả năng hoạt động không?"),
+        ("q14", "14. Bạn có thường xuyên hoa mắt/chóng mặt không rõ nguyên nhân không?"),
+        ("q15", "15. Bạn từng được nhận xét da hoặc niêm mạc nhợt hơn bình thường chưa?"),
+        ("q16", "16. Bạn từng có vàng da/vàng mắt không rõ nguyên nhân chưa?"),
+        ("q17", "17. Bạn từng được bác sĩ ghi nhận lách to hoặc gan lách to chưa?"),
+        ("q18", "18. Bạn từng được bác sĩ lưu ý có biến chứng liên quan bệnh huyết học mạn chưa?"),
+    ]),
+    (":material/travel_explore: D. Khả năng tiếp cận xét nghiệm — không tính điểm", [
+        ("q19", "19. Bạn hiện có CBC trong vòng 6–12 tháng gần đây không?"),
+        ("q20", "20. Bạn có gặp khó khăn khi đến cơ sở có xét nghiệm chuyên sâu do khoảng cách, chi phí hoặc thời gian di chuyển không?"),
+    ]),
+]
+
+Q9_OPTIONS = [
+    "Chưa xét nghiệm", "Đã xét nghiệm, bình thường", "Đã nghi ngờ",
+    "Đã xác định mang gen", "Không nhớ",
+]
 
 with st.form("round1_form", clear_on_submit=False):
     answers = {}
