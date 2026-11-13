@@ -2026,6 +2026,46 @@ Các điểm số và ngưỡng của Vòng 1/Vòng 2 trong phiên bản hiện 
     st.link_button("ACOG – Carrier Screening for Hemoglobinopathies", "https://www.acog.org/womens-health/faqs/carrier-screening-for-hemoglobinopathies", icon=":material/open_in_new:", use_container_width=True)
 
 
+# ---------- Câu hỏi Vòng 1: định nghĩa SỚM vì trang phân tích hàng loạt cũng dùng ----------
+YNK = ["Không", "Có", "Không biết"]
+
+ROUND1_SECTIONS = [
+    (":material/family_restroom: A. Tiền sử gia đình", [
+        ("q1", "1. Trong gia đình/dòng họ có người từng được chẩn đoán Thalassemia không?"),
+        ("q2", "2. Trong gia đình/dòng họ có người từng được thông báo mang gen Thalassemia/hemoglobinopathy không?"),
+        ("q3", "3. Cha hoặc mẹ bạn có từng được xét nghiệm Thalassemia/hemoglobinopathy không?"),
+        ("q4", "4. Anh/chị/em ruột có từng được chẩn đoán thiếu máu hoặc hồng cầu nhỏ không?"),
+        ("q5", "5. Gia đình có trẻ từng phải truyền máu nhiều lần hoặc định kỳ không?"),
+    ]),
+    (":material/history: B. Tiền sử bản thân", [
+        ("q6", "6. Bạn từng được nhân viên y tế thông báo bị thiếu máu chưa?"),
+        ("q7", "7. Bạn từng được thông báo MCV thấp/hồng cầu nhỏ chưa?"),
+        ("q8", "8. Bạn từng được thông báo MCH thấp/hồng cầu nhược sắc chưa?"),
+        ("q9", None),  # selectbox riêng
+        ("q10", "10. Bạn từng được chẩn đoán HbE hoặc hemoglobinopathy khác chưa?"),
+        ("q11", "11. Bản thân từng truyền máu nhiều lần hoặc định kỳ chưa?"),
+        ("q12", "12. Bạn có tiền sử thiếu máu kéo dài từ nhỏ hoặc từ tuổi thiếu niên không?"),
+    ]),
+    (":material/monitor_heart: C. Dấu hiệu hỗ trợ", [
+        ("q13", "13. Bạn có thường xuyên mệt mỏi hoặc giảm khả năng hoạt động không?"),
+        ("q14", "14. Bạn có thường xuyên hoa mắt/chóng mặt không rõ nguyên nhân không?"),
+        ("q15", "15. Bạn từng được nhận xét da hoặc niêm mạc nhợt hơn bình thường chưa?"),
+        ("q16", "16. Bạn từng có vàng da/vàng mắt không rõ nguyên nhân chưa?"),
+        ("q17", "17. Bạn từng được bác sĩ ghi nhận lách to hoặc gan lách to chưa?"),
+        ("q18", "18. Bạn từng được bác sĩ lưu ý có biến chứng liên quan bệnh huyết học mạn chưa?"),
+    ]),
+    (":material/travel_explore: D. Khả năng tiếp cận xét nghiệm — không tính điểm", [
+        ("q19", "19. Bạn hiện có CBC trong vòng 6–12 tháng gần đây không?"),
+        ("q20", "20. Bạn có gặp khó khăn khi đến cơ sở có xét nghiệm chuyên sâu do khoảng cách, chi phí hoặc thời gian di chuyển không?"),
+    ]),
+]
+
+Q9_OPTIONS = [
+    "Chưa xét nghiệm", "Đã xét nghiệm, bình thường", "Đã nghi ngờ",
+    "Đã xác định mang gen", "Không nhớ",
+]
+
+
 # ============================================================
 # BATCH ANALYSIS — hồ sơ ĐẦY ĐỦ nhiều người cùng lúc
 #   Vòng 1 (20 câu tầm soát) + CTM 18 chỉ số + sắt/ferritin + HPLC + PCR/di truyền
@@ -3715,43 +3755,6 @@ st.caption(
     "Tất cả người tham gia đều được tiếp tục Vòng 2."
 )
 
-YNK = ["Không", "Có", "Không biết"]
-
-ROUND1_SECTIONS = [
-    (":material/family_restroom: A. Tiền sử gia đình", [
-        ("q1", "1. Trong gia đình/dòng họ có người từng được chẩn đoán Thalassemia không?"),
-        ("q2", "2. Trong gia đình/dòng họ có người từng được thông báo mang gen Thalassemia/hemoglobinopathy không?"),
-        ("q3", "3. Cha hoặc mẹ bạn có từng được xét nghiệm Thalassemia/hemoglobinopathy không?"),
-        ("q4", "4. Anh/chị/em ruột có từng được chẩn đoán thiếu máu hoặc hồng cầu nhỏ không?"),
-        ("q5", "5. Gia đình có trẻ từng phải truyền máu nhiều lần hoặc định kỳ không?"),
-    ]),
-    (":material/history: B. Tiền sử bản thân", [
-        ("q6", "6. Bạn từng được nhân viên y tế thông báo bị thiếu máu chưa?"),
-        ("q7", "7. Bạn từng được thông báo MCV thấp/hồng cầu nhỏ chưa?"),
-        ("q8", "8. Bạn từng được thông báo MCH thấp/hồng cầu nhược sắc chưa?"),
-        ("q9", None),  # selectbox riêng
-        ("q10", "10. Bạn từng được chẩn đoán HbE hoặc hemoglobinopathy khác chưa?"),
-        ("q11", "11. Bản thân từng truyền máu nhiều lần hoặc định kỳ chưa?"),
-        ("q12", "12. Bạn có tiền sử thiếu máu kéo dài từ nhỏ hoặc từ tuổi thiếu niên không?"),
-    ]),
-    (":material/monitor_heart: C. Dấu hiệu hỗ trợ", [
-        ("q13", "13. Bạn có thường xuyên mệt mỏi hoặc giảm khả năng hoạt động không?"),
-        ("q14", "14. Bạn có thường xuyên hoa mắt/chóng mặt không rõ nguyên nhân không?"),
-        ("q15", "15. Bạn từng được nhận xét da hoặc niêm mạc nhợt hơn bình thường chưa?"),
-        ("q16", "16. Bạn từng có vàng da/vàng mắt không rõ nguyên nhân chưa?"),
-        ("q17", "17. Bạn từng được bác sĩ ghi nhận lách to hoặc gan lách to chưa?"),
-        ("q18", "18. Bạn từng được bác sĩ lưu ý có biến chứng liên quan bệnh huyết học mạn chưa?"),
-    ]),
-    (":material/travel_explore: D. Khả năng tiếp cận xét nghiệm — không tính điểm", [
-        ("q19", "19. Bạn hiện có CBC trong vòng 6–12 tháng gần đây không?"),
-        ("q20", "20. Bạn có gặp khó khăn khi đến cơ sở có xét nghiệm chuyên sâu do khoảng cách, chi phí hoặc thời gian di chuyển không?"),
-    ]),
-]
-
-Q9_OPTIONS = [
-    "Chưa xét nghiệm", "Đã xét nghiệm, bình thường", "Đã nghi ngờ",
-    "Đã xác định mang gen", "Không nhớ",
-]
 
 with st.form("round1_form", clear_on_submit=False):
     answers = {}
