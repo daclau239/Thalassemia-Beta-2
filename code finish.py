@@ -2493,6 +2493,227 @@ def row_from_ai(label, data, default_alt):
 
 
 # ------------------------------------------------------------
+# QUY ƯỚC MÃ HÓA — người dùng chủ động chọn cách đọc các biến dạng mã số
+# ------------------------------------------------------------
+# Mỗi nghiên cứu mã hóa khác nhau (giới tính 0/1 hay 1/2; Có/Không là 1/2 hay 1/0...).
+# Khi gặp GIÁ TRỊ SỐ, hệ thống chỉ đọc theo bảng quy ước này (không tự đoán).
+# Giá trị chữ (Nam, Nữ, Có, Không, Male, Yes...) vẫn được nhận diện tự động.
+
+BLANK_MEANING = "— bỏ trống —"
+BIRTH_TARGET = "Ngày/Năm sinh (tự tính tuổi)"
+CB_COLS = ["Mã trong file", "Ý nghĩa"]
+CB_TITLES = {
+    "sex": "Giới tính", "yn": "Câu hỏi Có/Không (Q1–Q8, Q10–Q20)", "q9": "Câu 9 (xét nghiệm Thalassemia trước đây)",
+    "marital": "Tình trạng hôn nhân", "preg": "Đang mang thai",
+}
+_Q9_ORDER = ["Chưa xét nghiệm", "Đã xét nghiệm, bình thường", "Đã nghi ngờ", "Đã xác định mang gen", "Không nhớ"]
+CB_PRESETS = {  # mẫu đầu tiên của mỗi nhóm là mặc định
+    "sex": {
+        "1 = Nam, 2 = Nữ": [("1", "Nam"), ("2", "Nữ")],
+        "0 = Nữ, 1 = Nam": [("0", "Nữ"), ("1", "Nam")],
+        "0 = Nam, 1 = Nữ": [("0", "Nam"), ("1", "Nữ")],
+        "1 = Nữ, 2 = Nam": [("1", "Nữ"), ("2", "Nam")],
+        "M = Nam, F = Nữ": [("m", "Nam"), ("f", "Nữ")],
+    },
+    "yn": {
+        "1 = Có, 2 = Không, 3/9 = Không biết": [("1", "Có"), ("2", "Không"), ("3", "Không biết"), ("9", "Không biết")],
+        "1 = Có, 0 = Không, 9 = Không biết": [("1", "Có"), ("0", "Không"), ("9", "Không biết")],
+        "0 = Không, 1 = Có, 2 = Không biết": [("0", "Không"), ("1", "Có"), ("2", "Không biết")],
+        "1 = Không, 2 = Có, 3/9 = Không biết": [("1", "Không"), ("2", "Có"), ("3", "Không biết"), ("9", "Không biết")],
+        "1 = Có, 0 = Không, 9 = thiếu (bỏ trống)": [("1", "Có"), ("0", "Không"), ("9", BLANK_MEANING)],
+    },
+    "q9": {
+        "1–5 theo thứ tự lựa chọn": [(str(i + 1), v) for i, v in enumerate(_Q9_ORDER)],
+        "0–4 theo thứ tự lựa chọn": [(str(i), v) for i, v in enumerate(_Q9_ORDER)],
+    },
+    "marital": {
+        "1 = Độc thân, 2 = Đã kết hôn, 3 = Đã ly hôn/góa": [("1", "Độc thân"), ("2", "Đã kết hôn"), ("3", "Đã ly hôn/góa")],
+        "0 = Độc thân, 1 = Đã kết hôn, 2 = Đã ly hôn/góa": [("0", "Độc thân"), ("1", "Đã kết hôn"), ("2", "Đã ly hôn/góa")],
+        "1 = Độc thân, 2 = Chuẩn bị kết hôn, 3 = Đã kết hôn, 4 = Đã ly hôn/góa, 5 = Khác":
+            [("1", "Độc thân"), ("2", "Chuẩn bị kết hôn"), ("3", "Đã kết hôn"), ("4", "Đã ly hôn/góa"), ("5", "Khác")],
+    },
+    "preg": {
+        "1 = Có, 2 = Không": [("1", "Có"), ("2", "Không")],
+        "1 = Có, 0 = Không": [("1", "Có"), ("0", "Không")],
+    },
+}
+CB_MEANINGS = {"sex": BATCH_SEX, "yn": BATCH_YNK, "q9": BATCH_Q9, "marital": BATCH_MARITAL, "preg": ["Có", "Không"]}
+HB_UNIT_CHOICES = {"Tự nhận diện": "auto", "g/dL": "g/dL", "g/L": "g/L"}
+RBC_UNIT_CHOICES = {"Tự nhận diện (mặc định T/L)": "auto", "T/L = 10^12/L = 10^6/µL": "T/L",
+                    "/µL (vd 4.800.000 → tự chia 1.000.000)": "per_ul"}
+
+
+def _code_key(value):
+    """Chuẩn hóa mã để so khớp: 1, 1.0, "1", " 1 " đều thành "1"; chữ thì viết thường."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, bool):
+        return str(int(value))
+    if isinstance(value, numbers.Number):
+        f = float(value)
+        return str(int(f)) if f.is_integer() else str(f)
+    s = _s(value)
+    if s is None:
+        return None
+    try:
+        f = float(s.replace(",", "."))
+        return str(int(f)) if f.is_integer() else str(f)
+    except ValueError:
+        return s.lower()
+
+
+def _is_numeric_key(key):
+    try:
+        float(key)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _table_to_dict(df):
+    out = {}
+    if df is None:
+        return out
+    for _, r in df.iterrows():
+        code, meaning = _code_key(r.get(CB_COLS[0])), _s(r.get(CB_COLS[1]))
+        if code is None or meaning is None:
+            continue
+        out[code] = None if meaning == BLANK_MEANING else meaning
+    return out
+
+
+def default_codebook():
+    cb = {k: {_code_key(c): m for c, m in next(iter(p.values()))} for k, p in CB_PRESETS.items()}
+    cb.update({"num_missing": set(), "hb_unit": "auto", "rbc_unit": "auto", "manual": {},
+               "hb_unit_label": "Tự nhận diện", "rbc_unit_label": "Tự nhận diện (mặc định T/L)"})
+    return cb
+
+
+def build_codebook():
+    """Gom các lựa chọn của người dùng (đang lưu trong session) thành một bộ quy ước."""
+    ss = st.session_state
+    cb = default_codebook()
+    for key in CB_PRESETS:
+        df = ss.get(f"cb_{key}_val")
+        if df is not None:
+            cb[key] = _table_to_dict(df)
+    cb["num_missing"] = {f for f in (_to_float(tok) for tok in re.split(r"[;,\s]+", str(ss.get("cb_num_missing") or ""))) if f is not None}
+    hb_label = ss.get("cb_hb_unit") or "Tự nhận diện"
+    rbc_label = ss.get("cb_rbc_unit") or "Tự nhận diện (mặc định T/L)"
+    cb["hb_unit"], cb["hb_unit_label"] = HB_UNIT_CHOICES.get(hb_label, "auto"), hb_label
+    cb["rbc_unit"], cb["rbc_unit_label"] = RBC_UNIT_CHOICES.get(rbc_label, "auto"), rbc_label
+    mdf = ss.get("cb_manual_val")
+    if mdf is not None:
+        for _, r in mdf.iterrows():
+            src, tgt = _s(r.get("Tên cột trong file")), _s(r.get("Trường chuẩn"))
+            if src and tgt:
+                cb["manual"][_norm(src)] = tgt
+    return cb
+
+
+def _decode_cat(value, table, text_fn, unmapped, group):
+    """Số → tra bảng quy ước (mã lạ → để trống + ghi nhận); chữ → nhận diện tự động."""
+    key = _code_key(value)
+    if key is None:
+        return None
+    if key in table:
+        return table[key]
+    if _is_numeric_key(key):
+        unmapped.setdefault(group, Counter())[key] += 1
+        return None
+    return text_fn(value)
+
+
+def codebook_summary_text(cb):
+    parts = []
+    for key, title in CB_TITLES.items():
+        items = ", ".join(f"{c}={m or 'bỏ trống'}" for c, m in cb[key].items())
+        parts.append(f"{title.split(' (')[0]}: {items or '—'}")
+    if cb["num_missing"]:
+        parts.append("Mã thiếu số liệu: " + ", ".join(f"{x:g}" for x in sorted(cb["num_missing"])))
+    parts.append(f"Hb: {cb['hb_unit_label']}; RBC: {cb['rbc_unit_label']}")
+    return " · ".join(parts)
+
+
+def codebook_summary_df(cb):
+    rows = [{"Nhóm": CB_TITLES[k], "Mã": c, "Ý nghĩa": m or "(bỏ trống)"} for k in CB_TITLES for c, m in cb[k].items()]
+    rows.append({"Nhóm": "Mã thiếu của số liệu", "Mã": ", ".join(f"{x:g}" for x in sorted(cb["num_missing"])) or "(không)", "Ý nghĩa": "bỏ trống"})
+    rows.append({"Nhóm": "Đơn vị Hb", "Mã": cb["hb_unit_label"], "Ý nghĩa": ""})
+    rows.append({"Nhóm": "Đơn vị RBC", "Mã": cb["rbc_unit_label"], "Ý nghĩa": ""})
+    rows += [{"Nhóm": "Ghép cột thủ công", "Mã": k, "Ý nghĩa": v} for k, v in cb["manual"].items()]
+    return pd.DataFrame(rows)
+
+
+def _codebook_editor(key):
+    presets = CB_PRESETS[key]
+    names = list(presets)
+    base_k, ver_k, val_k, sel_k = f"cb_{key}_base", f"cb_{key}_ver", f"cb_{key}_val", f"cb_{key}_preset"
+    ss = st.session_state
+    if base_k not in ss:
+        ss[base_k] = pd.DataFrame(presets[names[0]], columns=CB_COLS)
+        ss[ver_k] = 0
+
+    def _load_preset():
+        chosen = st.session_state.get(sel_k)
+        if chosen in presets:
+            st.session_state[base_k] = pd.DataFrame(presets[chosen], columns=CB_COLS)
+            st.session_state[ver_k] += 1
+
+    st.selectbox("Chọn mẫu quy ước", [*names, "Tùy chỉnh (tự sửa bảng bên dưới)"], key=sel_k, on_change=_load_preset)
+    ss[val_k] = st.data_editor(
+        ss[base_k], num_rows="dynamic", hide_index=True, use_container_width=True,
+        key=f"cb_{key}_ed_{ss[ver_k]}",
+        column_config={
+            CB_COLS[0]: st.column_config.TextColumn("Mã trong file", required=True,
+                                                    help="Số hoặc chữ đúng như trong file (ví dụ 0, 1, 2, 9, M, F)"),
+            CB_COLS[1]: st.column_config.SelectboxColumn("Ý nghĩa", options=[*CB_MEANINGS[key], BLANK_MEANING], required=True),
+        },
+    )
+
+
+def render_codebook_panel():
+    with st.expander("Quy ước mã hóa & ghép cột — dùng khi file có mã số (0/1/2…) hoặc tên cột khác mẫu",
+                     icon=":material/tune:"):
+        st.caption(
+            "Mỗi nghiên cứu mã hóa một kiểu (giới tính 0/1 hay 1/2, Có/Không là 1/2 hay 1/0, 9 là thiếu hay không biết…). "
+            "Khi gặp **giá trị số**, hệ thống chỉ đọc theo các bảng dưới đây; mã nào không có trong bảng sẽ để trống và được báo lại. "
+            "Giá trị chữ (Nam, Nữ, Có, Không, Male, Yes…) vẫn nhận diện tự động. Quy ước áp dụng cho các file Excel/CSV/SPSS/Stata/SAS/R/Word-bảng "
+            "và được ghi vào file kết quả để lưu vết."
+        )
+        tabs = st.tabs(["Giới tính", "Có/Không (Q)", "Câu 9", "Hôn nhân", "Thai kỳ", "Số liệu & đơn vị", "Ghép cột thủ công"])
+        for tab, key in zip(tabs[:5], ["sex", "yn", "q9", "marital", "preg"]):
+            with tab:
+                _codebook_editor(key)
+        with tabs[2]:
+            st.caption("Áp dụng cho cột Q9. Các câu Q khác dùng bảng 'Có/Không (Q)'. Một bảng dùng chung cho Q1–Q8 và Q10–Q20.")
+        with tabs[5]:
+            st.text_input("Mã thiếu của số liệu (CTM, ferritin, HbA2, tuổi…) — cách nhau bằng dấu phẩy",
+                          key="cb_num_missing", placeholder="Ví dụ: -999, 9999",
+                          help="Các giá trị này sẽ bị coi là bỏ trống. Chỉ áp dụng cho cột số liệu, KHÔNG áp dụng cho câu hỏi (dùng bảng quy ước ở các tab trước).")
+            c1, c2 = st.columns(2)
+            c1.selectbox("Đơn vị Hb của file", list(HB_UNIT_CHOICES), key="cb_hb_unit",
+                         help="'Tự nhận diện': số >30 coi là g/L. Chọn cố định nếu file dùng một đơn vị thống nhất.")
+            c2.selectbox("Đơn vị RBC của file", list(RBC_UNIT_CHOICES), key="cb_rbc_unit")
+        with tabs[6]:
+            st.caption("Khi tên cột không giống mẫu: gõ đúng tên cột trong file (không phân biệt hoa/thường, dấu) và chọn trường chuẩn tương ứng.")
+            fields = [c for c in BATCH_COLUMNS if c != COL_SRC] + [BIRTH_TARGET]
+            st.session_state["cb_manual_val"] = st.data_editor(
+                pd.DataFrame({"Tên cột trong file": pd.Series(dtype="object"), "Trường chuẩn": pd.Series(dtype="object")}),
+                num_rows="dynamic", hide_index=True, use_container_width=True, key="cb_manual_ed",
+                column_config={
+                    "Tên cột trong file": st.column_config.TextColumn("Tên cột trong file", required=True),
+                    "Trường chuẩn": st.column_config.SelectboxColumn("Trường chuẩn", options=fields, required=True),
+                },
+            )
+    return build_codebook()
+
+
+# ------------------------------------------------------------
 # ĐỌC FILE: Excel · CSV · Word · SPSS · Stata · SAS · R · JSON · Parquet
 # ------------------------------------------------------------
 
@@ -2600,10 +2821,15 @@ def read_tables_cached(name, data):
     return read_tables(name, data)
 
 
-def _map_columns(df, labels, ai_ok, notes, source):
+def _map_columns(df, labels, ai_ok, notes, source, manual=None):
     """Ghép cột bằng bí danh; cột còn lại (nếu được phép) nhờ AI ghép theo TÊN cột."""
     mapping = {}
     computed_norm = {_norm(c) for c in COMPUTED_COLS}
+    manual = manual or {}
+    for col in df.columns:  # ưu tiên ghép cột do người dùng chỉ định
+        tgt = manual.get(_norm(col))
+        if tgt in BATCH_COLUMNS and tgt != COL_SRC and tgt not in mapping:
+            mapping[tgt] = col
     for col in df.columns:
         key = _norm(col)
         for target in BATCH_COLUMNS:
@@ -2614,7 +2840,8 @@ def _map_columns(df, labels, ai_ok, notes, source):
                 break
     used = set(mapping.values())
     unmapped = [c for c in df.columns
-                if c not in used and _s(c) and _norm(c) not in computed_norm and _norm(c) not in BIRTH_ALIASES]
+                if c not in used and _s(c) and _norm(c) not in computed_norm and _norm(c) not in BIRTH_ALIASES
+                and manual.get(_norm(c)) != BIRTH_TARGET]
     if unmapped and mapping:
         if ai_ok and ANTHROPIC_API_KEY:
             by_str = {str(c): c for c in unmapped[:200]}
@@ -2637,32 +2864,39 @@ def _map_columns(df, labels, ai_ok, notes, source):
     return mapping
 
 
-def rows_from_dataframe(df, labels, filename, sheet, default_alt, ai_ok, notes):
+def rows_from_dataframe(df, labels, filename, sheet, default_alt, ai_ok, notes, cb=None):
+    cb = cb or default_codebook()
     source = filename + (f" [{sheet}]" if sheet else "")
-    mapping = _map_columns(df, labels, ai_ok, notes, source)
+    mapping = _map_columns(df, labels, ai_ok, notes, source, cb.get("manual"))
     data_cols = [c for c in mapping if c not in META_COLS]
     if not data_cols:
         return []
-    birth_col = next((c for c in df.columns if _norm(c) in BIRTH_ALIASES), None)
+    manual = cb.get("manual") or {}
+    birth_col = next((c for c in df.columns if _norm(c) in BIRTH_ALIASES or manual.get(_norm(c)) == BIRTH_TARGET), None)
 
-    rows, coded_q, coded_sex = [], False, False
+    def preg_text(v):
+        c = _norm_choice(v)
+        return c if c in ("Có", "Không") else None
+
+    rows, unmapped = [], {}
     for i, rec in df.head(BATCH_MAX_TABLE_ROWS).iterrows():
         row = _blank_row("", f"Bảng: {source}", default_alt)
         for col, src in mapping.items():
             v = rec[src]
             if col in NUM_COLS:
-                row[col] = _to_float(v)
+                f = _to_float(v)
+                row[col] = None if f is not None and f in cb["num_missing"] else f
             elif col in Q_COLS:
-                coded_q = coded_q or _is_code(v)
-                row[col] = _norm_choice(v, q9=(col == "Q9"))
+                if col == "Q9":
+                    row[col] = _decode_cat(v, cb["q9"], lambda x: _norm_choice(x, q9=True), unmapped, "Câu 9")
+                else:
+                    row[col] = _decode_cat(v, cb["yn"], _norm_choice, unmapped, "Câu Có/Không")
             elif col == COL_SEX:
-                coded_sex = coded_sex or _is_code(v)
-                row[col] = _norm_sex(v)
+                row[col] = _decode_cat(v, cb["sex"], _norm_sex, unmapped, "Giới tính")
             elif col == COL_MARITAL:
-                row[col] = _norm_marital(v)
+                row[col] = _decode_cat(v, cb["marital"], _norm_marital, unmapped, "Hôn nhân")
             elif col == COL_PREG:
-                c = _norm_choice(v)
-                row[col] = c if c in ("Có", "Không") else None
+                row[col] = _decode_cat(v, cb["preg"], preg_text, unmapped, "Thai kỳ")
             elif col == COL_ALT:
                 row[col] = _s(v) if _s(v) in ALTITUDE_OPTIONS else default_alt
             elif col != COL_SRC:
@@ -2672,23 +2906,26 @@ def rows_from_dataframe(df, labels, filename, sheet, default_alt, ai_ok, notes):
         if all(row[c] is None for c in data_cols):
             continue  # dòng trống (ví dụ dòng chỉ có công thức)
         row[COL_LABEL] = row[COL_LABEL] or f"{filename} · dòng {i + 2}"
-        row["Đơn vị HGB"] = _norm_hb_unit(row.get("Đơn vị HGB"), row["HGB"])
+        row["Đơn vị HGB"] = cb["hb_unit"] if cb["hb_unit"] != "auto" else _norm_hb_unit(row.get("Đơn vị HGB"), row["HGB"])
         row["Đơn vị RBC"] = _norm_rbc_unit(row.get("Đơn vị RBC"))
+        if cb["rbc_unit"] == "per_ul" and row["RBC"] is not None:
+            row["RBC"] = row["RBC"] / 1_000_000
         rows.append(_normalize_row_units(row))
 
-    if coded_q:
-        notes.append(f"{source}: câu Q đọc từ mã số (1=Có, 2=Không, 3/9=Không biết; Q9: 1–5 theo thứ tự lựa chọn) — hãy kiểm tra lại.")
-    if coded_sex:
-        notes.append(f"{source}: giới tính đọc từ mã số (1=Nam, 2=Nữ) — hãy kiểm tra lại.")
+    for group, counter in unmapped.items():
+        examples = ", ".join(f"{k} (×{n})" for k, n in counter.most_common(6))
+        notes.append(f"{source}: {group} có mã KHÔNG nằm trong bảng quy ước → để trống: {examples}. "
+                     "Hãy bổ sung vào bảng quy ước rồi đọc lại.")
     if len(df) > BATCH_MAX_TABLE_ROWS:
         notes.append(f"{source}: chỉ đọc {BATCH_MAX_TABLE_ROWS} dòng đầu (file có {len(df)} dòng).")
     return rows
 
 
-def load_file_rows(name, data, default_alt, ai_ok):
+def load_file_rows(name, data, default_alt, ai_ok, cb=None):
     """Đọc một file bất kỳ được hỗ trợ → (danh sách dòng, danh sách ghi chú)."""
     ext = os.path.splitext(name.lower())[1]
     notes = []
+    cb = cb or default_codebook()
 
     if ext in AI_FILE_TYPES:
         if len(data) > BATCH_MAX_MB_AI * 1024 * 1024:
@@ -2715,7 +2952,7 @@ def load_file_rows(name, data, default_alt, ai_ok):
     for tb in tables:
         if _norm(tb["sheet"]) in SKIP_SHEETS:
             continue
-        rows.extend(rows_from_dataframe(tb["df"], tb["labels"], name, tb["sheet"], default_alt, ai_ok, notes))
+        rows.extend(rows_from_dataframe(tb["df"], tb["labels"], name, tb["sheet"], default_alt, ai_ok, notes, cb))
     if rows:
         return rows, notes
 
@@ -2927,15 +3164,20 @@ def analyze_batch_row(idx, rec):
 # XUẤT EXCEL / FILE MẪU CÓ CÔNG THỨC
 # ------------------------------------------------------------
 
-def results_to_excel(results_df, input_df):
+def results_to_excel(results_df, input_df, codebook_df=None):
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
         results_df.to_excel(writer, sheet_name="Ket_qua", index=False)
         input_df.to_excel(writer, sheet_name="Du_lieu_dau_vao", index=False)
+        if codebook_df is not None:
+            codebook_df.to_excel(writer, sheet_name="Quy_uoc_ma_hoa", index=False)
         wb = writer.book
         head = wb.add_format({"bold": True, "bg_color": "#D9EAF7", "border": 1, "text_wrap": True, "valign": "vcenter"})
         wide = {"Bước tiếp theo", "Vòng 3 - đối chiếu BYT", "Cảnh báo"}
-        for sheet, df in (("Ket_qua", results_df), ("Du_lieu_dau_vao", input_df)):
+        sheets = [("Ket_qua", results_df), ("Du_lieu_dau_vao", input_df)]
+        if codebook_df is not None:
+            sheets.append(("Quy_uoc_ma_hoa", codebook_df))
+        for sheet, df in sheets:
             ws = writer.sheets[sheet]
             for c, name in enumerate(df.columns):
                 ws.write(0, c, name, head)
@@ -3121,6 +3363,8 @@ def render_batch_page(user):
         "thống kê (SPSS, Stata, SAS, R); kiểm tra trong bảng trước khi phân tích."
     )
 
+    cb = render_codebook_panel()
+
     with st.container(border=True):
         st.subheader(":material/upload_file: 1. Tải hồ sơ")
         files = st.file_uploader(
@@ -3165,12 +3409,14 @@ def render_batch_page(user):
                 name, data = f.name, f.getvalue()
                 progress.progress(i / len(files), text=f"Đang đọc {name} ({i + 1}/{len(files)})")
                 try:
-                    part, notes = load_file_rows(name, data, default_alt, ai_ok)
+                    part, notes = load_file_rows(name, data, default_alt, ai_ok, cb)
                     rows.extend(part)
                     all_notes.extend(notes)
                 except Exception as exc:
                     rows.append(_blank_row(name, "Lỗi đọc file", default_alt,
                                            f"Không đọc được: {exc}. Có thể nhập tay."))
+            if any(str(r.get(COL_SRC, "")).startswith("Bảng:") for r in rows):
+                all_notes.insert(0, "Quy ước mã hóa đã áp dụng — " + codebook_summary_text(cb))
             if len(rows) > BATCH_MAX_TOTAL_ROWS:
                 all_notes.append(f"Chỉ giữ {BATCH_MAX_TOTAL_ROWS} dòng đầu (tổng {len(rows)} dòng).")
                 rows = rows[:BATCH_MAX_TOTAL_ROWS]
@@ -3211,6 +3457,7 @@ def render_batch_page(user):
         with st.spinner("Đang phân tích..."):
             st.session_state["batch_results"] = [analyze_batch_row(i, r) for i, r in enumerate(records)]
             st.session_state["batch_input_df"] = edited.copy()
+            st.session_state["batch_codebook_df"] = codebook_summary_df(cb)
 
     results = st.session_state.get("batch_results")
     if not results:
@@ -3256,7 +3503,7 @@ def render_batch_page(user):
     if input_df is not None:
         st.download_button(
             "Tải kết quả Excel (đầy đủ cột + dữ liệu đầu vào)",
-            data=results_to_excel(full_df, input_df).getvalue(),
+            data=results_to_excel(full_df, input_df, st.session_state.get("batch_codebook_df")).getvalue(),
             file_name=f"Ket_qua_phan_tich_hang_loat_{date.today().isoformat()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             icon=":material/download:", use_container_width=True,
