@@ -53,15 +53,15 @@ GLASS_CSS = r"""
          --lg-shadow:0 8px 22px -14px rgba(0,0,0,.6); }
 }
 
-/* ---------- Nền: lớp "aurora" cố định phía sau nội dung ---------- */
-.stApp{ position:relative; isolation:isolate;
-  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Inter","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif; }
-.stApp::before{ content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; transform:translateZ(0); will-change:transform;
+/* ---------- Nền aurora: đặt trực tiếp lên .stApp (KHÔNG đổi position/isolation để không làm vỡ bố cục) ---------- */
+.stApp,[data-testid="stApp"]{
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Inter","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   background:
     radial-gradient(900px 620px at 6% -6%,color-mix(in srgb,var(--lg-accent) 30%,transparent),transparent 62%),
     radial-gradient(820px 580px at 102% 2%,color-mix(in srgb,var(--lg-blue) 26%,transparent),transparent 62%),
     radial-gradient(920px 700px at 72% 108%,color-mix(in srgb,var(--lg-teal) 24%,transparent),transparent 62%),
-    radial-gradient(700px 520px at 0% 100%,color-mix(in srgb,#9B6BFF 16%,transparent),transparent 62%); }
+    radial-gradient(700px 520px at 0% 100%,color-mix(in srgb,#9B6BFF 16%,transparent),transparent 62%),
+    var(--lg-bg) !important; }
 [data-testid="stAppViewContainer"],[data-testid="stMain"],.main,[data-testid="stHeader"]{ background:transparent !important; }
 .main .block-container{ max-width:1180px; padding-top:2rem; padding-bottom:4rem; }
 h1,h2,h3,h4{ letter-spacing:-0.02em; }
@@ -225,7 +225,7 @@ GLASS_OFF_CSS = r"""
   --lg-fill:color-mix(in srgb,var(--lg-bg) 92%,transparent);
   --lg-fill-soft:color-mix(in srgb,var(--lg-bg) 86%,transparent);
   --lg-fill-strong:var(--lg-bg); }
-.stApp::before{ display:none; }
+.stApp,[data-testid="stApp"]{ background:var(--lg-bg) !important; }
 [data-testid="stVerticalBlockBorderWrapper"],[data-testid="stExpander"],[data-testid="stMetric"],[data-testid="stSidebar"],.hematology-brand,.contact-card{ box-shadow:none !important; }
 </style>
 """
@@ -237,8 +237,10 @@ def _minify_css(css):
 
 
 # Có thể tắt hiệu ứng kính ở thanh bên (máy yếu / mạng chậm) → nhẹ và nhanh hơn.
-_glass_on = st.session_state.get("glass_fx", True)
-st.markdown(_minify_css(GLASS_CSS + ("" if _glass_on else GLASS_OFF_CSS)), unsafe_allow_html=True)
+# Công tắc khẩn cấp: thêm ?glass=off vào cuối địa chỉ web để tắt toàn bộ CSS kính.
+_glass_on = st.session_state.get("glass_fx", True) and st.query_params.get("glass") != "off"
+if st.query_params.get("glass") != "off":
+    st.markdown(_minify_css(GLASS_CSS + ("" if _glass_on else GLASS_OFF_CSS)), unsafe_allow_html=True)
 
 # ============================================================
 # THALASSEMIA SCREENING PREVIEW
