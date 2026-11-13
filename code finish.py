@@ -36,27 +36,27 @@ GLASS_CSS = r"""
   --lg-teal:#2BB3A3;
   --lg-text:var(--text-color,#1d1d1f);
   --lg-bg:var(--background-color,#ffffff);
-  --lg-fill:color-mix(in srgb,var(--lg-bg) 52%,transparent);
+  --lg-fill:color-mix(in srgb,var(--lg-bg) 66%,transparent);
   --lg-fill-soft:color-mix(in srgb,var(--lg-bg) 30%,transparent);
   --lg-fill-strong:color-mix(in srgb,var(--lg-bg) 74%,transparent);
   --lg-pop:color-mix(in srgb,var(--lg-bg) 90%,transparent);
   --lg-stroke:color-mix(in srgb,var(--lg-text) 13%,transparent);
   --lg-muted:color-mix(in srgb,var(--lg-text) 62%,transparent);
   --lg-radius:22px;
-  --lg-fx:blur(22px) saturate(1.7);
-  --lg-fx-sm:blur(12px) saturate(1.5);
+  --lg-fx:blur(18px);      /* chỉ dùng cho thanh bên, popup, hộp thoại */
+  --lg-fx-sm:none;         /* thẻ/nút/ô nhập/tab: KHÔNG blur (nặng GPU) */
   --lg-spec:inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(255,255,255,.08),inset 0 0 0 1px rgba(255,255,255,.08);
-  --lg-shadow:0 14px 44px -16px rgba(20,25,45,.32),0 2px 8px rgba(20,25,45,.06);
+  --lg-shadow:0 8px 22px -14px rgba(20,25,45,.30);
 }
 @media (prefers-color-scheme: dark){
   :root{ --lg-spec:inset 0 1px 0 rgba(255,255,255,.22),inset 0 -1px 0 rgba(255,255,255,.04),inset 0 0 0 1px rgba(255,255,255,.05);
-         --lg-shadow:0 14px 44px -16px rgba(0,0,0,.6),0 2px 8px rgba(0,0,0,.25); }
+         --lg-shadow:0 8px 22px -14px rgba(0,0,0,.6); }
 }
 
 /* ---------- Nền: lớp "aurora" cố định phía sau nội dung ---------- */
 .stApp{ position:relative; isolation:isolate;
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Inter","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif; }
-.stApp::before{ content:""; position:fixed; inset:0; z-index:-1; pointer-events:none;
+.stApp::before{ content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; transform:translateZ(0); will-change:transform;
   background:
     radial-gradient(900px 620px at 6% -6%,color-mix(in srgb,var(--lg-accent) 30%,transparent),transparent 62%),
     radial-gradient(820px 580px at 102% 2%,color-mix(in srgb,var(--lg-blue) 26%,transparent),transparent 62%),
@@ -78,7 +78,6 @@ a{ color:var(--lg-accent); }
 [data-testid="stFileUploaderDropzone"],
 .contact-card{
   background:var(--lg-fill) !important;
-  -webkit-backdrop-filter:var(--lg-fx); backdrop-filter:var(--lg-fx);
   border:1px solid var(--lg-stroke) !important;
   border-radius:var(--lg-radius) !important;
   box-shadow:var(--lg-spec),var(--lg-shadow);
@@ -118,7 +117,7 @@ a{ color:var(--lg-accent); }
   background:var(--lg-fill) !important;
   -webkit-backdrop-filter:var(--lg-fx-sm); backdrop-filter:var(--lg-fx-sm);
   box-shadow:var(--lg-spec),0 6px 16px -8px rgba(20,25,45,.35);
-  transition:transform .18s ease,box-shadow .18s ease,background .18s ease,filter .18s ease; }
+  transition:transform .15s ease,background .15s ease; }
 [data-testid^="stBaseButton"]:hover,[data-testid^="stBaseLinkButton"]:hover{
   transform:translateY(-1px); background:var(--lg-fill-strong) !important;
   box-shadow:var(--lg-spec),0 10px 22px -8px rgba(20,25,45,.45); }
@@ -131,13 +130,13 @@ button[kind="primary"],button[kind="primaryFormSubmit"]{
   box-shadow:inset 0 1px 0 rgba(255,255,255,.55),inset 0 -6px 14px rgba(0,0,0,.18),0 12px 26px -10px var(--lg-accent) !important; }
 [data-testid="stBaseButton-primary"] *,[data-testid="stBaseButton-primaryFormSubmit"] *{ color:#fff !important; }
 [data-testid="stBaseButton-primary"]:hover,[data-testid="stBaseButton-primaryFormSubmit"]:hover{
-  background:linear-gradient(135deg,color-mix(in srgb,var(--lg-accent) 74%,#fff),var(--lg-accent)) !important; filter:saturate(1.1); }
+  background:linear-gradient(135deg,color-mix(in srgb,var(--lg-accent) 74%,#fff),var(--lg-accent)) !important; }
 
 /* ---------- Ô nhập liệu kính ---------- */
 [data-baseweb="input"],[data-baseweb="textarea"],[data-baseweb="select"]>div,[data-testid="stDateInput"] [data-baseweb="input"]{
   background:var(--lg-fill-soft) !important; border:1px solid var(--lg-stroke) !important;
   border-radius:14px !important; box-shadow:inset 0 1px 0 rgba(255,255,255,.18);
-  -webkit-backdrop-filter:var(--lg-fx-sm); backdrop-filter:var(--lg-fx-sm); transition:box-shadow .18s ease,border-color .18s ease; }
+  -webkit-backdrop-filter:var(--lg-fx-sm); backdrop-filter:var(--lg-fx-sm); }
 [data-baseweb="base-input"],[data-baseweb="base-input"] input,[data-baseweb="textarea"] textarea{ background:transparent !important; }
 [data-baseweb="input"]:focus-within,[data-baseweb="textarea"]:focus-within,[data-baseweb="select"]>div:focus-within{
   border-color:var(--lg-accent) !important; box-shadow:0 0 0 3px color-mix(in srgb,var(--lg-accent) 28%,transparent) !important; }
@@ -156,7 +155,7 @@ button[data-baseweb="tab"][aria-selected="true"]{ background:var(--lg-fill-stron
 [data-baseweb="tab-highlight"],[data-baseweb="tab-border"]{ display:none !important; }
 
 /* ---------- Hộp thoại ---------- */
-div[role="dialog"]{ background:var(--lg-pop) !important; -webkit-backdrop-filter:blur(34px) saturate(1.8); backdrop-filter:blur(34px) saturate(1.8);
+div[role="dialog"]{ background:var(--lg-pop) !important; -webkit-backdrop-filter:var(--lg-fx); backdrop-filter:var(--lg-fx);
   border:1px solid var(--lg-stroke); border-radius:28px !important; box-shadow:var(--lg-shadow),var(--lg-spec); }
 [data-testid="stProgress"] [role="progressbar"],[data-testid="stProgress"] [role="progressbar"]>div{ border-radius:999px; }
 
@@ -164,7 +163,7 @@ div[role="dialog"]{ background:var(--lg-pop) !important; -webkit-backdrop-filter
 .hematology-brand{ display:flex; align-items:center; gap:1.2rem; position:relative; overflow:hidden;
   padding:1.35rem 1.7rem; margin-bottom:.4rem; border-radius:30px;
   background:var(--lg-fill); border:1px solid var(--lg-stroke);
-  -webkit-backdrop-filter:var(--lg-fx); backdrop-filter:var(--lg-fx); box-shadow:var(--lg-spec),var(--lg-shadow); }
+  box-shadow:var(--lg-spec),var(--lg-shadow); }
 .hematology-brand::after{ content:""; position:absolute; inset:0; pointer-events:none;
   background:linear-gradient(115deg,rgba(255,255,255,.38) 0%,rgba(255,255,255,0) 36%); opacity:.55; }
 .hematology-brand .brand-text{ position:relative; z-index:1; min-width:0; }
@@ -200,7 +199,7 @@ div[role="dialog"]{ background:var(--lg-pop) !important; -webkit-backdrop-filter
 @media (prefers-color-scheme: dark){ .risk-low{ color:#7BC47F; } .risk-mid{ color:#E5A64B; } .risk-high{ color:#F2877F; } }
 
 /* ---------- Ẩn khoảng trống do khối <style> ---------- */
-[data-testid="stElementContainer"]:has(style){ display:none; }
+[data-testid="stMainBlockContainer"]>[data-testid="stVerticalBlock"]>[data-testid="stElementContainer"]:first-child:has(style){ display:none; }
 
 /* ---------- Tiết kiệm tài nguyên ---------- */
 @media (max-width:768px){
@@ -387,7 +386,7 @@ def _get_pool(dsn=None):
     kwargs = dict(_connection_kwargs(dsn))
     conninfo = kwargs.pop("conninfo", "")
     opts = dict(conninfo=conninfo, kwargs=kwargs, min_size=1, max_size=6,
-                max_idle=240, timeout=15, open=True)
+                max_idle=240, timeout=8, open=True)
     try:
         return ConnectionPool(check=ConnectionPool.check_connection, **opts)
     except (TypeError, AttributeError):
@@ -650,7 +649,14 @@ def _init_database_once(_version):
 
 
 def _ensure_schema_once():
-    _init_database_once(DB_SCHEMA_READY)
+    state = _net_state()
+    if time.time() - state["db_fail_at"] < 20:  # vừa lỗi → báo ngay, không chờ timeout lại
+        raise RuntimeError(state["db_err"] or "Không kết nối được database.")
+    try:
+        _init_database_once(DB_SCHEMA_READY)
+    except Exception as exc:
+        state["db_fail_at"], state["db_err"] = time.time(), str(exc)
+        raise
 
 
 def _database_is_configured():
@@ -1481,6 +1487,12 @@ def _parse_admin_payload(payload):
     return provinces
 
 
+@st.cache_resource(show_spinner=False)
+def _net_state():
+    """Bộ nhớ dùng chung giữa các lần chạy lại: nhớ thời điểm lỗi mạng/DB gần nhất."""
+    return {"admin_fail_at": 0.0, "admin_err": "", "db_fail_at": 0.0, "db_err": ""}
+
+
 @st.cache_resource(ttl=86400, show_spinner="Đang tải danh mục địa giới...")
 def load_admin_hierarchy():
     """Danh mục 34 tỉnh/thành, 3.321 đơn vị cấp xã.
@@ -1491,20 +1503,24 @@ def load_admin_hierarchy():
     cached = _read_local_admin_cache()
     if cached:
         return cached
-    last_exc = None
-    for _ in range(2):
-        try:
-            response = requests.get(ADMIN_DATA_URL, timeout=10)
-            response.raise_for_status()
-            provinces = _parse_admin_payload(response.json())
-            _write_local_admin_cache(provinces)
-            return provinces
-        except Exception as exc:
-            last_exc = exc
+    state = _net_state()
     stale = _read_local_admin_cache(ignore_age=True)
-    if stale:
-        return stale
-    raise last_exc
+    # Vừa lỗi mạng cách đây <60 giây → không chờ timeout lần nữa (tránh đơ trang mỗi lần bấm).
+    if time.time() - state["admin_fail_at"] < 60:
+        if stale:
+            return stale
+        raise RuntimeError(state["admin_err"] or "Không tải được danh mục địa giới.")
+    try:
+        response = requests.get(ADMIN_DATA_URL, timeout=6)
+        response.raise_for_status()
+        provinces = _parse_admin_payload(response.json())
+        _write_local_admin_cache(provinces)
+        return provinces
+    except Exception as exc:
+        state["admin_fail_at"], state["admin_err"] = time.time(), str(exc)
+        if stale:
+            return stale
+        raise
 
 
 # ------------------------------------------------------------
