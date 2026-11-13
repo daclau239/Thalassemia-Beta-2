@@ -21,3 +21,17 @@ pyreadr         # R .rds/.RData/.rda
 xlrd            # Excel cũ .xls
 odfpy           # OpenDocument .ods
 # Stata (.dta), SAS (.sas7bdat/.xpt), JSON, Parquet do pandas/pyarrow
+streamlit>=1.45
+psycopg[binary,pool]>=3.2
+python-docx
+XlsxWriter>=3.2
+openpyxl
+pandas
+requests
+xlrd
+odfpy
+# --- TUỲ CHỌN: chỉ thêm khi cần đọc file SPSS (.sav) hoặc R (.rds/.RData). ---
+# --- Hai gói này có thể không cài được trên một số phiên bản Python của Streamlit Cloud, ---
+# --- nên đã tắt mặc định để không làm app lỗi khi triển khai. Bỏ dấu # ở đầu dòng để bật. ---
+# pyreadstat
+# pyreadr
