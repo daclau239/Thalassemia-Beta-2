@@ -31,8 +31,6 @@ GLASS_CSS = r"""
    ===================================================================== */
 :root{
   --lg-accent:#C0394F; --lg-accent-dark:#8E2C3A; --lg-blue:#4F7CFF; --lg-teal:#2BB3A3;
-  --lg-stroke:color-mix(in srgb,var(--lg-text) 15%,transparent);
-  --lg-muted:color-mix(in srgb,var(--lg-text) 70%,transparent);
   --lg-radius:22px;
   --lg-fx:blur(18px);      /* chỉ dùng cho thanh bên, popup, hộp thoại */
   --lg-fx-sm:none;         /* thẻ/nút/ô nhập/tab: KHÔNG blur (nặng GPU) */
@@ -41,28 +39,14 @@ GLASS_CSS = r"""
 /* ---------- Nền aurora: đặt trực tiếp lên .stApp (KHÔNG đổi position/isolation để không làm vỡ bố cục) ---------- */
 .stApp,[data-testid="stApp"]{
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Inter","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-  color:var(--lg-text);
   background:var(--lg-aurora),var(--lg-bg) !important; }
 [data-testid="stAppViewContainer"],[data-testid="stMain"],.main,[data-testid="stHeader"]{ background:transparent !important; }
 .main .block-container{ max-width:1180px; padding-top:2rem; padding-bottom:4rem; }
 h1,h2,h3,h4{ letter-spacing:-0.02em; }
 hr{ border:0 !important; height:1px !important; background:linear-gradient(90deg,transparent,var(--lg-stroke),transparent) !important; }
 a{ color:var(--lg-link); }
-/* Màu chữ do chính giao diện này quyết định → luôn tương phản với nền, ở cả sáng lẫn tối */
-.stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp h5,.stApp h6,.stApp p,.stApp li,.stApp label,
-[data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li,[data-testid="stWidgetLabel"] p,
-[data-testid="stMetricLabel"] p,[data-testid="stMetricValue"],[data-testid="stExpander"] summary p,
-[data-testid="stRadio"] label p,[data-testid="stCheckbox"] label p,[data-testid="stToggle"] label p,
-[data-testid="stTabs"] button p{ color:var(--lg-text) !important; }
-[data-testid="stCaptionContainer"],[data-testid="stCaptionContainer"] p,.stCaption,.small-note{ color:var(--lg-muted) !important; }
-[data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li{ line-height:1.6; }
-[data-testid^="stBaseButton"],[data-testid^="stBaseLinkButton"]{ color:var(--lg-text); }
-[data-baseweb="input"] input,[data-baseweb="textarea"] textarea,[data-baseweb="select"] input,
-[data-baseweb="select"] div,[data-baseweb="select"] span{ color:var(--lg-text) !important; -webkit-text-fill-color:var(--lg-text) !important; caret-color:var(--lg-link); }
-[data-baseweb="select"] svg,[data-baseweb="input"] svg{ fill:var(--lg-muted) !important; }
-input::placeholder,textarea::placeholder{ color:var(--lg-muted) !important; -webkit-text-fill-color:var(--lg-muted) !important; opacity:1; }
-[data-baseweb="popover"] li,[data-baseweb="menu"] li,[role="option"]{ color:var(--lg-text) !important; }
-[role="option"]:hover,[role="option"][aria-selected="true"],[data-baseweb="menu"] li:hover{ background:var(--lg-fill-strong) !important; }
+/* (Quy tắc màu chữ riêng cho chế độ tối nằm trong _DARK_ONLY_CSS) */
+[data-testid="stCaptionContainer"],.stCaption{ color:var(--lg-muted); }
 ::-webkit-scrollbar{ width:10px; height:10px; }
 ::-webkit-scrollbar-thumb{ background:color-mix(in srgb,var(--lg-text) 22%,transparent); border-radius:999px; border:3px solid transparent; background-clip:padding-box; }
 
@@ -123,7 +107,7 @@ button[kind="primary"],button[kind="primaryFormSubmit"]{
   background:linear-gradient(135deg,color-mix(in srgb,var(--lg-accent) 86%,#fff),var(--lg-accent-dark)) !important;
   border:1px solid rgba(255,255,255,.38) !important; color:#fff !important;
   box-shadow:inset 0 1px 0 rgba(255,255,255,.55),inset 0 -6px 14px rgba(0,0,0,.18),0 12px 26px -10px var(--lg-accent) !important; }
-.stApp [data-testid="stBaseButton-primary"] *,.stApp [data-testid="stBaseButton-primaryFormSubmit"] *,.stApp button[kind="primary"] *,.stApp button[kind="primaryFormSubmit"] *{ color:#fff !important; -webkit-text-fill-color:#fff !important; }
+[data-testid="stBaseButton-primary"] *,[data-testid="stBaseButton-primaryFormSubmit"] *{ color:#fff !important; }
 [data-testid="stBaseButton-primary"]:hover,[data-testid="stBaseButton-primaryFormSubmit"]:hover{
   background:linear-gradient(135deg,color-mix(in srgb,var(--lg-accent) 74%,#fff),var(--lg-accent)) !important; }
 
@@ -188,9 +172,9 @@ div[role="dialog"]{ background:var(--lg-pop) !important; -webkit-backdrop-filter
 /* ---------- Huy hiệu mức nguy cơ ---------- */
 .risk-badge{ display:inline-block; padding:.2rem .75rem; border-radius:999px; font-size:.76rem; font-weight:700; letter-spacing:.06em;
   border:1px solid var(--lg-stroke); box-shadow:var(--lg-spec); }
-.risk-low{ background:color-mix(in srgb,var(--lg-risk-low) 20%,transparent); color:var(--lg-risk-low); }
-.risk-mid{ background:color-mix(in srgb,var(--lg-risk-mid) 20%,transparent); color:var(--lg-risk-mid); }
-.risk-high{ background:color-mix(in srgb,var(--lg-risk-high) 20%,transparent); color:var(--lg-risk-high); }
+.risk-low{ background:color-mix(in srgb,var(--lg-risk-low) 18%,transparent); color:var(--lg-risk-low); }
+.risk-mid{ background:color-mix(in srgb,var(--lg-risk-mid) 18%,transparent); color:var(--lg-risk-mid); }
+.risk-high{ background:color-mix(in srgb,var(--lg-risk-high) 18%,transparent); color:var(--lg-risk-high); }
 
 /* ---------- Ẩn khoảng trống do khối <style> ---------- */
 [data-testid="stMainBlockContainer"]>[data-testid="stVerticalBlock"]>[data-testid="stElementContainer"]:first-child:has(style){ display:none; }
@@ -230,19 +214,22 @@ def _minify_css(css):
     return re.sub(r"\s+", " ", css).strip()
 
 
-_LG_LIGHT = (
-    "--lg-text:#1b2230;--lg-bg:#f2f4f9;--lg-link:#B02A42;color-scheme:light;"
-    "--lg-fill:rgba(255,255,255,.74);--lg-fill-soft:rgba(255,255,255,.58);--lg-fill-strong:rgba(255,255,255,.92);--lg-pop:rgba(255,255,255,.98);"
-    "--lg-spec:inset 0 1px 0 rgba(255,255,255,.95),inset 0 -1px 0 rgba(255,255,255,.4),inset 0 0 0 1px rgba(255,255,255,.35);"
-    "--lg-shadow:0 8px 22px -14px rgba(30,40,80,.30);"
-    "--lg-risk-low:#1E7A34;--lg-risk-mid:#9A5B00;--lg-risk-high:#B3261E;"
-    "--lg-aurora:radial-gradient(900px 620px at 6% -6%,rgba(192,57,79,.22),transparent 62%),"
-    "radial-gradient(820px 580px at 102% 2%,rgba(79,124,255,.20),transparent 62%),"
-    "radial-gradient(920px 700px at 72% 108%,rgba(43,179,163,.18),transparent 62%),"
-    "radial-gradient(700px 520px at 0% 100%,rgba(155,107,255,.12),transparent 62%);"
+_LG_LIGHT = (  # giữ NGUYÊN giao diện sáng cũ
+    "--lg-text:#1d1d1f;--lg-bg:#ffffff;--lg-link:#C0394F;"
+    "--lg-stroke:color-mix(in srgb,var(--lg-text) 13%,transparent);--lg-muted:color-mix(in srgb,var(--lg-text) 62%,transparent);"
+    "--lg-fill:color-mix(in srgb,var(--lg-bg) 66%,transparent);--lg-fill-soft:color-mix(in srgb,var(--lg-bg) 30%,transparent);"
+    "--lg-fill-strong:color-mix(in srgb,var(--lg-bg) 74%,transparent);--lg-pop:color-mix(in srgb,var(--lg-bg) 90%,transparent);"
+    "--lg-spec:inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(255,255,255,.08),inset 0 0 0 1px rgba(255,255,255,.08);"
+    "--lg-shadow:0 8px 22px -14px rgba(20,25,45,.30);"
+    "--lg-risk-low:#2E7D32;--lg-risk-mid:#B26A00;--lg-risk-high:#B3261E;"
+    "--lg-aurora:radial-gradient(900px 620px at 6% -6%,color-mix(in srgb,var(--lg-accent) 30%,transparent),transparent 62%),"
+    "radial-gradient(820px 580px at 102% 2%,color-mix(in srgb,var(--lg-blue) 26%,transparent),transparent 62%),"
+    "radial-gradient(920px 700px at 72% 108%,color-mix(in srgb,var(--lg-teal) 24%,transparent),transparent 62%),"
+    "radial-gradient(700px 520px at 0% 100%,color-mix(in srgb,#9B6BFF 16%,transparent),transparent 62%);"
 )
-_LG_DARK = (
+_LG_DARK = (  # chế độ tối: nền xanh đen, chữ sáng, kính trắng mờ nhẹ
     "--lg-text:#eef1f7;--lg-bg:#0f131b;--lg-link:#FF8FA1;color-scheme:dark;"
+    "--lg-stroke:color-mix(in srgb,var(--lg-text) 15%,transparent);--lg-muted:color-mix(in srgb,var(--lg-text) 70%,transparent);"
     "--lg-fill:rgba(255,255,255,.07);--lg-fill-soft:rgba(255,255,255,.05);--lg-fill-strong:rgba(255,255,255,.13);--lg-pop:rgba(27,32,43,.98);"
     "--lg-spec:inset 0 1px 0 rgba(255,255,255,.14),inset 0 -1px 0 rgba(255,255,255,.03),inset 0 0 0 1px rgba(255,255,255,.04);"
     "--lg-shadow:0 10px 26px -14px rgba(0,0,0,.75);"
@@ -252,20 +239,41 @@ _LG_DARK = (
     "radial-gradient(920px 700px at 72% 108%,rgba(43,179,163,.12),transparent 62%),"
     "radial-gradient(700px 520px at 0% 100%,rgba(155,107,255,.10),transparent 62%);"
 )
+# Quy tắc CHỈ áp dụng khi ở chế độ tối (ép màu chữ để luôn đọc rõ trên nền tối)
+_DARK_ONLY_CSS = r"""
+.stApp,[data-testid="stApp"]{ color:var(--lg-text); }
+/* Màu chữ do chính giao diện này quyết định → luôn tương phản với nền, ở cả sáng lẫn tối */
+.stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp h5,.stApp h6,.stApp p,.stApp li,.stApp label,
+[data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li,[data-testid="stWidgetLabel"] p,
+[data-testid="stMetricLabel"] p,[data-testid="stMetricValue"],[data-testid="stExpander"] summary p,
+[data-testid="stRadio"] label p,[data-testid="stCheckbox"] label p,[data-testid="stToggle"] label p,
+[data-testid="stTabs"] button p{ color:var(--lg-text) !important; }
+[data-testid="stCaptionContainer"],[data-testid="stCaptionContainer"] p,.stCaption,.small-note{ color:var(--lg-muted) !important; }
+[data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li{ line-height:1.6; }
+[data-testid^="stBaseButton"],[data-testid^="stBaseLinkButton"]{ color:var(--lg-text); }
+[data-baseweb="input"] input,[data-baseweb="textarea"] textarea,[data-baseweb="select"] input,
+[data-baseweb="select"] div,[data-baseweb="select"] span{ color:var(--lg-text) !important; -webkit-text-fill-color:var(--lg-text) !important; caret-color:var(--lg-link); }
+[data-baseweb="select"] svg,[data-baseweb="input"] svg{ fill:var(--lg-muted) !important; }
+input::placeholder,textarea::placeholder{ color:var(--lg-muted) !important; -webkit-text-fill-color:var(--lg-muted) !important; opacity:1; }
+[data-baseweb="popover"] li,[data-baseweb="menu"] li,[role="option"]{ color:var(--lg-text) !important; }
+[role="option"]:hover,[role="option"][aria-selected="true"],[data-baseweb="menu"] li:hover{ background:var(--lg-fill-strong) !important; }
+.stApp [data-testid="stBaseButton-primary"] *,.stApp [data-testid="stBaseButton-primaryFormSubmit"] *,.stApp button[kind="primary"] *,.stApp button[kind="primaryFormSubmit"] *{ color:#fff !important; -webkit-text-fill-color:#fff !important; }
+"""
 
 
 def _theme_vars_css():
-    """Chọn bảng màu khớp với chế độ sáng/tối ĐANG dùng (st.context.theme nếu có, nếu không thì theo hệ điều hành)."""
+    """Sáng: giữ nguyên như cũ. Tối: bảng màu + quy tắc riêng. Chế độ lấy từ st.context.theme (nếu có), không thì theo hệ điều hành."""
     try:
         mode = st.context.theme.type
     except Exception:
         mode = None
     if mode == "dark":
-        body = ":root{" + _LG_DARK + "}"
+        body = ":root{" + _LG_DARK + "}" + _DARK_ONLY_CSS
     elif mode == "light":
         body = ":root{" + _LG_LIGHT + "}"
     else:
-        body = ":root{" + _LG_LIGHT + "} @media (prefers-color-scheme: dark){:root{" + _LG_DARK + "}}"
+        body = (":root{" + _LG_LIGHT + "} @media (prefers-color-scheme: dark){:root{" + _LG_DARK + "}"
+                + _DARK_ONLY_CSS + "}")
     return "<style>" + body + "</style>"
 
 
