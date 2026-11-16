@@ -232,7 +232,7 @@ def _minify_css(css):
     return re.sub(r"\s+", " ", css).strip()
 
 
-_LG_LIGHT = (  # giữ NGUYÊN giao diện sáng cũ
+_LG_LIGHT = (
     "--lg-text:#1d1d1f;--lg-bg:#ffffff;--lg-link:#C0394F;"
     "--lg-stroke:color-mix(in srgb,var(--lg-text) 13%,transparent);--lg-muted:color-mix(in srgb,var(--lg-text) 62%,transparent);"
     "--lg-fill:color-mix(in srgb,var(--lg-bg) 66%,transparent);--lg-fill-soft:color-mix(in srgb,var(--lg-bg) 30%,transparent);"
@@ -245,7 +245,7 @@ _LG_LIGHT = (  # giữ NGUYÊN giao diện sáng cũ
     "radial-gradient(920px 700px at 72% 108%,color-mix(in srgb,var(--lg-teal) 24%,transparent),transparent 62%),"
     "radial-gradient(700px 520px at 0% 100%,color-mix(in srgb,#9B6BFF 16%,transparent),transparent 62%);"
 )
-_LG_DARK = (  # chế độ tối: nền xanh đen, chữ sáng, kính trắng mờ nhẹ
+_LG_DARK = (
     "--lg-text:#eef1f7;--lg-bg:#0f131b;--lg-link:#FF8FA1;color-scheme:dark;"
     "--lg-stroke:color-mix(in srgb,var(--lg-text) 15%,transparent);--lg-muted:color-mix(in srgb,var(--lg-text) 70%,transparent);"
     "--lg-fill:rgba(255,255,255,.07);--lg-fill-soft:rgba(255,255,255,.05);--lg-fill-strong:rgba(255,255,255,.13);--lg-pop:rgba(27,32,43,.98);"
@@ -257,10 +257,8 @@ _LG_DARK = (  # chế độ tối: nền xanh đen, chữ sáng, kính trắng m
     "radial-gradient(920px 700px at 72% 108%,rgba(43,179,163,.12),transparent 62%),"
     "radial-gradient(700px 520px at 0% 100%,rgba(155,107,255,.10),transparent 62%);"
 )
-# Quy tắc CHỈ áp dụng khi ở chế độ tối (ép màu chữ để luôn đọc rõ trên nền tối)
 _DARK_ONLY_CSS = r"""
 .stApp,[data-testid="stApp"]{ color:var(--lg-text); }
-/* Màu chữ do chính giao diện này quyết định → luôn tương phản với nền, ở cả sáng lẫn tối */
 .stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp h5,.stApp h6,.stApp p,.stApp li,.stApp label,
 [data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li,[data-testid="stWidgetLabel"] p,
 [data-testid="stMetricLabel"] p,[data-testid="stMetricValue"],[data-testid="stExpander"] summary p,
@@ -280,7 +278,6 @@ input::placeholder,textarea::placeholder{ color:var(--lg-muted) !important; -web
 
 
 def _theme_vars_css():
-    """Sáng: giữ nguyên như cũ. Tối: bảng màu + quy tắc riêng. Chế độ lấy từ st.context.theme (nếu có), không thì theo hệ điều hành."""
     try:
         mode = st.context.theme.type
     except Exception:
@@ -290,16 +287,19 @@ def _theme_vars_css():
     elif mode == "light":
         body = ":root{" + _LG_LIGHT + "}"
     else:
-        body = (":root{" + _LG_LIGHT + "} @media (prefers-color-scheme: dark){:root{" + _LG_DARK + "}"
-                + _DARK_ONLY_CSS + "}")
+        body = (
+            ":root{" + _LG_LIGHT + "} @media (prefers-color-scheme: dark){:root{" + _LG_DARK + "}"
+            + _DARK_ONLY_CSS + "}"
+        )
     return "<style>" + body + "</style>"
 
 
-# Có thể tắt hiệu ứng kính ở thanh bên (máy yếu / mạng chậm) → nhẹ và nhanh hơn.
-# Công tắc khẩn cấp: thêm ?glass=off vào cuối địa chỉ web để tắt toàn bộ CSS kính.
 _glass_on = st.session_state.get("glass_fx", True) and st.query_params.get("glass") != "off"
 if st.query_params.get("glass") != "off":
-    st.markdown(_minify_css(_theme_vars_css() + GLASS_CSS + ("" if _glass_on else GLASS_OFF_CSS)), unsafe_allow_html=True)
+    st.markdown(
+        _minify_css(_theme_vars_css() + GLASS_CSS + ("" if _glass_on else GLASS_OFF_CSS)),
+        unsafe_allow_html=True,
+    )
 
 # ------------------------------------------------------------
 # CONFIG
@@ -1683,7 +1683,7 @@ def train_and_evaluate_research_models(df):
         from sklearn.metrics import (
             roc_auc_score, average_precision_score, brier_score_loss, confusion_matrix,
         )
-    except Exception:
+    except ModuleNotFoundError:
         return _fallback_research_bundle(df)
 
     try:
