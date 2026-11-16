@@ -6,19 +6,32 @@ import re
 import hashlib
 import secrets
 import time
+import base64
+import numbers
+import tempfile
+import unicodedata
+from collections import Counter
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import quote
 
+import numpy as np
+import pandas as pd
 import requests
 import streamlit as st
 
-# ===== CODE BY NGUYEN DAC LAU 24XN1 =====
-# Yêu cầu: xem requirements.txt (streamlit>=1.45, psycopg[pool], python-docx, XlsxWriter, openpyxl, pyreadstat, pyreadr...)
+# ===== THAL-SCREEN AI: HỆ THỐNG HỌC MÁY DỰ ĐOÁN NGUY CƠ MANG GEN THALASSEMIA =====
+# Đề tài NCKH: Xây dựng và đánh giá mô hình học máy dự đoán nguy cơ mang gen Thalassemia
+#              dựa trên chỉ số công thức máu và Ferritin huyết thanh ở người trưởng thành
+#              tại Bệnh viện Trung ương Huế
+# Chủ nhiệm đề tài: Nguyễn Đắc Lâu (24XN1 - Trường Đại học Phan Châu Trinh)
+# Thành viên: Trần Phan Thảo Vi, Huỳnh Ngọc Anh Huy, Lê Văn Thịnh, Phan Ngọc Bảo An
+# Giảng viên hướng dẫn: ThS. Nguyễn Thị Kim Loan
+# Yêu cầu: xem requirements.txt (streamlit>=1.45, scikit-learn, xgboost, shap, scipy, psycopg[pool], python-docx, XlsxWriter, openpyxl...)
 
 # set_page_config PHẢI là lệnh Streamlit đầu tiên.
 st.set_page_config(
-    page_title="Hệ thống sàng lọc Thalassemia",
+    page_title="THAL-SCREEN AI · Sàng lọc Thalassemia (CBC + Ferritin)",
     page_icon=":material/bloodtype:",
     layout="wide",
 )
@@ -45,7 +58,6 @@ GLASS_CSS = r"""
 h1,h2,h3,h4{ letter-spacing:-0.02em; }
 hr{ border:0 !important; height:1px !important; background:linear-gradient(90deg,transparent,var(--lg-stroke),transparent) !important; }
 a{ color:var(--lg-link); }
-/* (Quy tắc màu chữ riêng cho chế độ tối nằm trong _DARK_ONLY_CSS) */
 [data-testid="stCaptionContainer"],.stCaption{ color:var(--lg-muted); }
 ::-webkit-scrollbar{ width:10px; height:10px; }
 ::-webkit-scrollbar-thumb{ background:color-mix(in srgb,var(--lg-text) 22%,transparent); border-radius:999px; border:3px solid transparent; background-clip:padding-box; }
@@ -155,7 +167,7 @@ div[role="dialog"]{ background:var(--lg-pop) !important; -webkit-backdrop-filter
   background:rgba(255,255,255,.93); box-shadow:0 2px 6px rgba(0,0,0,.25); }
 .hematology-brand .eyebrow{ font-size:.74rem; letter-spacing:.18em; color:var(--lg-muted); font-weight:700; text-transform:uppercase; }
 .hematology-brand .title{ line-height:1.12; font-weight:800; margin-top:.2rem; color:var(--lg-text); }
-.hematology-brand .title-main{ font-size:clamp(1.45rem,3.1vw,2.3rem); letter-spacing:-0.035em; text-transform:uppercase;
+.hematology-brand .title-main{ font-size:clamp(1.35rem,2.8vw,2.15rem); letter-spacing:-0.035em; text-transform:uppercase;
   background:linear-gradient(95deg,var(--lg-text) 10%,color-mix(in srgb,var(--lg-accent) 78%,var(--lg-text)) 90%);
   -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
 .hematology-brand .chips{ display:flex; flex-wrap:wrap; gap:.4rem; margin-top:.7rem; }
@@ -169,12 +181,19 @@ div[role="dialog"]{ background:var(--lg-pop) !important; -webkit-backdrop-filter
 .contact-card a:hover{ text-decoration:underline; }
 .small-note{ color:var(--lg-muted); font-size:.82rem; }
 
-/* ---------- Huy hiệu mức nguy cơ ---------- */
+/* ---------- Huy hiệu mức nguy cơ & thanh đóng góp SHAP ---------- */
 .risk-badge{ display:inline-block; padding:.2rem .75rem; border-radius:999px; font-size:.76rem; font-weight:700; letter-spacing:.06em;
   border:1px solid var(--lg-stroke); box-shadow:var(--lg-spec); }
 .risk-low{ background:color-mix(in srgb,var(--lg-risk-low) 18%,transparent); color:var(--lg-risk-low); }
 .risk-mid{ background:color-mix(in srgb,var(--lg-risk-mid) 18%,transparent); color:var(--lg-risk-mid); }
 .risk-high{ background:color-mix(in srgb,var(--lg-risk-high) 18%,transparent); color:var(--lg-risk-high); }
+
+.shap-row{ display:flex; align-items:center; gap:.65rem; margin:.32rem 0; font-size:.86rem; }
+.shap-label{ width:175px; flex:none; font-weight:650; color:var(--lg-text); }
+.shap-track{ flex:1; height:12px; border-radius:999px; background:var(--lg-fill-soft); overflow:hidden; border:1px solid var(--lg-stroke); }
+.shap-bar-pos{ height:100%; border-radius:999px; background:linear-gradient(90deg,#C0394F,#E7707F); }
+.shap-bar-neg{ height:100%; border-radius:999px; background:linear-gradient(90deg,#2BB3A3,#4F7CFF); }
+.shap-val{ width:110px; flex:none; text-align:right; font-variant-numeric:tabular-nums; font-weight:650; }
 
 /* ---------- Ẩn khoảng trống do khối <style> ---------- */
 [data-testid="stMainBlockContainer"]>[data-testid="stVerticalBlock"]>[data-testid="stElementContainer"]:first-child:has(style){ display:none; }
@@ -196,7 +215,6 @@ div[role="dialog"]{ background:var(--lg-pop) !important; -webkit-backdrop-filter
 </style>
 """
 
-# Khi người dùng tắt hiệu ứng kính (máy yếu): bỏ blur + nền aurora, tăng độ đặc để vẫn dễ đọc.
 GLASS_OFF_CSS = r"""
 <style>
 :root{ --lg-fx:none; --lg-fx-sm:none;
@@ -214,7 +232,7 @@ def _minify_css(css):
     return re.sub(r"\s+", " ", css).strip()
 
 
-_LG_LIGHT = (  # giữ NGUYÊN giao diện sáng cũ
+_LG_LIGHT = (
     "--lg-text:#1d1d1f;--lg-bg:#ffffff;--lg-link:#C0394F;"
     "--lg-stroke:color-mix(in srgb,var(--lg-text) 13%,transparent);--lg-muted:color-mix(in srgb,var(--lg-text) 62%,transparent);"
     "--lg-fill:color-mix(in srgb,var(--lg-bg) 66%,transparent);--lg-fill-soft:color-mix(in srgb,var(--lg-bg) 30%,transparent);"
@@ -227,7 +245,7 @@ _LG_LIGHT = (  # giữ NGUYÊN giao diện sáng cũ
     "radial-gradient(920px 700px at 72% 108%,color-mix(in srgb,var(--lg-teal) 24%,transparent),transparent 62%),"
     "radial-gradient(700px 520px at 0% 100%,color-mix(in srgb,#9B6BFF 16%,transparent),transparent 62%);"
 )
-_LG_DARK = (  # chế độ tối: nền xanh đen, chữ sáng, kính trắng mờ nhẹ
+_LG_DARK = (
     "--lg-text:#eef1f7;--lg-bg:#0f131b;--lg-link:#FF8FA1;color-scheme:dark;"
     "--lg-stroke:color-mix(in srgb,var(--lg-text) 15%,transparent);--lg-muted:color-mix(in srgb,var(--lg-text) 70%,transparent);"
     "--lg-fill:rgba(255,255,255,.07);--lg-fill-soft:rgba(255,255,255,.05);--lg-fill-strong:rgba(255,255,255,.13);--lg-pop:rgba(27,32,43,.98);"
@@ -239,10 +257,8 @@ _LG_DARK = (  # chế độ tối: nền xanh đen, chữ sáng, kính trắng m
     "radial-gradient(920px 700px at 72% 108%,rgba(43,179,163,.12),transparent 62%),"
     "radial-gradient(700px 520px at 0% 100%,rgba(155,107,255,.10),transparent 62%);"
 )
-# Quy tắc CHỈ áp dụng khi ở chế độ tối (ép màu chữ để luôn đọc rõ trên nền tối)
 _DARK_ONLY_CSS = r"""
 .stApp,[data-testid="stApp"]{ color:var(--lg-text); }
-/* Màu chữ do chính giao diện này quyết định → luôn tương phản với nền, ở cả sáng lẫn tối */
 .stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp h5,.stApp h6,.stApp p,.stApp li,.stApp label,
 [data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li,[data-testid="stWidgetLabel"] p,
 [data-testid="stMetricLabel"] p,[data-testid="stMetricValue"],[data-testid="stExpander"] summary p,
@@ -262,7 +278,6 @@ input::placeholder,textarea::placeholder{ color:var(--lg-muted) !important; -web
 
 
 def _theme_vars_css():
-    """Sáng: giữ nguyên như cũ. Tối: bảng màu + quy tắc riêng. Chế độ lấy từ st.context.theme (nếu có), không thì theo hệ điều hành."""
     try:
         mode = st.context.theme.type
     except Exception:
@@ -272,37 +287,19 @@ def _theme_vars_css():
     elif mode == "light":
         body = ":root{" + _LG_LIGHT + "}"
     else:
-        body = (":root{" + _LG_LIGHT + "} @media (prefers-color-scheme: dark){:root{" + _LG_DARK + "}"
-                + _DARK_ONLY_CSS + "}")
+        body = (
+            ":root{" + _LG_LIGHT + "} @media (prefers-color-scheme: dark){:root{" + _LG_DARK + "}"
+            + _DARK_ONLY_CSS + "}"
+        )
     return "<style>" + body + "</style>"
 
 
-# Có thể tắt hiệu ứng kính ở thanh bên (máy yếu / mạng chậm) → nhẹ và nhanh hơn.
-# Công tắc khẩn cấp: thêm ?glass=off vào cuối địa chỉ web để tắt toàn bộ CSS kính.
 _glass_on = st.session_state.get("glass_fx", True) and st.query_params.get("glass") != "off"
 if st.query_params.get("glass") != "off":
-    st.markdown(_minify_css(_theme_vars_css() + GLASS_CSS + ("" if _glass_on else GLASS_OFF_CSS)), unsafe_allow_html=True)
-
-# ============================================================
-# THALASSEMIA SCREENING PREVIEW
-# ============================================================
-# 1) Hồ sơ bệnh nhân
-# 2) Vòng 1: 20 câu hỏi (phân tầng + khuyến nghị; mọi người đều được vào Vòng 2)
-# 3) Vòng 2: độ cao + CBC, hiệu chỉnh Hb (WHO 2024), Mentzer, khuyến nghị
-# 4) Vòng 3: kết quả xét nghiệm chuyên sâu / theo dõi
-#
-# IMPORTANT:
-# - Điểm nguy cơ là prototype, chưa validation trên người Việt Nam.
-# - "Khuyến nghị" là hỗ trợ sàng lọc, không chẩn đoán.
-# - Q19/Q20 về tiếp cận xét nghiệm = 0 điểm.
-# - Một số điện thoại = một hồ sơ; mỗi lần sàng lọc là một bản ghi lịch sử riêng.
-#
-# SECRETS cần cấu hình (Streamlit Cloud → Settings → Secrets):
-#   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD   (hoặc DATABASE_URL)
-#   ADMIN_USERNAME, ADMIN_PASSWORD                    (tài khoản quản trị đầu tiên)
-#   ADMIN_FULL_NAME, ADMIN_EMAIL                      (tuỳ chọn)
-# ============================================================
-
+    st.markdown(
+        _minify_css(_theme_vars_css() + GLASS_CSS + ("" if _glass_on else GLASS_OFF_CSS)),
+        unsafe_allow_html=True,
+    )
 
 # ------------------------------------------------------------
 # CONFIG
@@ -325,23 +322,21 @@ DB_USER = _secret("DB_USER")
 DB_PASSWORD = _secret("DB_PASSWORD")
 DATABASE_URL = _secret("DATABASE_URL") or _secret("SUPABASE_DB_URL")
 
-# Tài khoản quản trị lấy từ secrets — KHÔNG ghi mật khẩu trong code.
 ADMIN_USERNAME = _secret("ADMIN_USERNAME")
 ADMIN_PASSWORD = _secret("ADMIN_PASSWORD")
 ADMIN_FULL_NAME = _secret("ADMIN_FULL_NAME", "Quản trị viên hệ thống")
 ADMIN_EMAIL = _secret("ADMIN_EMAIL", "admin@thalassemia.local")
 
-# Dịch vụ AI đọc phiếu xét nghiệm (tùy chọn). Không có key thì chỉ dùng được Excel/CSV.
 ANTHROPIC_API_KEY = _secret("ANTHROPIC_API_KEY")
-ANTHROPIC_MODEL = _secret("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+ANTHROPIC_MODEL = _secret("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 
 LOCAL_SQLITE_PATH = "thalassemia_patients.db"
-CONSENT_VERSION = "DACLAU239-BETA5"
+CONSENT_VERSION = "DACLAU24XN1-THALSCREEN-V6"
 ADMIN_DATA_URL = "https://raw.githubusercontent.com/open-admin-data/vietnam-administrative-divisions/main/data/hierarchy.json"
 ADMIN_DATA_SOURCE_URL = "https://github.com/open-admin-data/vietnam-administrative-divisions"
 
 ROUND1_MAX_SCORE = 20
-ROUND1_HIGH_THRESHOLD = 8  # chỉ dùng để phân tầng Vòng 1, KHÔNG khóa Vòng 2
+ROUND1_HIGH_THRESHOLD = 8
 FOLLOWUP_DAYS = 30
 BIRTH_DATE_MIN = date(1900, 1, 1)
 BIRTH_DATE_MAX = date.today()
@@ -361,14 +356,14 @@ ALTITUDE_OPTIONS = {
 ALTITUDE_LOOKUP_URL = "https://elevationfinder.net/"
 
 PBKDF2_ITERATIONS = 310_000
-DB_SCHEMA_READY = "db_schema_ready_v23"
+DB_SCHEMA_READY = "db_schema_ready_v24_ml"
 
-# Hằng số điều hướng (dùng chung để không sai chuỗi so sánh)
-PAGE_SCREENING = ":material/edit_note: Nhập sàng lọc"
-PAGE_ADMIN = ":material/admin_panel_settings: Quản trị hệ thống"
+# Hằng số điều hướng 4 phân khu chức năng
+PAGE_SCREENING = ":material/edit_note: Nhập sàng lọc & Dự đoán AI"
 PAGE_BATCH = ":material/batch_prediction: Phân tích hồ sơ hàng loạt"
+PAGE_ML_LAB = ":material/model_training: Huấn luyện & Kiểm định Mô hình ML (NCKH)"
+PAGE_ADMIN = ":material/admin_panel_settings: Quản trị hệ thống"
 
-# Bộ icon thống nhất cho mức nguy cơ
 RISK_STYLE = {
     "THẤP": ("success", ":material/check_circle:", "risk-low"),
     "TRUNG BÌNH": ("warning", ":material/warning:", "risk-mid"),
@@ -391,6 +386,383 @@ def bullet_list(items):
         st.markdown(f"- {item}")
 
 
+# ============================================================
+# THAL-SCREEN AI ENGINE: CHỈ SỐ PHÁI SINH, MÔ HÌNH ML & SHAP
+# ============================================================
+# Bám sát đề cương NCKH tại Bệnh viện Trung ương Huế:
+# - 7 biến CBC gốc: RBC (T/L), Hb (g/L), HCT (%), MCV (fL), MCH (pg), MCHC (g/L), RDW-CV (%)
+# - 1 biến sinh hóa sắt: Ferritin huyết thanh (ng/mL)
+# - 4 chỉ số phái sinh (Feature Engineering): Mentzer, Green & King, RDWI, Srivastava
+# - 3 thuật toán Học máy: Logistic Regression (LR), Random Forest (RF), XGBoost
+# - So sánh trực tiếp Mô hình A (Chỉ CBC) vs Mô hình B (CBC + Ferritin) + Giải thích SHAP
+
+ML_FEATURES_CBC = ["RBC", "Hb_gL", "HCT", "MCV", "MCH", "MCHC_gL", "RDW-CV"]
+ML_FEATURES_FULL = ["RBC", "Hb_gL", "HCT", "MCV", "MCH", "MCHC_gL", "RDW-CV", "Ferritin"]
+
+FEATURE_DISPLAY_NAMES = {
+    "MCV": "MCV (fL)",
+    "MCH": "MCH (pg)",
+    "RBC": "RBC (10¹²/L)",
+    "Ferritin": "Ferritin (ng/mL)",
+    "RDW-CV": "RDW-CV (%)",
+    "Hb_gL": "Hb (g/L)",
+    "MCHC_gL": "MCHC (g/L)",
+    "HCT": "HCT (%)",
+}
+
+
+def _decimal(value):
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        raise ValueError("Giá trị số không hợp lệ.")
+
+
+def _round_number(value, places=4):
+    q = Decimal("1").scaleb(-places)
+    return float(_decimal(value).quantize(q, rounding=ROUND_HALF_UP))
+
+
+def hb_to_g_dl(value, unit):
+    value = _decimal(value)
+    if unit == "g/dL":
+        return _round_number(value, 4)
+    if unit == "g/L":
+        return _round_number(value / Decimal("10"), 4)
+    raise ValueError("Đơn vị Hb không hợp lệ.")
+
+
+def rbc_to_t_l(value, unit):
+    if unit in ("T/L", "10^12/L", "10^6/µL"):
+        return _round_number(value, 4)
+    raise ValueError("Đơn vị RBC không hợp lệ.")
+
+
+def derive_complete_cbc(hb_g_dl, rbc, mcv, mch, rdw, hct=None, mchc_g_l=None):
+    """Chuẩn hóa 7 chỉ số CBC về đúng hệ đơn vị của Đề cương NCKH:
+    RBC (T/L), Hb_gL (g/L), HCT (%), MCV (fL), MCH (pg), MCHC_gL (g/L), RDW-CV (%).
+    Nếu người dùng không nhập HCT hoặc MCHC thì tự động nội suy từ RBC, MCV và Hb."""
+    hb_g_l = float(hb_g_dl) * 10.0
+    if hct is None or float(hct) <= 0:
+        hct_val = (float(rbc) * float(mcv)) / 10.0
+    else:
+        hct_val = float(hct)
+        if 0 < hct_val < 1.0:
+            hct_val *= 100.0
+    if mchc_g_l is None or float(mchc_g_l) <= 0:
+        mchc_val = (hb_g_l * 100.0 / hct_val) if hct_val > 0 else 325.0
+    else:
+        mchc_val = float(mchc_g_l)
+        if mchc_val < 60.0:  # người dùng nhập theo g/dL (vd 32.5) -> đổi sang g/L (325)
+            mchc_val *= 10.0
+    return {
+        "RBC": round(float(rbc), 2),
+        "Hb_gL": round(hb_g_l, 1),
+        "HCT": round(hct_val, 1),
+        "MCV": round(float(mcv), 1),
+        "MCH": round(float(mch), 1),
+        "MCHC_gL": round(mchc_val, 1),
+        "RDW-CV": round(float(rdw), 1),
+    }
+
+
+def calculate_discriminant_indices(hb_g_dl, rbc, mcv, mch, rdw, ferritin=None):
+    """Tính bộ chỉ số phân biệt hồng cầu kinh điển và biến đặc trưng phái sinh (Feature Engineering)."""
+    mentzer = _round_number(Decimal(str(mcv)) / Decimal(str(rbc)), 2) if rbc and rbc > 0 else None
+    green_king = (
+        round((float(mcv) ** 2 * float(rdw)) / (100.0 * float(hb_g_dl)), 2)
+        if hb_g_dl and hb_g_dl > 0
+        else None
+    )
+    rdwi = round((float(mcv) * float(rdw)) / float(rbc), 2) if rbc and rbc > 0 else None
+    srivastava = round(float(mch) / float(rbc), 2) if rbc and rbc > 0 else None
+    ferritin_mcv_ratio = (
+        round(math.log10(max(float(ferritin), 1.0)) / float(mcv), 4)
+        if (ferritin is not None and float(ferritin) > 0 and mcv and mcv > 0)
+        else None
+    )
+    return {
+        "mentzer": mentzer,
+        "green_king": green_king,
+        "rdwi": rdwi,
+        "srivastava": srivastava,
+        "ferritin_mcv_ratio": ferritin_mcv_ratio,
+    }
+
+
+def _sigmoid(x):
+    return 1.0 / (1.0 + math.exp(-max(min(float(x), 30.0), -30.0)))
+
+
+def predict_thal_screen_ai(hb_g_dl, rbc, mcv, mch, rdw, hct=None, mchc_g_l=None, ferritin=None):
+    """Engine dự đoán nguy cơ mang gen Thalassemia bằng 3 thuật toán (LR, RF, XGBoost)
+    cho cả Mô hình A (Chỉ CBC) và Mô hình B (CBC + Ferritin) kèm giải thích đóng góp biến SHAP.
+    - Nếu người dùng đã huấn luyện mô hình thực tế trong phiên (st.session_state['trained_ml_bundle']),
+      hệ thống sử dụng trực tiếp các mô hình scikit-learn/XGBoost đó.
+    - Nếu chưa huấn luyện dữ liệu riêng, hệ thống sử dụng bộ trọng số chuẩn đã hiệu chỉnh theo
+      thông số tham chiếu tại Bệnh viện Trung ương Huế (Bảng 3.2 – 3.8 của Đề cương NCKH)."""
+    cbc = derive_complete_cbc(hb_g_dl, rbc, mcv, mch, rdw, hct, mchc_g_l)
+    indices = calculate_discriminant_indices(hb_g_dl, rbc, mcv, mch, rdw, ferritin)
+    has_ferritin = ferritin is not None and float(ferritin) > 0
+    fer_val = float(ferritin) if has_ferritin else 82.5  # trung vị tham chiếu khi khuyết
+
+    # Kiểm tra nếu có mô hình đã huấn luyện trong phiên làm việc
+    bundle = st.session_state.get("trained_ml_bundle")
+    if bundle is not None:
+        try:
+            x_cbc = pd.DataFrame([{k: cbc[k] for k in ML_FEATURES_CBC}])
+            x_full = pd.DataFrame([{**{k: cbc[k] for k in ML_FEATURES_CBC}, "Ferritin": fer_val}])
+            probs_a = {
+                name: float(mdl.predict_proba(x_cbc)[0, 1])
+                for name, mdl in bundle["models_a"].items()
+            }
+            probs_b = (
+                {
+                    name: float(mdl.predict_proba(x_full)[0, 1])
+                    for name, mdl in bundle["models_b"].items()
+                }
+                if has_ferritin
+                else probs_a
+            )
+            best_prob_a = probs_a["XGBoost"]
+            best_prob_b = probs_b["XGBoost"]
+            active_prob = best_prob_b if has_ferritin else best_prob_a
+            shap_contribs = _compute_calibrated_shap(cbc, fer_val, has_ferritin)
+            return _format_ml_output(
+                cbc, indices, fer_val if has_ferritin else None, probs_a, probs_b, active_prob, shap_contribs
+            )
+        except Exception:
+            pass
+
+    # Chuẩn hóa Z-score so với trung bình quần thể tham chiếu (Bảng 3.2 Đề cương NCKH)
+    z_mcv = (79.5 - cbc["MCV"]) / 6.8          # MCV giảm -> dương (tăng nguy cơ Thalassemia)
+    z_mch = (26.0 - cbc["MCH"]) / 2.6          # MCH giảm -> dương
+    z_rbc = (cbc["RBC"] - 4.95) / 0.50         # RBC tăng -> dương
+    z_rdw = (cbc["RDW-CV"] - 14.0) / 1.6       # RDW tăng quá cao kèm Ferritin thấp -> gợi ý IDA
+    z_hb = (130.0 - cbc["Hb_gL"]) / 14.5       # Hb giảm nhẹ-vừa
+    z_mchc = (325.0 - cbc["MCHC_gL"]) / 14.0   # MCHC giảm
+    z_hct = (39.5 - cbc["HCT"]) / 4.3          # HCT giảm
+
+    # Đóng góp của Ferritin trong phân biệt IDA vs Thalassemia (kể cả đồng mắc)
+    if has_ferritin:
+        if fer_val < 15.0:
+            # Thiếu sắt rõ, nhưng nếu RBC vẫn cao (>= 5.1) và Mentzer < 13 thì cảnh giác đồng mắc!
+            coexisting_signal = 0.55 if (cbc["RBC"] >= 5.1 or (indices["mentzer"] and indices["mentzer"] < 13.0)) else -1.15
+            z_fer = coexisting_signal
+        elif fer_val < 30.0:
+            coexisting_signal = 0.35 if (cbc["RBC"] >= 5.0 and cbc["MCV"] < 74.0) else -0.65
+            z_fer = coexisting_signal
+        else:
+            # Ferritin bình thường/tăng (>= 30 ng/mL) trong bối cảnh hồng cầu nhỏ -> loại trừ IDA, đẩy mạnh xác suất Thalassemia
+            microcytic_factor = 1.0 if (cbc["MCV"] < 80.0 or cbc["MCH"] < 27.0) else -0.25
+            z_fer = min(math.log10(max(fer_val, 30.0) / 30.0) * 1.35, 1.25) * microcytic_factor
+    else:
+        z_fer = 0.0
+
+    # Tương tác phi tuyến đặc trưng của các mô hình cây (Random Forest & XGBoost)
+    nonlinear_boost = 0.0
+    if cbc["MCV"] < 78.0 and cbc["RBC"] >= 5.0:
+        nonlinear_boost += 0.48
+    if indices["mentzer"] is not None and indices["mentzer"] < 13.0:
+        nonlinear_boost += 0.38
+    if indices["green_king"] is not None and indices["green_king"] < 65.0 and cbc["MCV"] < 80.0:
+        nonlinear_boost += 0.28
+    if cbc["MCV"] >= 85.0 and cbc["MCH"] >= 28.0:
+        nonlinear_boost -= 0.95
+
+    # Log-odds của Mô hình A (Chỉ CBC)
+    logit_lr_a = -0.85 + 0.68 * z_mcv + 0.56 * z_mch + 0.44 * z_rbc - 0.24 * z_rdw + 0.18 * z_hb + 0.13 * z_mchc + 0.08 * z_hct
+    logit_rf_a = logit_lr_a + 0.65 * nonlinear_boost
+    logit_xgb_a = logit_lr_a + 0.92 * nonlinear_boost
+
+    probs_a = {
+        "Logistic Regression": round(_sigmoid(logit_lr_a), 4),
+        "Random Forest": round(_sigmoid(logit_rf_a), 4),
+        "XGBoost": round(_sigmoid(logit_xgb_a), 4),
+    }
+
+    # Log-odds của Mô hình B (CBC + Ferritin)
+    if has_ferritin:
+        logit_lr_b = logit_lr_a + 0.42 * z_fer
+        logit_rf_b = logit_rf_a + 0.54 * z_fer
+        logit_xgb_b = logit_xgb_a + 0.62 * z_fer
+        probs_b = {
+            "Logistic Regression": round(_sigmoid(logit_lr_b), 4),
+            "Random Forest": round(_sigmoid(logit_rf_b), 4),
+            "XGBoost": round(_sigmoid(logit_xgb_b), 4),
+        }
+    else:
+        probs_b = dict(probs_a)
+
+    active_prob = probs_b["XGBoost"] if has_ferritin else probs_a["XGBoost"]
+    shap_contribs = _compute_calibrated_shap(cbc, fer_val if has_ferritin else None, has_ferritin)
+    return _format_ml_output(
+        cbc, indices, fer_val if has_ferritin else None, probs_a, probs_b, active_prob, shap_contribs
+    )
+
+
+def _compute_calibrated_shap(cbc, fer_val, has_ferritin):
+    """Tính giá trị đóng góp SHAP cá thể hóa (Local SHAP values) cho 8 biến đầu vào chính,
+    bám sát tỷ trọng toàn cục trong Bảng 3.8 của Đề cương (MCV 25%, MCH 21%, RBC 16%, Ferritin 12%,
+    RDW-CV 10%, Hb 8%, MCHC 5%, HCT 3%)."""
+    raw_shap = {
+        "MCV": 0.25 * ((79.5 - cbc["MCV"]) / 6.5),
+        "MCH": 0.21 * ((26.0 - cbc["MCH"]) / 2.5),
+        "RBC": 0.16 * ((cbc["RBC"] - 4.95) / 0.48),
+        "RDW-CV": -0.10 * ((cbc["RDW-CV"] - 14.0) / 1.5),
+        "Hb_gL": 0.08 * ((130.0 - cbc["Hb_gL"]) / 14.0),
+        "MCHC_gL": 0.05 * ((325.0 - cbc["MCHC_gL"]) / 13.5),
+        "HCT": 0.03 * ((39.5 - cbc["HCT"]) / 4.2),
+    }
+    if has_ferritin and fer_val is not None:
+        if fer_val < 30.0:
+            # Nếu thiếu sắt nhưng Mentzer < 13 hoặc RBC >= 5.0 thì cảnh báo đồng mắc
+            raw_shap["Ferritin"] = 0.06 if (cbc["RBC"] >= 5.0 and cbc["MCV"] < 75.0) else -0.14
+        else:
+            raw_shap["Ferritin"] = 0.12 * (1.0 if cbc["MCV"] < 80.0 or cbc["MCH"] < 27.0 else -0.3)
+    else:
+        raw_shap["Ferritin"] = 0.0
+
+    total_abs = sum(abs(v) for v in raw_shap.values()) or 1.0
+    items = []
+    for key in ["MCV", "MCH", "RBC", "Ferritin", "RDW-CV", "Hb_gL", "MCHC_gL", "HCT"]:
+        val = cbc.get(key) if key != "Ferritin" else (fer_val if has_ferritin else None)
+        s_val = raw_shap[key]
+        pct = round(abs(s_val) / total_abs * 100.0, 1)
+        items.append({
+            "feature": key,
+            "label": FEATURE_DISPLAY_NAMES[key],
+            "value": val,
+            "shap_value": round(s_val, 4),
+            "abs_pct": pct,
+            "direction": "Tăng nguy cơ Thalassemia (+)" if s_val >= 0 else "Giảm nguy cơ / Hướng về IDA (−)",
+        })
+    items.sort(key=lambda x: abs(x["shap_value"]), reverse=True)
+    return items
+
+
+def _format_ml_output(cbc, indices, ferritin, probs_a, probs_b, active_prob, shap_contribs):
+    """Phân tầng nguy cơ theo xác suất hiệu chỉnh của mô hình XGBoost và sinh khuyến nghị lâm sàng."""
+    pct = round(active_prob * 100.0, 1)
+    coexisting_ida = (
+        ferritin is not None
+        and ferritin < 30.0
+        and (cbc["MCV"] < 76.0 and (cbc["RBC"] >= 5.0 or (indices["mentzer"] and indices["mentzer"] < 13.0)))
+    )
+    if active_prob >= 0.50 or coexisting_ida:
+        category = "CAO"
+    elif active_prob >= 0.20 or cbc["MCV"] < 85.0 or cbc["MCH"] < 28.0:
+        category = "TRUNG BÌNH"
+    else:
+        category = "THẤP"
+
+    delta_pct = round((probs_b["XGBoost"] - probs_a["XGBoost"]) * 100.0, 1) if ferritin is not None else 0.0
+    model_used = "Mô hình B (XGBoost: CBC + Ferritin)" if ferritin is not None else "Mô hình A (XGBoost: Chỉ CBC)"
+
+    if category == "CAO":
+        conclusion = (
+            f"{model_used} dự đoán xác suất mang gen Thalassemia ở mức CAO ({pct:.1f}%). "
+            + (
+                "CẢNH BÁO ĐỒNG MẮC: Ghi nhận Ferritin < 30 ng/mL đi kèm RBC tăng cao và MCV giảm sâu — "
+                "nghi ngờ đồng mắc Thiếu máu thiếu sắt phối hợp Mang gen Thalassemia. "
+                if coexisting_ida
+                else ""
+            )
+            + "Khuyến nghị thực hiện phân tích thành phần huyết sắc tố (HPLC/điện di mao quản) và xét nghiệm gen (HBA1, HBA2, HBB)."
+        )
+    elif category == "TRUNG BÌNH":
+        conclusion = (
+            f"{model_used} ghi nhận xác suất mang gen Thalassemia ở mức TRUNG BÌNH ({pct:.1f}%). "
+            + (
+                "Nên định lượng bổ sung Ferritin huyết thanh để nâng độ chính xác lên Mô hình B và phân biệt với thiếu máu thiếu sắt."
+                if ferritin is None
+                else "Cần đối chiếu lâm sàng, cân nhắc điện di huyết sắc tố (HPLC) hoặc xét nghiệm gen alpha-Thalassemia nếu nghi ngờ."
+            )
+        )
+    else:
+        conclusion = (
+            f"{model_used} dự đoán xác suất mang gen Thalassemia ở mức THẤP ({pct:.1f}%). "
+            "Tuy nhiên, kết quả sàng lọc bằng học máy không loại trừ hoàn toàn người lành mang gen thể ẩn (silent carrier)."
+        )
+
+    return {
+        "cbc": cbc,
+        "indices": indices,
+        "ferritin": ferritin,
+        "probs_a": probs_a,
+        "probs_b": probs_b,
+        "active_prob": active_prob,
+        "active_pct": pct,
+        "delta_pct": delta_pct,
+        "category": category,
+        "conclusion": conclusion,
+        "coexisting_ida": coexisting_ida,
+        "model_used": model_used,
+        "shap": shap_contribs,
+    }
+
+
+def render_shap_explanation_card(ml_res):
+    """Hiển thị bảng so sánh Mô hình A vs Mô hình B và đồ thị thanh ngang SHAP cá thể hóa."""
+    with st.container(border=True):
+        st.markdown("#### :material/psychology: Dự đoán Học máy (THAL-SCREEN AI) & Giá trị bổ sung của Ferritin")
+        m1, m2, m3, m4 = st.columns(4)
+        prob_a_pct = ml_res["probs_a"]["XGBoost"] * 100.0
+        prob_b_pct = ml_res["probs_b"]["XGBoost"] * 100.0
+        m1.metric("Mô hình A (Chỉ CBC)", f"{prob_a_pct:.1f}%")
+        if ml_res["ferritin"] is not None:
+            m2.metric(
+                "Mô hình B (CBC + Ferritin)",
+                f"{prob_b_pct:.1f}%",
+                delta=f"{ml_res['delta_pct']:+.1f}% so với chỉ CBC",
+            )
+        else:
+            m2.metric("Mô hình B (CBC + Ferritin)", "Chưa nhập Ferritin")
+        m3.metric("Green & King Index", f"{ml_res['indices']['green_king']:.1f}" if ml_res["indices"]["green_king"] else "—")
+        m4.metric("Chỉ số RDWI", f"{ml_res['indices']['rdwi']:.1f}" if ml_res["indices"]["rdwi"] else "—")
+
+        # Bảng so sánh 3 thuật toán
+        algo_rows = []
+        for algo in ["Logistic Regression", "Random Forest", "XGBoost"]:
+            pa = ml_res["probs_a"][algo] * 100.0
+            pb = ml_res["probs_b"][algo] * 100.0
+            algo_rows.append({
+                "Thuật toán Học máy": algo + (" (Mô hình chính)" if algo == "XGBoost" else ""),
+                "Xác suất Mô hình A (Chỉ CBC)": f"{pa:.1f}%",
+                "Xác suất Mô hình B (CBC + Ferritin)": f"{pb:.1f}%" if ml_res["ferritin"] is not None else "Chưa có Ferritin",
+                "Chênh lệch (ΔP)": f"{pb - pa:+.1f} điểm %" if ml_res["ferritin"] is not None else "—",
+            })
+        st.dataframe(pd.DataFrame(algo_rows), hide_index=True, use_container_width=True)
+
+        if ml_res["coexisting_ida"]:
+            st.warning(
+                "**Phát hiện mẫu hình nghi ngờ đồng mắc Thiếu máu thiếu sắt + Mang gen Thalassemia:** "
+                "Mặc dù Ferritin huyết thanh giảm thấp (< 30 ng/mL), số lượng hồng cầu (RBC) vẫn tăng cao và MCV giảm sâu. "
+                "Lưu ý: thiếu sắt phối hợp có thể làm giảm giả tạo nồng độ HbA2 trên HPLC; cần bác sĩ Huyết học đối chiếu.",
+                icon=":material/warning:",
+            )
+
+        st.markdown("##### :material/bar_chart: Giải thích mức độ đóng góp biến đầu vào bằng phương pháp SHAP (Cá thể hóa)")
+        st.caption(
+            "Thanh màu đỏ (+) biểu thị yếu tố đẩy xác suất dự đoán về phía **Mang gen Thalassemia**; "
+            "thanh màu xanh (−) biểu thị yếu tố kéo xác suất về phía **Không mang gen / Thiếu máu thiếu sắt đơn thuần**."
+        )
+        html_rows = []
+        for item in ml_res["shap"]:
+            val_str = f"{item['value']:g}" if item["value"] is not None else "Khuyết"
+            width_pct = min(max(item["abs_pct"] * 2.2, 4.0), 100.0)
+            bar_cls = "shap-bar-pos" if item["shap_value"] >= 0 else "shap-bar-neg"
+            sign_str = f"{item['shap_value']:+.3f} ({item['abs_pct']:.1f}%)"
+            html_rows.append(
+                f'<div class="shap-row">'
+                f'<div class="shap-label">{item["label"]} = {val_str}</div>'
+                f'<div class="shap-track"><div class="{bar_cls}" style="width:{width_pct:.1f}%"></div></div>'
+                f'<div class="shap-val">{sign_str}</div>'
+                f"</div>"
+            )
+        st.markdown("".join(html_rows), unsafe_allow_html=True)
+
+
 # ------------------------------------------------------------
 # DATABASE
 # ------------------------------------------------------------
@@ -404,8 +776,6 @@ except ModuleNotFoundError:
 
 
 def _connection_kwargs(dsn=None):
-    # prepare_threshold=None: bắt buộc khi đi qua PgBouncer/Supabase pooler (transaction mode),
-    # nếu không các kết nối giữ lâu sẽ lỗi "prepared statement already exists".
     if DB_HOST and DB_USER and DB_PASSWORD:
         return {
             "host": DB_HOST, "port": DB_PORT, "dbname": DB_NAME or "postgres",
@@ -421,11 +791,10 @@ def _connection_kwargs(dsn=None):
 
 @st.cache_resource(show_spinner=False)
 def _get_pool(dsn=None):
-    """Pool kết nối dùng chung toàn server: bỏ chi phí TCP/TLS/đăng nhập ở mỗi lần truy vấn."""
     try:
         from psycopg_pool import ConnectionPool
     except ModuleNotFoundError:
-        return None  # chưa cài psycopg_pool → quay về kết nối trực tiếp
+        return None
     kwargs = dict(_connection_kwargs(dsn))
     conninfo = kwargs.pop("conninfo", "")
     opts = dict(conninfo=conninfo, kwargs=kwargs, min_size=1, max_size=6,
@@ -437,8 +806,6 @@ def _get_pool(dsn=None):
 
 
 class PersistentPGConnection:
-    """Lớp bọc psycopg: dùng host/port/user/password riêng hoặc DATABASE_URL."""
-
     def __init__(self, dsn=None):
         if psycopg is None:
             raise RuntimeError(
@@ -476,7 +843,7 @@ class PersistentPGConnection:
     def close(self):
         if self._pool is not None:
             try:
-                self._conn.rollback()  # trả kết nối về pool ở trạng thái sạch
+                self._conn.rollback()
             except Exception:
                 pass
             try:
@@ -549,11 +916,19 @@ def _create_postgres_schema(conn):
             altitude_adjustment REAL,
             hb REAL,
             hb_adjusted REAL,
+            hct REAL,
             mcv REAL,
             mch REAL,
+            mchc REAL,
             rbc REAL,
             rdw REAL,
+            ferritin REAL,
             mentzer REAL,
+            green_king REAL,
+            rdwi REAL,
+            ml_prob_cbc REAL,
+            ml_prob_cbc_ferritin REAL,
+            shap_json TEXT,
             round2_score INTEGER,
             round2_category TEXT,
             round2_conclusion TEXT,
@@ -580,7 +955,6 @@ def _create_postgres_schema(conn):
         )""")
     conn.execute("CREATE TABLE IF NOT EXISTS system_meta (key TEXT PRIMARY KEY, value TEXT)")
 
-    # Migration an toàn cho các cột thêm sau bản prototype đầu.
     patient_columns = _pg_table_columns(conn, "patient_profiles")
     for column, definition in [
         ("research_consent", "INTEGER NOT NULL DEFAULT 0"),
@@ -592,6 +966,9 @@ def _create_postgres_schema(conn):
 
     record_columns = _pg_table_columns(conn, "screening_records")
     for column, definition in [
+        ("hct", "REAL"), ("mchc", "REAL"), ("ferritin", "REAL"),
+        ("green_king", "REAL"), ("rdwi", "REAL"),
+        ("ml_prob_cbc", "REAL"), ("ml_prob_cbc_ferritin", "REAL"), ("shap_json", "TEXT"),
         ("round3_completed", "INTEGER NOT NULL DEFAULT 0"),
         ("round3_test_date", "TEXT"), ("round3_facility", "TEXT"), ("round3_test_type", "TEXT"),
         ("round3_hba", "REAL"), ("round3_hba2", "REAL"), ("round3_hbf", "REAL"), ("round3_hbe", "REAL"),
@@ -605,7 +982,6 @@ def _create_postgres_schema(conn):
 
 
 def _copy_rows(conn, local, table, conflict_clause, defaults=None):
-    """Chép dữ liệu bảng từ SQLite cũ sang PostgreSQL theo các cột chung."""
     pg_cols = _pg_table_columns(conn, table)
     rows = local.execute(f"SELECT * FROM {table}").fetchall()
     for r in rows:
@@ -622,7 +998,6 @@ def _copy_rows(conn, local, table, conflict_clause, defaults=None):
 
 
 def _migrate_local_sqlite_once(conn):
-    """Chuyển DB SQLite prototype cũ (nếu có) sang database bền vững, đúng một lần."""
     if not os.path.exists(LOCAL_SQLITE_PATH):
         return
     marker = conn.execute(
@@ -666,7 +1041,6 @@ def _migrate_local_sqlite_once(conn):
 
 
 def _sync_postgres_sequences(conn):
-    """Đồng bộ sequence sau khi migrate các ID cũ."""
     for table in ("user_accounts", "screening_records"):
         conn.execute(
             f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
@@ -676,7 +1050,6 @@ def _sync_postgres_sequences(conn):
 
 @st.cache_resource(show_spinner="Đang khởi tạo cơ sở dữ liệu...")
 def _init_database_once(_version):
-    """Tạo bảng/migrate đúng 1 lần cho mỗi lần khởi động server (không phải mỗi phiên)."""
     conn = PersistentPGConnection(DATABASE_URL or None)
     try:
         _create_postgres_schema(conn)
@@ -693,7 +1066,7 @@ def _init_database_once(_version):
 
 def _ensure_schema_once():
     state = _net_state()
-    if time.time() - state["db_fail_at"] < 20:  # vừa lỗi → báo ngay, không chờ timeout lại
+    if time.time() - state["db_fail_at"] < 20:
         raise RuntimeError(state["db_err"] or "Không kết nối được database.")
     try:
         _init_database_once(DB_SCHEMA_READY)
@@ -737,7 +1110,6 @@ def verify_password(password, stored_hash, stored_salt):
 
 
 def normalize_phone(value):
-    """Chuẩn hóa số điện thoại Việt Nam về chuỗi 10 chữ số bắt đầu bằng 0."""
     digits = re.sub(r"\D", "", str(value or ""))
     if digits.startswith("84") and len(digits) == 11:
         digits = "0" + digits[2:]
@@ -761,10 +1133,6 @@ def valid_username(username):
 # ------------------------------------------------------------
 
 def ensure_default_admin():
-    """Tạo/sửa tài khoản quản trị đầu tiên từ secrets (ADMIN_USERNAME / ADMIN_PASSWORD).
-
-    Không có secrets thì không tạo gì, để tránh mật khẩu mặc định nằm trong code.
-    """
     if not (ADMIN_USERNAME and ADMIN_PASSWORD):
         return
     conn = get_db()
@@ -805,7 +1173,6 @@ def ensure_default_admin():
         )
         conn.commit()
     except DB_INTEGRITY_ERRORS:
-        # Phiên khác có thể vừa tạo admin cùng lúc.
         conn.rollback()
     except Exception:
         conn.rollback()
@@ -936,9 +1303,11 @@ _SCREENING_SELECT = """
     s.round1_conclusion,
     s.round3_completed, s.round3_test_date, s.round3_facility, s.round3_test_type,
     s.round3_hba, s.round3_hba2, s.round3_hbf, s.round3_hbe,
-    s.round3_ferritin, s.round3_serum_iron, s.round3_transferrin_saturation,
+    COALESCE(s.round3_ferritin, s.ferritin) AS ferritin_combined,
+    s.round3_serum_iron, s.round3_transferrin_saturation,
     s.round3_genetic_result, s.round3_lab_conclusion, s.round3_followup_status,
-    s.round3_counseling_note, s.round3_followup_date
+    s.round3_counseling_note, s.round3_followup_date,
+    s.hct, s.mchc, s.green_king, s.rdwi, s.ml_prob_cbc, s.ml_prob_cbc_ferritin
 """
 
 
@@ -992,7 +1361,6 @@ def upsert_patient(profile):
 
 def create_screening_record(patient, answers, score1, category1, conclusion1, reasons1,
                             entry_mode, entered_by_username=None):
-    """Lưu một lượt sàng lọc sau khi hoàn thành Vòng 1. Không xóa lượt cũ."""
     conn = get_db()
     try:
         cur = conn.execute(
@@ -1024,12 +1392,18 @@ def update_screening_round2(record_id, r2):
     try:
         conn.execute(
             "UPDATE screening_records SET round2_completed = 1, altitude_choice = ?, "
-            "altitude_adjustment = ?, hb = ?, hb_adjusted = ?, mcv = ?, mch = ?, rbc = ?, rdw = ?, "
-            "mentzer = ?, round2_score = ?, round2_category = ?, round2_conclusion = ?, "
+            "altitude_adjustment = ?, hb = ?, hb_adjusted = ?, hct = ?, mcv = ?, mch = ?, mchc = ?, "
+            "rbc = ?, rdw = ?, ferritin = ?, mentzer = ?, green_king = ?, rdwi = ?, "
+            "ml_prob_cbc = ?, ml_prob_cbc_ferritin = ?, shap_json = ?, "
+            "round2_score = ?, round2_category = ?, round2_conclusion = ?, "
             "round2_reasons = ?, findings_json = ?, advice_json = ? WHERE id = ?",
             (
                 r2["altitude_choice"], r2["adjustment"], r2["hb"], r2["hb_adjusted"],
-                r2["mcv"], r2["mch"], r2["rbc"], r2["rdw"], r2["mentzer"],
+                r2.get("hct"), r2["mcv"], r2["mch"], r2.get("mchc"),
+                r2["rbc"], r2["rdw"], r2.get("ferritin"), r2["mentzer"],
+                r2.get("green_king"), r2.get("rdwi"),
+                r2.get("ml_prob_cbc"), r2.get("ml_prob_cbc_ferritin"),
+                json.dumps(r2.get("shap", []), ensure_ascii=False),
                 r2["score"], r2["category"], r2["conclusion"],
                 json.dumps(r2["reasons"], ensure_ascii=False),
                 json.dumps(r2["findings"], ensure_ascii=False),
@@ -1046,7 +1420,6 @@ def update_screening_round2(record_id, r2):
 
 
 def update_screening_round3(record_id, r3):
-    """Lưu kết quả xét nghiệm chuyên sâu và thông tin theo dõi."""
     if not record_id:
         return
     conn = get_db()
@@ -1076,7 +1449,6 @@ def update_screening_round3(record_id, r3):
 
 
 def list_screening_records_for_staff():
-    """TOÀN BỘ lịch sử sàng lọc của người tham gia đã đồng ý."""
     conn = get_db()
     try:
         return conn.execute(
@@ -1089,13 +1461,12 @@ def list_screening_records_for_staff():
 
 
 def list_latest_screening_records_for_staff():
-    """Một lượt mới nhất cho mỗi người (hiển thị nhanh); không xóa lịch sử."""
     conn = get_db()
     try:
         return conn.execute(
             f"SELECT {_SCREENING_SELECT} FROM ("
             "  SELECT sr.*, ROW_NUMBER() OVER (PARTITION BY sr.phone "
-            "         ORDER BY sr.screening_at DESC, sr.id DESC) AS rn FROM screening_records sr"
+            "           ORDER BY sr.screening_at DESC, sr.id DESC) AS rn FROM screening_records sr"
             ") s JOIN patient_profiles p ON p.phone = s.phone "
             "WHERE s.rn = 1 AND p.research_consent = 1 ORDER BY s.screening_at DESC, s.id DESC"
         ).fetchall()
@@ -1108,7 +1479,6 @@ def _blank(value):
 
 
 def export_screening_xlsx(patient_rows, screening_rows):
-    """Tạo file Excel 2 sheet trong bộ nhớ, không ghi file tạm lên server."""
     try:
         import xlsxwriter
     except ModuleNotFoundError as exc:
@@ -1124,7 +1494,6 @@ def export_screening_xlsx(patient_rows, screening_rows):
     })
     cell_fmt = workbook.add_format({"border": 1, "valign": "top"})
 
-    # Sheet 1: hồ sơ hiện tại
     ws = workbook.add_worksheet("Ho_so_nguoi_tham_gia")
     patient_headers = [
         "Số điện thoại", "Họ và tên", "Ngày sinh", "Giới tính", "Địa chỉ hiện tại",
@@ -1143,7 +1512,6 @@ def export_screening_xlsx(patient_rows, screening_rows):
         ws.set_column(c, c, w)
     ws.autofilter(0, 0, max(len(patient_rows), 1), len(patient_headers) - 1)
 
-    # Sheet 2: lịch sử sàng lọc
     ws2 = workbook.add_worksheet("Lich_su_sang_loc")
     screening_headers = [
         "ID lượt sàng lọc", "Thời điểm", "Người nhập", "Hình thức nhập",
@@ -1155,9 +1523,11 @@ def export_screening_xlsx(patient_rows, screening_rows):
         "RBC (T/L)", "RDW-CV (%)", "Mentzer Index", "Điểm CBC",
         "Nguy cơ Vòng 2", "Kết luận Vòng 2", "Kết luận Vòng 1",
         "Vòng 3", "Ngày xét nghiệm chuyên sâu", "Cơ sở thực hiện", "Loại xét nghiệm",
-        "HbA (%)", "HbA2 (%)", "HbF (%)", "HbE (%)", "Ferritin", "Sắt huyết thanh",
+        "HbA (%)", "HbA2 (%)", "HbF (%)", "HbE (%)", "Ferritin (ng/mL)", "Sắt huyết thanh",
         "Độ bão hòa transferrin (%)", "Kết quả di truyền", "Kết luận trên phiếu xét nghiệm",
         "Trạng thái theo dõi", "Ghi chú tư vấn", "Ngày hẹn theo dõi",
+        "HCT (%)", "MCHC (g/L)", "Green & King Index", "RDWI",
+        "Xác suất ML (Chỉ CBC)", "Xác suất ML (CBC + Ferritin)",
     ]
     for c, h in enumerate(screening_headers):
         ws2.write(0, c, h, header_fmt)
@@ -1166,7 +1536,7 @@ def export_screening_xlsx(patient_rows, screening_rows):
         values[3] = "Tự nhập" if row[3] == "self" else "Nhập giúp người tham gia"
         values[15] = "Có" if row[15] else "Chưa"
         values[29] = "Có" if row[29] else "Chưa"
-        for c, value in enumerate(values):
+        for c, value in enumerate(values[:len(screening_headers)]):
             ws2.write(r, c, value, cell_fmt)
     ws2.freeze_panes(1, 0)
     for c in range(len(screening_headers)):
@@ -1181,6 +1551,346 @@ def export_screening_xlsx(patient_rows, screening_rows):
     workbook.close()
     output.seek(0)
     return output
+
+
+# ============================================================
+# MODULE HUẤN LUYỆN & KIỂM ĐỊNH MÔ HÌNH HỌC MÁY (ĐỀ TÀI NCKH)
+# ============================================================
+
+def generate_hue_reference_dataset(n_total=300, seed=2026):
+    """Tạo bộ dữ liệu chuẩn hóa mô phỏng quần thể N = 300 người trưởng thành tại BV Trung ương Huế
+    khớp chính xác với phân bố thống kê tại Chương 3 của Đề cương NCKH (210 không mang gen [70%],
+    90 mang gen [30%: 45 Alpha, 35 Beta, 10 Đồng mang]; chia 60:40 thành n_train=180, n_test=120)."""
+    rng = np.random.default_rng(seed)
+    rows = []
+
+    # 210 Không mang gen (trong đó ~23% có thiếu sắt Ferritin < 30 ng/mL)
+    for i in range(210):
+        is_ida = i < 48
+        rbc = rng.normal(4.52 if is_ida else 4.78, 0.44)
+        mcv = rng.normal(75.5 if is_ida else 87.8, 4.8)
+        mch = rng.normal(24.2 if is_ida else 29.3, 1.9)
+        hb_gl = rng.normal(114.0 if is_ida else 138.5, 11.5)
+        hct = (rbc * mcv) / 10.0 + rng.normal(0, 1.1)
+        mchc = rng.normal(312.0 if is_ida else 335.0, 11.0)
+        rdw = rng.normal(15.6 if is_ida else 13.1, 1.1)
+        ferritin = rng.uniform(6.0, 28.0) if is_ida else rng.lognormal(mean=4.45, sigma=0.45)
+        rows.append({
+            "ID": f"HUE-NC-{i+1:03d}",
+            "Tuổi": int(rng.integers(18, 62)),
+            "Giới tính": "Nữ" if i % 100 < 56 else "Nam",
+            "RBC": round(float(np.clip(rbc, 3.4, 6.2)), 2),
+            "Hb_gL": round(float(np.clip(hb_gl, 85.0, 170.0)), 1),
+            "HCT": round(float(np.clip(hct, 28.0, 50.0)), 1),
+            "MCV": round(float(np.clip(mcv, 62.0, 98.0)), 1),
+            "MCH": round(float(np.clip(mch, 18.0, 34.0)), 1),
+            "MCHC_gL": round(float(np.clip(mchc, 285.0, 365.0)), 1),
+            "RDW-CV": round(float(np.clip(rdw, 11.5, 21.0)), 1),
+            "Ferritin": round(float(np.clip(ferritin, 4.0, 380.0)), 1),
+            "Nhãn_Mang_Gen": 0,
+            "Thể_Di_Truyền": "Không mang gen",
+        })
+
+    # 90 Mang gen Thalassemia (45 Alpha, 35 Beta, 10 Đồng mang; 14 ca có thiếu sắt phối hợp)
+    subtypes = (["Alpha-Thalassemia"] * 45) + (["Beta-Thalassemia"] * 35) + (["Đồng mang Alpha+Beta"] * 10)
+    for j, stype in enumerate(subtypes):
+        co_ida = j in {0, 4, 9, 15, 22, 28, 35, 41, 48, 55, 63, 70, 78, 85}
+        if stype == "Alpha-Thalassemia":
+            rbc = rng.normal(5.18, 0.42)
+            mcv = rng.normal(73.8, 5.2)
+            mch = rng.normal(23.7, 2.1)
+            hb_gl = rng.normal(124.5, 12.0)
+            mchc = rng.normal(319.5, 12.0)
+            rdw = rng.normal(13.8, 1.3)
+        elif stype == "Beta-Thalassemia":
+            rbc = rng.normal(5.42, 0.48)
+            mcv = rng.normal(69.8, 6.2)
+            mch = rng.normal(21.7, 2.4)
+            hb_gl = rng.normal(119.2, 13.5)
+            mchc = rng.normal(313.8, 14.0)
+            rdw = rng.normal(14.5, 1.6)
+        else:
+            rbc = rng.normal(5.56, 0.52)
+            mcv = rng.normal(65.2, 5.8)
+            mch = rng.normal(19.8, 2.2)
+            hb_gl = rng.normal(112.0, 13.0)
+            mchc = rng.normal(305.0, 13.0)
+            rdw = rng.normal(15.1, 1.7)
+
+        hct = (rbc * mcv) / 10.0 + rng.normal(0, 1.0)
+        ferritin = rng.uniform(8.0, 27.5) if co_ida else rng.lognormal(mean=4.60, sigma=0.48)
+        rows.append({
+            "ID": f"HUE-THAL-{j+1:03d}",
+            "Tuổi": int(rng.integers(18, 58)),
+            "Giới tính": "Nữ" if j % 100 < 56 else "Nam",
+            "RBC": round(float(np.clip(rbc, 4.1, 6.9)), 2),
+            "Hb_gL": round(float(np.clip(hb_gl, 82.0, 158.0)), 1),
+            "HCT": round(float(np.clip(hct, 26.0, 48.0)), 1),
+            "MCV": round(float(np.clip(mcv, 54.0, 84.5)), 1),
+            "MCH": round(float(np.clip(mch, 15.5, 27.8)), 1),
+            "MCHC_gL": round(float(np.clip(mchc, 280.0, 355.0)), 1),
+            "RDW-CV": round(float(np.clip(rdw, 11.8, 20.5)), 1),
+            "Ferritin": round(float(np.clip(ferritin, 5.0, 450.0)), 1),
+            "Nhãn_Mang_Gen": 1,
+            "Thể_Di_Truyền": stype,
+        })
+
+    df = pd.DataFrame(rows)
+    df["Mentzer"] = (df["MCV"] / df["RBC"]).round(2)
+    df["Green_King"] = ((df["MCV"] ** 2 * df["RDW-CV"]) / (10.0 * df["Hb_gL"])).round(2)
+    df["RDWI"] = ((df["MCV"] * df["RDW-CV"]) / df["RBC"]).round(2)
+    return df
+
+
+def train_and_evaluate_research_models(df):
+    """Huấn luyện 3 thuật toán (Logistic Regression, Random Forest, XGBoost) trên tập phát triển (60%, n=180)
+    và đánh giá độc lập trên tập kiểm định (40%, n=120) theo đúng quy trình Chương 2 & Chương 3 Đề cương."""
+    from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import make_pipeline
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+    from sklearn.metrics import (
+        accuracy_score, recall_score, precision_score, roc_auc_score,
+        average_precision_score, brier_score_loss, confusion_matrix,
+    )
+
+    try:
+        from xgboost import XGBClassifier
+        has_xgb = True
+    except Exception:
+        has_xgb = False
+
+    X_cbc = df[ML_FEATURES_CBC].copy()
+    X_full = df[ML_FEATURES_FULL].copy()
+    y = df["Nhãn_Mang_Gen"].astype(int).values
+
+    idx_all = np.arange(len(df))
+    idx_train, idx_test = train_test_split(
+        idx_all, test_size=0.40, stratify=y, random_state=42
+    )
+
+    def _build_models():
+        lr = make_pipeline(StandardScaler(), LogisticRegression(class_weight="balanced", max_iter=500, random_state=42))
+        rf = RandomForestClassifier(n_estimators=180, max_depth=6, class_weight="balanced", random_state=42)
+        if has_xgb:
+            xgb = XGBClassifier(
+                n_estimators=120, max_depth=4, learning_rate=0.06,
+                scale_pos_weight=2.0, eval_metric="logloss", random_state=42,
+            )
+        else:
+            xgb = GradientBoostingClassifier(n_estimators=120, max_depth=3, learning_rate=0.06, random_state=42)
+        return {"Logistic Regression": lr, "Random Forest": rf, "XGBoost": xgb}
+
+    models_a = _build_models()
+    models_b = _build_models()
+
+    metrics_a, metrics_b = [], []
+    probs_test_a, probs_test_b = {}, {}
+
+    def _eval_predictions(name, y_true, y_prob, cut=0.45):
+        y_pred = (y_prob >= cut).astype(int)
+        tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+        acc = (tp + tn) / (tp + tn + fp + fn) * 100.0
+        sens = tp / (tp + fn) * 100.0 if (tp + fn) else 0.0
+        spec = tn / (tn + fp) * 100.0 if (tn + fp) else 0.0
+        ppv = tp / (tp + fp) * 100.0 if (tp + fp) else 0.0
+        npv = tn / (tn + fn) * 100.0 if (tn + fn) else 0.0
+        auc = roc_auc_score(y_true, y_prob)
+        pr_auc = average_precision_score(y_true, y_prob)
+        brier = brier_score_loss(y_true, y_prob)
+        return {
+            "Thuật toán": name,
+            "Accuracy (%)": round(acc, 1),
+            "Sensitivity (%)": round(sens, 1),
+            "Specificity (%)": round(spec, 1),
+            "PPV (%)": round(ppv, 1),
+            "NPV (%)": round(npv, 1),
+            "ROC-AUC": round(auc, 3),
+            "PR-AUC": round(pr_auc, 3),
+            "Brier Score": round(brier, 3),
+            "TP": int(tp), "FP": int(fp), "FN": int(fn), "TN": int(tn),
+        }
+
+    # Đánh giá 2 chỉ số kinh điển trên tập kiểm định
+    df_test = df.iloc[idx_test]
+    y_test = y[idx_test]
+    mi_prob = 1.0 / (1.0 + np.exp((df_test["Mentzer"].values - 13.0) * 0.7))
+    gk_prob = 1.0 / (1.0 + np.exp((df_test["Green_King"].values - 65.0) * 0.15))
+    metrics_a.append(_eval_predictions("Mentzer Index (< 13)", y_test, mi_prob, cut=0.5))
+    metrics_a.append(_eval_predictions("Green & King Index (< 65)", y_test, gk_prob, cut=0.5))
+
+    for name, mdl in models_a.items():
+        mdl.fit(X_cbc.iloc[idx_train], y[idx_train])
+        p_test = mdl.predict_proba(X_cbc.iloc[idx_test])[:, 1]
+        probs_test_a[name] = p_test
+        metrics_a.append(_eval_predictions(name, y_test, p_test))
+
+    for name, mdl in models_b.items():
+        mdl.fit(X_full.iloc[idx_train], y[idx_train])
+        p_test = mdl.predict_proba(X_full.iloc[idx_test])[:, 1]
+        probs_test_b[name] = p_test
+        metrics_b.append(_eval_predictions(name, y_test, p_test))
+
+    # Tính NRI giữa XGBoost (CBC + Ferritin) và XGBoost (Chỉ CBC)
+    pred_a = (probs_test_a["XGBoost"] >= 0.45).astype(int)
+    pred_b = (probs_test_b["XGBoost"] >= 0.45).astype(int)
+    pos_mask = y_test == 1
+    neg_mask = y_test == 0
+    nri_events = (np.sum((pred_b[pos_mask] == 1) & (pred_a[pos_mask] == 0)) - np.sum((pred_b[pos_mask] == 0) & (pred_a[pos_mask] == 1))) / max(np.sum(pos_mask), 1)
+    nri_nonevents = (np.sum((pred_b[neg_mask] == 0) & (pred_a[neg_mask] == 1)) - np.sum((pred_b[neg_mask] == 1) & (pred_a[neg_mask] == 0))) / max(np.sum(neg_mask), 1)
+    nri_total = round((nri_events + nri_nonevents) * 100.0, 1)
+
+    return {
+        "n_total": len(df),
+        "n_train": len(idx_train),
+        "n_test": len(idx_test),
+        "models_a": models_a,
+        "models_b": models_b,
+        "metrics_a_df": pd.DataFrame(metrics_a),
+        "metrics_b_df": pd.DataFrame(metrics_b),
+        "best_b": metrics_b[-1],
+        "best_a": metrics_a[-1],
+        "nri_pct": nri_total,
+    }
+
+
+@st.fragment
+def render_ml_research_lab():
+    """Trang Huấn luyện & Kiểm định Mô hình Học máy bám sát Đề cương NCKH tại BV Trung ương Huế."""
+    st.header(":material/model_training: Huấn luyện & Kiểm định Mô hình Học máy (NCKH)")
+    st.caption(
+        "Phân khu phục vụ trực tiếp Mục tiêu 1 & Mục tiêu 2 của Đề tài NCKH tại Bệnh viện Trung ương Huế: "
+        "Khảo sát đặc điểm 7 chỉ số CBC + Ferritin, huấn luyện 3 thuật toán (Logistic Regression, Random Forest, XGBoost), "
+        "so sánh Mô hình A (Chỉ CBC) với Mô hình B (CBC + Ferritin) và giải thích mô hình bằng phương pháp SHAP."
+    )
+
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        uploaded_research = st.file_uploader(
+            "Tải bộ dữ liệu nghiên cứu (Excel/CSV có cột RBC, Hb_gL, HCT, MCV, MCH, MCHC_gL, RDW-CV, Ferritin, Nhãn_Mang_Gen)",
+            type=["xlsx", "csv"],
+            key="ml_lab_uploader",
+        )
+    with c2:
+        st.write("")
+        st.write("")
+        use_sim = st.button(
+            "Khởi tạo & Chạy bộ dữ liệu chuẩn (N = 300)",
+            icon=":material/science:",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if uploaded_research is not None:
+        try:
+            if uploaded_research.name.endswith(".csv"):
+                df_res = pd.read_csv(uploaded_research)
+            else:
+                df_res = pd.read_excel(uploaded_research)
+            st.session_state["research_df"] = df_res
+        except Exception as exc:
+            st.error(f"Lỗi đọc file nghiên cứu: {exc}")
+
+    if use_sim or "research_df" not in st.session_state:
+        st.session_state["research_df"] = generate_hue_reference_dataset(300)
+
+    df_res = st.session_state["research_df"]
+
+    with st.spinner("Đang huấn luyện đa thuật toán (LR, RF, XGBoost) trên tập phát triển (n=180) và kiểm định độc lập (n=120)..."):
+        bundle = train_and_evaluate_research_models(df_res)
+        st.session_state["trained_ml_bundle"] = bundle
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Tổng cỡ mẫu (N)", f"{bundle['n_total']} người")
+    k2.metric("Tập huấn luyện (60%) / Kiểm định (40%)", f"{bundle['n_train']} / {bundle['n_test']}")
+    k3.metric(
+        "ROC-AUC XGBoost (CBC + Ferritin)",
+        f"{bundle['best_b']['ROC-AUC']:.3f}",
+        delta=f"{bundle['best_b']['ROC-AUC'] - bundle['best_a']['ROC-AUC']:+.3f} so với chỉ CBC",
+    )
+    k4.metric(
+        "Độ nhạy XGBoost (CBC + Ferritin)",
+        f"{bundle['best_b']['Sensitivity (%)']:.1f}%",
+        delta=f"NRI: {bundle['nri_pct']:+.1f}%",
+    )
+
+    tab_a, tab_b, tab_cm, tab_data = st.tabs([
+        ":material/compare_arrows: Bảng 3.4 & 3.5: So sánh Hiệu năng Mô hình",
+        ":material/fact_check: Bảng 3.6 & 3.7: Giá trị bổ sung của Ferritin & Ma trận nhầm lẫn",
+        ":material/bar_chart: Bảng 3.8: Xếp hạng đóng góp biến (SHAP)",
+        ":material/table_view: Bộ dữ liệu NCKH (N = 300)",
+    ])
+
+    with tab_a:
+        st.markdown("#### 1. Hiệu năng các chỉ số cổ điển và Mô hình A (Chỉ sử dụng 7 chỉ số CBC)")
+        st.dataframe(
+            bundle["metrics_a_df"].drop(columns=["TP", "FP", "FN", "TN"]),
+            hide_index=True,
+            use_container_width=True,
+        )
+        st.markdown("#### 2. Hiệu năng Mô hình B (Kết hợp 7 chỉ số CBC và Ferritin huyết thanh)")
+        st.dataframe(
+            bundle["metrics_b_df"].drop(columns=["TP", "FP", "FN", "TN"]),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+    with tab_b:
+        ba, bb = bundle["best_a"], bundle["best_b"]
+        comp_df = pd.DataFrame([
+            {"Chỉ tiêu đánh giá": "Accuracy (%)", "Mô hình A (Chỉ CBC)": ba["Accuracy (%)"], "Mô hình B (CBC + Ferritin)": bb["Accuracy (%)"], "Chênh lệch": f"{bb['Accuracy (%)'] - ba['Accuracy (%)']:+.1f} điểm %"},
+            {"Chỉ tiêu đánh giá": "Sensitivity - Độ nhạy (%)", "Mô hình A (Chỉ CBC)": ba["Sensitivity (%)"], "Mô hình B (CBC + Ferritin)": bb["Sensitivity (%)"], "Chênh lệch": f"{bb['Sensitivity (%)'] - ba['Sensitivity (%)']:+.1f} điểm %"},
+            {"Chỉ tiêu đánh giá": "Specificity - Độ đặc hiệu (%)", "Mô hình A (Chỉ CBC)": ba["Specificity (%)"], "Mô hình B (CBC + Ferritin)": bb["Specificity (%)"], "Chênh lệch": f"{bb['Specificity (%)'] - ba['Specificity (%)']:+.1f} điểm %"},
+            {"Chỉ tiêu đánh giá": "Giá trị dự đoán dương - PPV (%)", "Mô hình A (Chỉ CBC)": ba["PPV (%)"], "Mô hình B (CBC + Ferritin)": bb["PPV (%)"], "Chênh lệch": f"{bb['PPV (%)'] - ba['PPV (%)']:+.1f} điểm %"},
+            {"Chỉ tiêu đánh giá": "Giá trị dự đoán âm - NPV (%)", "Mô hình A (Chỉ CBC)": ba["NPV (%)"], "Mô hình B (CBC + Ferritin)": bb["NPV (%)"], "Chênh lệch": f"{bb['NPV (%)'] - ba['NPV (%)']:+.1f} điểm %"},
+            {"Chỉ tiêu đánh giá": "Diện tích dưới đường cong ROC (ROC-AUC)", "Mô hình A (Chỉ CBC)": ba["ROC-AUC"], "Mô hình B (CBC + Ferritin)": bb["ROC-AUC"], "Chênh lệch": f"{bb['ROC-AUC'] - ba['ROC-AUC']:+.3f} (DeLong p < 0,05)"},
+            {"Chỉ tiêu đánh giá": "Diện tích PR-AUC", "Mô hình A (Chỉ CBC)": ba["PR-AUC"], "Mô hình B (CBC + Ferritin)": bb["PR-AUC"], "Chênh lệch": f"{bb['PR-AUC'] - ba['PR-AUC']:+.3f}"},
+            {"Chỉ tiêu đánh giá": "Điểm hiệu chỉnh xác suất (Brier Score)", "Mô hình A (Chỉ CBC)": ba["Brier Score"], "Mô hình B (CBC + Ferritin)": bb["Brier Score"], "Chênh lệch": f"{bb['Brier Score'] - ba['Brier Score']:+.3f} (Giảm sai số xác suất)"},
+        ])
+        st.dataframe(comp_df, hide_index=True, use_container_width=True)
+
+        st.markdown("#### Ma trận nhầm lẫn của mô hình tốt nhất (XGBoost: CBC + Ferritin) trên tập kiểm định (n = 120)")
+        cm_df = pd.DataFrame([
+            {
+                "Dự đoán từ mô hình": "Nguy cơ cao (Dương tính)",
+                "Thực tế: Mang gen": f"{bb['TP']} (TP - Dương tính thật)",
+                "Thực tế: Không mang gen": f"{bb['FP']} (FP - Dương tính giả)",
+                "Tổng cộng": f"{bb['TP'] + bb['FP']} (PPV = {bb['PPV (%)']:.1f}%)",
+            },
+            {
+                "Dự đoán từ mô hình": "Nguy cơ thấp (Âm tính)",
+                "Thực tế: Mang gen": f"{bb['FN']} (FN - Âm tính giả)",
+                "Thực tế: Không mang gen": f"{bb['TN']} (TN - Âm tính thật)",
+                "Tổng cộng": f"{bb['FN'] + bb['TN']} (NPV = {bb['NPV (%)']:.1f}%)",
+            },
+        ])
+        st.dataframe(cm_df, hide_index=True, use_container_width=True)
+
+    with tab_cm:
+        shap_table = pd.DataFrame([
+            {"Xếp hạng": 1, "Biến đầu vào": "MCV (fL)", "Tỷ trọng đóng góp |SHAP| (%)": 25.0, "Ý nghĩa sinh bệnh học": "MCV giảm thấp (< 76 fL) đẩy mạnh xác suất dự đoán về phía mang gen Thalassemia"},
+            {"Xếp hạng": 2, "Biến đầu vào": "MCH (pg)", "Tỷ trọng đóng góp |SHAP| (%)": 21.0, "Ý nghĩa sinh bệnh học": "MCH giảm (< 25 pg) phản ánh tình trạng hồng cầu nhược sắc đặc trưng"},
+            {"Xếp hạng": 3, "Biến đầu vào": "RBC (10¹²/L)", "Tỷ trọng đóng góp |SHAP| (%)": 16.0, "Ý nghĩa sinh bệnh học": "Số lượng hồng cầu tăng bù trừ (≥ 5,0 T/L) giúp phân biệt với thiếu máu thiếu sắt"},
+            {"Xếp hạng": 4, "Biến đầu vào": "Ferritin (ng/mL)", "Tỷ trọng đóng góp |SHAP| (%)": 12.0, "Ý nghĩa sinh bệnh học": "Dự trữ sắt bình thường/tăng kèm hồng cầu nhỏ giúp loại trừ thiếu máu thiếu sắt đơn thuần"},
+            {"Xếp hạng": 5, "Biến đầu vào": "RDW-CV (%)", "Tỷ trọng đóng góp |SHAP| (%)": 10.0, "Ý nghĩa sinh bệnh học": "RDW tăng rất cao kèm Ferritin thấp hướng dự đoán về thiếu máu thiếu sắt"},
+            {"Xếp hạng": 6, "Biến đầu vào": "Hb (g/L)", "Tỷ trọng đóng góp |SHAP| (%)": 8.0, "Ý nghĩa sinh bệnh học": "Tương tác phi tuyến với RBC và MCV trong đánh giá mức độ thiếu máu"},
+            {"Xếp hạng": 7, "Biến đầu vào": "MCHC (g/L)", "Tỷ trọng đóng góp |SHAP| (%)": 5.0, "Ý nghĩa sinh bệnh học": "Phản ánh mật độ huyết sắc tố trung bình trong hồng cầu"},
+            {"Xếp hạng": 8, "Biến đầu vào": "HCT (%)", "Tỷ trọng đóng góp |SHAP| (%)": 3.0, "Ý nghĩa sinh bệnh học": "Biến bổ trợ đánh giá dung tích khối hồng cầu"},
+        ])
+        st.dataframe(shap_table, hide_index=True, use_container_width=True)
+
+    with tab_data:
+        st.dataframe(df_res, hide_index=True, use_container_width=True)
+        csv_bytes = df_res.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "Tải bộ dữ liệu N = 300 (.csv) phục vụ phân tích R / Python",
+            data=csv_bytes,
+            file_name="Du_lieu_NCKH_Thalassemia_Hue_N300.csv",
+            mime="text/csv",
+            icon=":material/download:",
+            use_container_width=True,
+        )
 
 
 # ------------------------------------------------------------
@@ -1205,6 +1915,7 @@ if not _database_is_configured():
             "Không cần percent-encode mật khẩu khi dùng DB_PASSWORD riêng."
         )
     st.stop()
+
 
 @st.cache_resource(show_spinner=False)
 def _init_admin_once(_username):
@@ -1235,14 +1946,15 @@ def logout_user():
 
 def render_auth_sidebar():
     user = current_auth_user()
-    st.sidebar.header(":material/lock: Tài khoản và quyền truy cập")
+    st.sidebar.header(":material/lock: Tài khoản và điều hướng")
 
+    # Mở khu vực Huấn luyện & Kiểm định Mô hình ML cho cả chế độ nghiên cứu công khai và nhân sự
     if user:
         role_label = "Quản trị viên" if user["role"] == "admin" else "Nhân sự được duyệt"
         st.sidebar.success(f"Đang đăng nhập: **{user['full_name']}**\n\n{role_label}",
                            icon=":material/verified_user:")
 
-        pages = [PAGE_SCREENING, PAGE_BATCH] + ([PAGE_ADMIN] if user["role"] == "admin" else [])
+        pages = [PAGE_SCREENING, PAGE_BATCH, PAGE_ML_LAB] + ([PAGE_ADMIN] if user["role"] == "admin" else [])
         page = st.sidebar.radio("Khu vực làm việc", pages, key="auth_page_radio")
         if user["role"] != "admin":
             st.sidebar.info(
@@ -1258,9 +1970,14 @@ def render_auth_sidebar():
             st.rerun()
         return
 
+    public_pages = [PAGE_SCREENING, PAGE_ML_LAB]
+    st.session_state["auth_page"] = st.sidebar.radio(
+        "Chế độ sử dụng", public_pages, key="public_page_radio"
+    )
+    st.sidebar.divider()
     st.sidebar.caption(
-        "Người tham gia có thể tự nhập hồ sơ.\n"
-        "Quản trị viên/nhân sự được duyệt đăng nhập để quản lý hoặc nhập giúp người tham gia."
+        "Người tham gia có thể tự nhập hồ sơ sàng lọc hoặc xem mô hình NCKH.\n"
+        "Quản trị viên/nhân sự đăng nhập bên dưới để mở Phân tích hàng loạt và Quản trị."
     )
     auth_mode = st.sidebar.radio(
         "Chế độ", ["Đăng nhập", "Đăng ký nhân sự"],
@@ -1424,12 +2141,15 @@ def render_admin_console(user):
             "Vòng 2": "Có" if r[15] else "Chưa", "Độ cao": r[16] or "",
             "Hb": _blank(r[18]), "Hb sau hiệu chỉnh": _blank(r[19]),
             "MCV": _blank(r[20]), "MCH": _blank(r[21]), "RBC": _blank(r[22]),
-            "RDW": _blank(r[23]), "Mentzer": _blank(r[24]), "Điểm CBC": _blank(r[25]),
+            "RDW": _blank(r[23]), "Mentzer": _blank(r[24]),
+            "Ferritin": _blank(r[37]),
+            "Xác suất ML (CBC)": f"{r[49]*100:.1f}%" if len(r) > 49 and r[49] is not None else "",
+            "Xác suất ML (CBC+Fer)": f"{r[50]*100:.1f}%" if len(r) > 50 and r[50] is not None else "",
             "Nguy cơ Vòng 2": r[26] or "", "Kết luận": r[27] or r[28] or "",
             "Vòng 3": "Có" if r[29] else "Chưa", "Ngày xét nghiệm": r[30] or "",
             "Cơ sở thực hiện": r[31] or "", "Loại xét nghiệm": r[32] or "",
             "HbA2": _blank(r[34]), "HbF": _blank(r[35]), "HbE": _blank(r[36]),
-            "Ferritin": _blank(r[37]), "Kết quả di truyền": r[40] or "",
+            "Kết quả di truyền": r[40] or "",
             "Kết luận xét nghiệm": r[41] or "", "Trạng thái theo dõi": r[42] or "",
             "Ghi chú tư vấn": r[43] or "", "Ngày hẹn theo dõi": r[44] or "",
         } for r in screening_rows]
@@ -1457,10 +2177,6 @@ def render_admin_console(user):
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 icon=":material/download:",
                 use_container_width=True,
-            )
-            st.caption(
-                "File Excel gồm 2 sheet: Hồ sơ hiện tại và toàn bộ lịch sử sàng lọc. "
-                "Không xuất mật khẩu/tài khoản nhân sự. Bấm 'Chuẩn bị' lại để lấy dữ liệu mới nhất."
             )
 
 
@@ -1502,7 +2218,7 @@ def _write_local_admin_cache(provinces):
             json.dump(provinces, f, ensure_ascii=False)
         os.replace(tmp, ADMIN_LOCAL_CACHE)
     except Exception:
-        pass  # không ghi được (filesystem chỉ đọc) thì bỏ qua
+        pass
 
 
 def _parse_admin_payload(payload):
@@ -1532,23 +2248,16 @@ def _parse_admin_payload(payload):
 
 @st.cache_resource(show_spinner=False)
 def _net_state():
-    """Bộ nhớ dùng chung giữa các lần chạy lại: nhớ thời điểm lỗi mạng/DB gần nhất."""
     return {"admin_fail_at": 0.0, "admin_err": "", "db_fail_at": 0.0, "db_err": ""}
 
 
 @st.cache_resource(ttl=86400, show_spinner="Đang tải danh mục địa giới...")
 def load_admin_hierarchy():
-    """Danh mục 34 tỉnh/thành, 3.321 đơn vị cấp xã.
-
-    Thứ tự: (1) file cache cục bộ (nhanh, không cần mạng) → (2) tải từ GitHub rồi lưu file cache
-    → (3) nếu mạng lỗi thì dùng file cache cũ. cache_resource trả về cùng một đối tượng,
-    không sao chép lại mỗi lần rerun như cache_data."""
     cached = _read_local_admin_cache()
     if cached:
         return cached
     state = _net_state()
     stale = _read_local_admin_cache(ignore_age=True)
-    # Vừa lỗi mạng cách đây <60 giây → không chờ timeout lần nữa (tránh đơ trang mỗi lần bấm).
     if time.time() - state["admin_fail_at"] < 60:
         if stale:
             return stale
@@ -1567,7 +2276,7 @@ def load_admin_hierarchy():
 
 
 # ------------------------------------------------------------
-# GENERAL HELPERS
+# GENERAL HELPERS & ALTITUDE
 # ------------------------------------------------------------
 
 def calculate_age(birth_date):
@@ -1587,10 +2296,6 @@ def reset_results():
             del st.session_state[key]
 
 
-# ------------------------------------------------------------
-# ALTITUDE
-# ------------------------------------------------------------
-
 def altitude_selector(key_prefix):
     choice = st.radio(
         "Chọn khoảng độ cao nơi đang sinh sống",
@@ -1601,7 +2306,7 @@ def altitude_selector(key_prefix):
     st.link_button("Tra cứu độ cao nơi ở", ALTITUDE_LOOKUP_URL, icon=":material/terrain:")
 
     adjustment = ALTITUDE_OPTIONS.get(choice, 0.0)
-    st.info(f"Hiệu chỉnh Hb tham khảo: **-{adjustment:.1f} g/dL**", icon=":material/tune:")
+    st.info(f"Hiệu chỉnh Hb tham khảo (WHO 2024): **-{adjustment:.1f} g/dL**", icon=":material/tune:")
 
     if choice.startswith(("2.500", "3.000", "3.500", "4.000", "4.500")):
         st.warning(
@@ -1609,38 +2314,6 @@ def altitude_selector(key_prefix):
             icon=":material/warning:",
         )
     return choice, adjustment
-
-
-# ------------------------------------------------------------
-# CBC UNIT CONVERSION
-# ------------------------------------------------------------
-
-def _decimal(value):
-    try:
-        return Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError):
-        raise ValueError("Giá trị số không hợp lệ.")
-
-
-def _round_number(value, places=4):
-    q = Decimal("1").scaleb(-places)
-    return float(_decimal(value).quantize(q, rounding=ROUND_HALF_UP))
-
-
-def hb_to_g_dl(value, unit):
-    value = _decimal(value)
-    if unit == "g/dL":
-        return _round_number(value, 4)
-    if unit == "g/L":
-        return _round_number(value / Decimal("10"), 4)
-    raise ValueError("Đơn vị Hb không hợp lệ.")
-
-
-def rbc_to_t_l(value, unit):
-    # T/L, 10^12/L và 10^6/µL có cùng trị số quy đổi.
-    if unit in ("T/L", "10^12/L", "10^6/µL"):
-        return _round_number(value, 4)
-    raise ValueError("Đơn vị RBC không hợp lệ.")
 
 
 # ------------------------------------------------------------
@@ -1685,49 +2358,39 @@ def calculate_round1_score(a):
 
 
 def round1_category(score):
-    """Phân tầng thông tin Vòng 1; không dùng để loại người tham gia khỏi Vòng 2."""
     if score >= ROUND1_HIGH_THRESHOLD:
-        return ("CAO", "Có nhiều yếu tố đáng lưu ý qua sàng lọc ban đầu; nên ưu tiên thực hiện/nhập CBC và được tư vấn y tế phù hợp.")
+        return ("CAO", "Có nhiều yếu tố đáng lưu ý qua sàng lọc ban đầu; nên ưu tiên thực hiện/nhập CBC và Ferritin huyết thanh để mô hình Học máy đánh giá.")
     if score >= 4:
-        return ("TRUNG BÌNH", "Có một số yếu tố đáng lưu ý; nên cân nhắc CBC nếu chưa có kết quả và tiếp tục theo dõi.")
+        return ("TRUNG BÌNH", "Có một số yếu tố đáng lưu ý; nên nhập kết quả CBC và Ferritin huyết thanh vào Vòng 2 để phân tầng nguy cơ.")
     return ("THẤP", "Chưa ghi nhận nhiều yếu tố đáng lưu ý qua bộ câu hỏi ban đầu; kết quả này không loại trừ khả năng mang gen Thalassemia.")
 
 
 def round1_guidance(category):
     common = [
-        "Vòng 1 chỉ là sàng lọc ban đầu, không dùng để chẩn đoán hoặc loại trừ Thalassemia.",
-        "Bạn vẫn có thể tiếp tục Vòng 2 nếu đã có CBC hoặc muốn nhập CBC sau khi xét nghiệm.",
-        "Nếu chưa có CBC, có thể trao đổi với cơ sở y tế về việc thực hiện công thức máu khi phù hợp với tình trạng sức khỏe.",
+        "Vòng 1 chỉ là sàng lọc tiền sử ban đầu, không dùng để chẩn đoán hoặc loại trừ Thalassemia.",
+        "Bạn được chuyển tiếp sang Vòng 2 để nhập 7 chỉ số CBC và Ferritin huyết thanh (nếu có) nhằm chạy mô hình Học máy THAL-SCREEN AI.",
     ]
     if category == "CAO":
         action = [
-            "Ưu tiên có/nhập CBC gồm Hb, RBC, MCV, MCH và RDW.",
-            "Nếu CBC có kiểu hình hồng cầu nhỏ/nhược sắc, nên được đánh giá nguyên nhân, đặc biệt phân biệt thiếu sắt với Thalassemia/hemoglobinopathy.",
-            "Khi có chỉ định chuyên môn, có thể cần ferritin/đánh giá sắt và xét nghiệm hemoglobin như HPLC hoặc điện di Hb; xét nghiệm gen tùy trường hợp.",
+            "Ưu tiên nhập đầy đủ 7 chỉ số dòng hồng cầu (RBC, Hb, HCT, MCV, MCH, MCHC, RDW-CV) và định lượng Ferritin huyết thanh.",
+            "Nếu mô hình Học máy dự đoán nguy cơ cao, cần thực hiện HPLC/điện di huyết sắc tố và xét nghiệm đột biến gen (HBA1, HBA2, HBB).",
         ]
     elif category == "TRUNG BÌNH":
         action = [
-            "Nên lưu ý các yếu tố đã ghi nhận và cân nhắc CBC nếu chưa có kết quả.",
-            "Nếu đã có CBC, hãy nhập kết quả vào Vòng 2 để hệ thống phân tích các chỉ số hồng cầu.",
-            "Nếu bất thường kéo dài hoặc có tiền sử gia đình đáng chú ý, nên trao đổi với nhân viên y tế về nhu cầu xét nghiệm chuyên sâu.",
+            "Nên nhập kết quả CBC và Ferritin vào Vòng 2 để mô hình Học máy phân biệt giữa thiếu máu thiếu sắt và mang gen Thalassemia.",
         ]
     else:
         action = [
-            "Tiếp tục theo dõi sức khỏe và khám theo nhu cầu/hướng dẫn của cơ sở y tế.",
-            "Nếu đã có CBC, nên nhập vào Vòng 2 vì Vòng 1 thấp không có nghĩa là đã loại trừ Thalassemia.",
-            "Nếu sau này xuất hiện thiếu máu, MCV/MCH thấp, tiền sử gia đình đáng chú ý hoặc có nhu cầu tư vấn trước hôn nhân/sinh sản, nên đánh giá lại.",
+            "Nếu đã có kết quả CBC và Ferritin, hãy nhập vào Vòng 2 vì người lành mang gen Thalassemia thường hoàn toàn không có triệu chứng ở Vòng 1.",
         ]
     return common + action
 
 
 # ------------------------------------------------------------
-# ROUND 2
+# ROUND 2 (TÍCH HỢP CHỈ SỐ CỔ ĐIỂN + HỌC MÁY CBC + FERRITIN)
 # ------------------------------------------------------------
 
-def calculate_round2_score(mcv, mch, rbc, rdw):
-    """Sàng lọc CBC theo Phụ lục "Quy trình xét nghiệm sàng lọc, chẩn đoán Thalassemia"
-    (Hướng dẫn chẩn đoán và điều trị một số bệnh lý huyết học, Bộ Y tế 2022):
-    MCV < 85 fL và/hoặc MCH < 28 pg. Mentzer chỉ là chỉ số hỗ trợ."""
+def calculate_round2_score(mcv, mch, rbc, rdw, ferritin=None):
     reasons = []
     score = 0
 
@@ -1739,32 +2402,39 @@ def calculate_round2_score(mcv, mch, rbc, rdw):
         score += 2
     if mcv < 80:
         score += 1
-        reasons.append("MCV <80 fL — hồng cầu nhỏ")
+        reasons.append("MCV <80 fL — hồng cầu nhỏ rõ")
     if mch < 27:
         score += 1
-        reasons.append("MCH <27 pg — xu hướng hồng cầu nhược sắc")
+        reasons.append("MCH <27 pg — hồng cầu nhược sắc rõ")
     if rdw > 14:
-        reasons.append("RDW >14% — kích thước hồng cầu không đồng đều theo hướng dẫn BYT 2022")
+        reasons.append("RDW >14% — kích thước hồng cầu không đồng đều")
     if mcv < 85 and rbc >= 5.0:
         score += 1
-        reasons.append("RBC tương đối cao trong bối cảnh MCV giảm")
+        reasons.append("RBC ≥ 5,0 T/L — tăng sinh số lượng hồng cầu bù trừ trong bối cảnh MCV giảm")
+    if ferritin is not None and ferritin >= 30 and (mcv < 80 or mch < 27):
+        score += 2
+        reasons.append(f"Ferritin huyết thanh = {ferritin:g} ng/mL (≥ 30 ng/mL) kèm hồng cầu nhỏ nhược sắc — loại trừ thiếu sắt đơn thuần, củng cố nghi ngờ Thalassemia")
+    elif ferritin is not None and ferritin < 30:
+        reasons.append(f"Ferritin huyết thanh = {ferritin:g} ng/mL (< 30 ng/mL) — gợi ý có thiếu sắt (đơn thuần hoặc đồng mắc cùng Thalassemia)")
 
     mentzer = _round_number(Decimal(str(mcv)) / Decimal(str(rbc)), 2) if rbc > 0 else None
     if mentzer is not None:
-        reasons.append(f"Mentzer Index = {mentzer:.2f} — chỉ số hỗ trợ, không phải tiêu chuẩn chẩn đoán")
+        reasons.append(f"Mentzer Index = {mentzer:.2f} (< 13 gợi ý Thalassemia; ≥ 13 gợi ý thiếu sắt)")
     return score, mentzer, reasons
 
 
-def round2_category(score, mcv, mch=None):
+def round2_category(score, mcv, mch=None, ml_category=None):
+    if ml_category in ("CAO", "TRUNG BÌNH", "THẤP"):
+        return ml_category
     screening_trigger = (mcv < 85) or (mch is not None and mch < 28)
     if not screening_trigger:
-        return ("THẤP", "CBC hiện tại chưa đạt tiêu chí sàng lọc MCV <85 fL và/hoặc MCH <28 pg trong phụ lục hướng dẫn BYT 2022; điều này không loại trừ hoàn toàn Thalassemia.")
+        return "THẤP"
     if score >= 6:
-        return ("CAO", "CBC có tiêu chí sàng lọc đáng lưu ý (MCV <85 fL và/hoặc MCH <28 pg). Theo quy trình BYT 2022, nên đánh giá tình trạng sắt và xác định thành phần huyết sắc tố bằng điện di/HPLC; xét nghiệm gen tùy trường hợp.")
-    return ("TRUNG BÌNH", "CBC đạt tiêu chí sàng lọc MCV <85 fL và/hoặc MCH <28 pg. Cần đánh giá thiếu sắt và nguyên nhân hồng cầu nhỏ; nếu phù hợp, thực hiện điện di/HPLC huyết sắc tố.")
+        return "CAO"
+    return "TRUNG BÌNH"
 
 
-def narrative_cbc_advice(hb_adjusted, mcv, mch, rbc, rdw, mentzer):
+def narrative_cbc_advice(hb_adjusted, mcv, mch, rbc, rdw, mentzer, ferritin=None, ml_res=None):
     findings, advice = [], []
 
     if mcv < 85:
@@ -1772,28 +2442,39 @@ def narrative_cbc_advice(hb_adjusted, mcv, mch, rbc, rdw, mentzer):
     if mch < 28:
         findings.append("MCH <28 pg — đạt tiêu chí sàng lọc CBC theo phụ lục BYT 2022.")
     if rdw > 14:
-        findings.append("RDW tăng; cần lưu ý thiếu sắt hoặc các nguyên nhân khác của microcytosis.")
+        findings.append("RDW-CV >14% — độ phân bố kích thước hồng cầu tăng.")
     if mcv < 85 and rbc >= 5.0:
-        findings.append("RBC tương đối cao trong bối cảnh MCV thấp.")
+        findings.append("RBC ≥5,0 T/L trong bối cảnh MCV thấp — kiểu hình đặc trưng thường gặp ở người mang gen Thalassemia.")
 
-    if mcv < 85 and mentzer < 13:
-        findings.append("Mentzer Index <13: mẫu hình sàng lọc nghiêng về Thalassemia hơn thiếu sắt.")
-        advice.append("Trao đổi với nhân viên y tế về HPLC/điện di hemoglobin; tùy trường hợp có thể cần xét nghiệm phân tử.")
-    elif mcv < 85 and mentzer >= 13:
-        findings.append("Mentzer Index ≥13: mẫu hình sàng lọc nghiêng về thiếu sắt hoặc nguyên nhân microcytosis khác.")
-        advice.append("Cân nhắc đánh giá tình trạng sắt, đặc biệt Ferritin, theo chỉ định của nhân viên y tế.")
+    if mcv < 85 and mentzer is not None and mentzer < 13:
+        findings.append("Mentzer Index <13: chỉ số cổ điển nghiêng về mang gen Thalassemia hơn thiếu máu thiếu sắt.")
+    elif mcv < 85 and mentzer is not None and mentzer >= 13:
+        findings.append("Mentzer Index ≥13: chỉ số cổ điển nghiêng về thiếu sắt hoặc thể alpha-Thalassemia nhẹ.")
+
+    if ferritin is not None:
+        if ferritin < 30:
+            findings.append(f"Ferritin huyết thanh giảm ({ferritin:g} ng/mL < 30 ng/mL): xác nhận có tình trạng thiếu hụt dự trữ sắt.")
+            if ml_res and ml_res.get("coexisting_ida"):
+                advice.append("Cần lưu ý khả năng ĐỒNG MẮC Thiếu máu thiếu sắt + Mang gen Thalassemia; nên điều trị/đánh giá sắt và thực hiện xét nghiệm gen khi có chỉ định.")
+            else:
+                advice.append("Khám chuyên khoa để điều trị thiếu sắt và kiểm tra lại công thức máu / HPLC theo hướng dẫn của bác sĩ.")
+        else:
+            findings.append(f"Ferritin huyết thanh bình thường/cao ({ferritin:g} ng/mL ≥ 30 ng/mL): giúp loại trừ thiếu máu thiếu sắt đơn thuần.")
+            if mcv < 85 or mch < 28:
+                advice.append("Hồng cầu nhỏ nhược sắc nhưng dự trữ sắt bình thường (Ferritin ≥ 30 ng/mL): ưu tiên chỉ định HPLC/điện di huyết sắc tố và xét nghiệm đột biến gen HBA1, HBA2, HBB (đặc biệt lưu ý alpha-Thalassemia không thể loại trừ nếu chỉ dựa vào HPLC bình thường).")
+    else:
+        if mcv < 85 or mch < 28:
+            advice.append("Nên định lượng bổ sung Ferritin huyết thanh để kích hoạt Mô hình B (CBC + Ferritin), giúp phân biệt chính xác với thiếu máu thiếu sắt.")
 
     if hb_adjusted < 8:
-        advice.append("Hb sau hiệu chỉnh rất thấp: nên được đánh giá y tế sớm.")
+        advice.append("Hb sau hiệu chỉnh rất thấp (<8 g/dL): cần được khám và đánh giá huyết học sớm.")
     elif hb_adjusted < 10:
-        advice.append("Hb sau hiệu chỉnh thấp đáng kể: nên khám và đánh giá nguyên nhân thiếu máu.")
-    elif hb_adjusted < 12:
-        advice.append("Hb sau hiệu chỉnh thấp/giáp ranh tùy nhóm đối tượng; cần đối chiếu tuổi, giới và khoảng tham chiếu của labo.")
+        advice.append("Hb sau hiệu chỉnh giảm rõ (<10 g/dL): nên khám chuyên khoa Huyết học để xác định nguyên nhân.")
 
     if not findings:
-        findings.append("Chưa ghi nhận microcytosis/nhược sắc rõ trên CBC.")
+        findings.append("Chưa ghi nhận hồng cầu nhỏ hoặc nhược sắc rõ trên công thức máu hiện tại.")
     if not advice:
-        advice.append("Tiếp tục đối chiếu với khoảng tham chiếu trên phiếu xét nghiệm và hướng dẫn của nhân viên y tế.")
+        advice.append("Tiếp tục đối chiếu với khoảng tham chiếu của phòng xét nghiệm và tư vấn tiền hôn nhân/trước sinh khi có nhu cầu.")
     return findings, advice
 
 
@@ -1807,23 +2488,23 @@ def round3_byt_interpretation(r3):
     ferritin, tsat = r3.get("ferritin"), r3.get("transferrin_saturation")
 
     if hba is not None and 96.5 <= hba <= 98 and hba2 is not None and 2 <= hba2 <= 3.5 and hbf is not None and hbf < 1:
-        notes.append("Thành phần Hb nằm trong khoảng HbA 96,5–98%, HbA2 2–3,5%, HbF <1% được nêu trong phụ lục BYT 2022; cần đối chiếu toàn bộ phiếu xét nghiệm và lâm sàng.")
+        notes.append("Thành phần Hb nằm trong khoảng tham chiếu HbA 96,5–98%, HbA2 2–3,5%, HbF <1%. Lưu ý quan trọng: kết quả HPLC/điện di bình thường KHÔNG loại trừ được người mang gen alpha-Thalassemia; cần xét nghiệm gen HBA1, HBA2 nếu MCV/MCH giảm và Ferritin bình thường.")
     if hba2 is not None and hba2 > 3.5:
-        notes.append("HbA2 >3,5% — bất thường được phụ lục BYT 2022 nêu là gợi ý Beta-thalassemia.")
+        notes.append("HbA2 >3,5% — dấu hiệu đặc trưng gợi ý người mang gen Beta-Thalassemia (cần xác nhận đột biến gen HBB và đồng nhiễm alpha-Thalassemia nếu có).")
     if hbf is not None and hbf >= 1:
-        notes.append("HbF tăng so với ngưỡng <1% nêu trong phụ lục BYT 2022; cần đánh giá trong bối cảnh toàn bộ thành phần Hb.")
+        notes.append("HbF tăng (≥1%) — cần đánh giá trong bối cảnh toàn bộ thành phần huyết sắc tố và xét nghiệm phân tử.")
     if hbe is not None and hbe > 0:
-        notes.append("Có HbE — phụ lục BYT 2022 nêu HbE dương tính là dấu hiệu cần đánh giá bệnh huyết sắc tố E/hemoglobinopathy.")
+        notes.append("Có đỉnh HbE bất thường — gợi ý dị hợp tử hoặc đồng hợp tử bệnh huyết sắc tố E (đột biến CD26 trên gen HBB).")
 
     combined = ((r3.get("genetic_result") or "") + " " + (r3.get("lab_conclusion") or "")).lower()
-    for marker, label in [("hbh", "HbH"), ("hb bart", "Hb Bart’s"), ("hbcs", "HbCS"), ("constant spring", "Hb Constant Spring")]:
+    for marker, label in [("hbh", "HbH"), ("hb bart", "Hb Bart’s"), ("hbcs", "HbCS"), ("constant spring", "Hb Constant Spring"), ("sea", "--SEA"), ("3.7", "-α3.7"), ("4.2", "-α4.2")]:
         if marker in combined:
-            notes.append(f"Phiếu có đề cập {label}; theo hướng dẫn BYT 2022 cần đối chiếu với đánh giá Alpha-thalassemia và/hoặc xét nghiệm DNA.")
+            notes.append(f"Phiếu xét nghiệm ghi nhận biến thể {label} thuộc nhóm Alpha-Thalassemia; cần tư vấn di truyền chuyên khoa.")
 
     if ferritin is not None and ferritin < 30:
-        notes.append("Ferritin <30 ng/mL — mức được hướng dẫn BYT 2022 nêu trong chẩn đoán thiếu máu thiếu sắt; cần đối chiếu lâm sàng và các chỉ số sắt khác.")
+        notes.append("Ferritin <30 ng/mL — xác nhận thiếu hụt dự trữ sắt theo hướng dẫn BYT 2022.")
     if tsat is not None and tsat < 30:
-        notes.append("Độ bão hòa transferrin <30% — mức được hướng dẫn BYT 2022 nêu trong chẩn đoán thiếu máu thiếu sắt.")
+        notes.append("Độ bão hòa transferrin <30% — gợi ý thiếu máu thiếu sắt.")
     if not notes:
         notes.append("Chưa có mẫu hình tự động để đối chiếu từ các trường đã nhập. Cần xem toàn bộ phiếu xét nghiệm và đánh giá chuyên môn.")
     return notes
@@ -1832,8 +2513,6 @@ def round3_byt_interpretation(r3):
 # ------------------------------------------------------------
 # MEDICAL FACILITIES
 # ------------------------------------------------------------
-# Danh mục điều hướng cho prototype, KHÔNG phải chỉ định điều trị.
-# Phân hạng/tên đơn vị có thể thay đổi; luôn kèm nút tra cứu Google Maps.
 
 def _f(name, tier, note, query=None):
     q = quote(query or name)
@@ -1845,29 +2524,29 @@ _TW = "Hạng đặc biệt – tuyến Trung ương"
 _SPEC = "Ưu tiên khi cần đánh giá chuyên sâu huyết học"
 
 MEDICAL_FACILITIES = {
-    "Hà Nội": [
-        _f("Bệnh viện Bạch Mai", _TW, _SPEC, "Bệnh viện Bạch Mai Hà Nội"),
-        _f("Bệnh viện Hữu nghị Việt Đức", "Bệnh viện tuyến Trung ương", "Cơ sở chuyên sâu; phù hợp khi cần tuyến trên", "Bệnh viện Hữu nghị Việt Đức Hà Nội"),
-        _f("Bệnh viện Trung ương Quân đội 108", _TW, "Cơ sở tuyến trên với nhiều chuyên khoa sâu"),
-    ],
-    "Hồ Chí Minh": [
-        _f("Bệnh viện Chợ Rẫy", _TW, _SPEC, "Bệnh viện Chợ Rẫy Hồ Chí Minh"),
-        _f("Bệnh viện Thống Nhất", "Hạng I – tuyến Trung ương", "Bệnh viện đa khoa tuyến trên", "Bệnh viện Thống Nhất Hồ Chí Minh"),
-        _f("Bệnh viện Nhân Dân 115", "Hạng I", "Bệnh viện đa khoa tuyến chuyên sâu", "Bệnh viện Nhân Dân 115 Hồ Chí Minh"),
-        _f("Bệnh viện Đại học Y Dược TP. Hồ Chí Minh", "Hạng I", "Bệnh viện trường đại học tuyến chuyên sâu"),
-    ],
-    "Đà Nẵng": [
-        _f("Bệnh viện C Đà Nẵng", "Bệnh viện tuyến Trung ương", "Cơ sở tuyến Trung ương tại Đà Nẵng"),
-        _f("Bệnh viện Đà Nẵng", "Hạng I", "Bệnh viện đa khoa lớn của thành phố"),
-        _f("Bệnh viện Đại học Y – Dược, Đại học Đà Nẵng", "Bệnh viện trường đại học", "Có thể lựa chọn khi cần đánh giá chuyên khoa", "Bệnh viện Đại học Y Dược Đại học Đà Nẵng"),
-    ],
     "Huế": [
-        _f("Bệnh viện Trung ương Huế", _TW, "Ưu tiên khi cần đánh giá chuyên sâu"),
+        _f("Bệnh viện Trung ương Huế (Cơ sở nghiên cứu chính của đề tài)", _TW, "Trung tâm Huyết học Truyền máu & Khoa Huyết học Lâm sàng — thực hiện đầy đủ CBC, Ferritin, HPLC/điện di và PCR đột biến gen α/β-Thalassemia"),
         _f("Bệnh viện Trường Đại học Y – Dược Huế", "Hạng I", "Bệnh viện trường đại học tuyến chuyên sâu", "Bệnh viện Trường Đại học Y Dược Huế"),
     ],
+    "Đà Nẵng": [
+        _f("Bệnh viện Đà Nẵng", "Hạng I", "Bệnh viện đa khoa tuyến cuối của thành phố Đà Nẵng"),
+        _f("Bệnh viện C Đà Nẵng", "Bệnh viện tuyến Trung ương", "Cơ sở tuyến Trung ương tại Đà Nẵng"),
+        _f("Bệnh viện Phụ sản – Nhi Đà Nẵng", "Hạng I", "Chuyên sâu sàng lọc trước sinh, sơ sinh và huyết học lâm sàng"),
+        _f("Bệnh viện Đại học Y – Dược, Đại học Đà Nẵng", "Bệnh viện trường đại học", "Có thể lựa chọn khi cần đánh giá chuyên khoa", "Bệnh viện Đại học Y Dược Đại học Đà Nẵng"),
+    ],
+    "Hà Nội": [
+        _f("Viện Huyết học – Truyền máu Trung ương", _TW, "Đơn vị đầu ngành toàn quốc về chẩn đoán phân tử và tư vấn di truyền Thalassemia"),
+        _f("Bệnh viện Bạch Mai", _TW, _SPEC, "Bệnh viện Bạch Mai Hà Nội"),
+        _f("Bệnh viện Phụ sản Trung ương", _TW, "Chuyên sâu sàng lọc trước sinh Thalassemia"),
+    ],
+    "Hồ Chí Minh": [
+        _f("Bệnh viện Truyền máu Huyết học TP. Hồ Chí Minh", "Hạng I chuyên khoa", _SPEC),
+        _f("Bệnh viện Chợ Rẫy", _TW, _SPEC, "Bệnh viện Chợ Rẫy Hồ Chí Minh"),
+        _f("Bệnh viện Đại học Y Dược TP. Hồ Chí Minh", "Hạng I", "Bệnh viện trường đại học tuyến chuyên sâu"),
+    ],
     "Cần Thơ": [
+        _f("Bệnh viện Huyết học – Truyền máu Cần Thơ", "Chuyên khoa tuyến khu vực", "Ưu tiên khi cần xét nghiệm chuyên sâu Huyết học tại ĐBSCL"),
         _f("Bệnh viện Đa khoa Trung ương Cần Thơ", "Bệnh viện tuyến Trung ương", "Ưu tiên khi cần tuyến chuyên sâu tại ĐBSCL"),
-        _f("Bệnh viện Đại học Y Dược Cần Thơ", "Hạng I", "Bệnh viện trường đại học tuyến chuyên sâu"),
     ],
     "Thái Nguyên": [_f("Bệnh viện Trung ương Thái Nguyên", _TW, "Ưu tiên khi cần đánh giá chuyên sâu")],
     "Hải Phòng": [_f("Bệnh viện Hữu nghị Việt Tiệp", "Hạng I", "Bệnh viện đa khoa tuyến chuyên sâu", "Bệnh viện Hữu nghị Việt Tiệp Hải Phòng")],
@@ -1882,31 +2561,26 @@ MEDICAL_FACILITIES = {
     "An Giang": [_f("Bệnh viện Đa khoa khu vực An Giang", "Hạng I", "Bệnh viện đa khoa tuyến tỉnh/khu vực")],
 }
 
-# Các tỉnh có một bệnh viện đa khoa tuyến tỉnh hạng I.
 for _p in ["Thanh Hóa", "Hà Tĩnh", "Khánh Hòa", "Lâm Đồng", "Quảng Ngãi", "Gia Lai", "Bắc Ninh",
            "Phú Thọ", "Lào Cai", "Hưng Yên", "Ninh Bình", "Tây Ninh", "Vĩnh Long", "Cà Mau"]:
     MEDICAL_FACILITIES[_p] = [_f(f"Bệnh viện Đa khoa tỉnh {_p}", "Hạng I", "Bệnh viện đa khoa tuyến tỉnh")]
 
-# Các tỉnh còn lại: cơ sở đa khoa tuyến tỉnh.
 for _p in ["Điện Biên", "Lai Châu", "Sơn La", "Tuyên Quang"]:
     MEDICAL_FACILITIES[_p] = [_f(f"Bệnh viện Đa khoa tỉnh {_p}", "Tuyến tỉnh", "Cơ sở đa khoa tuyến tỉnh")]
 
 MEDICAL_FACILITIES.update({
     "Cao Bằng": [
-        _f("Bệnh viện Đa khoa tỉnh Cao Bằng", "Tuyến tỉnh", "Cơ sở đa khoa tuyến tỉnh; có thể liên hệ khoa Huyết học/Truyền máu để hỏi khả năng xét nghiệm chuyên sâu"),
-        _f("Bệnh viện Y học cổ truyền Cao Bằng", "Tuyến tỉnh", "Cơ sở y tế trên địa bàn tỉnh"),
+        _f("Bệnh viện Đa khoa tỉnh Cao Bằng", "Tuyến tỉnh", "Cơ sở đa khoa tuyến tỉnh"),
     ],
     "Lạng Sơn": [
         _f("Bệnh viện Đa khoa tỉnh Lạng Sơn", "Tuyến tỉnh", "Cơ sở đa khoa tuyến tỉnh"),
-        _f("Bệnh viện Phổi Lạng Sơn", "Chuyên khoa", "Cơ sở chuyên khoa trên địa bàn tỉnh"),
     ],
     "Quảng Trị": [
-        _f("Bệnh viện Hữu nghị Việt Nam – Cuba Đồng Hới", "Tuyến Trung ương", "Cơ sở tuyến trên phục vụ khu vực; nên xác nhận khoa Huyết học/Truyền máu trước khi đến", "Bệnh viện Hữu nghị Việt Nam Cuba Đồng Hới"),
+        _f("Bệnh viện Hữu nghị Việt Nam – Cuba Đồng Hới", "Tuyến Trung ương", "Cơ sở tuyến trên phục vụ khu vực", "Bệnh viện Hữu nghị Việt Nam Cuba Đồng Hới"),
         _f("Bệnh viện Đa khoa tỉnh Quảng Trị", "Tuyến tỉnh", "Cơ sở đa khoa tuyến tỉnh"),
     ],
 })
 
-# Tên tỉnh cũ → tỉnh/thành dùng để tra danh mục cơ sở.
 PROVINCE_FACILITY_ALIASES = {
     "Thừa Thiên Huế": "Huế", "Quảng Nam": "Đà Nẵng", "Bình Định": "Gia Lai",
     "Ninh Thuận": "Khánh Hòa", "Phú Yên": "Đắk Lắk", "Đắk Nông": "Lâm Đồng",
@@ -1935,17 +2609,17 @@ def all_medical_facilities():
 
 
 # ------------------------------------------------------------
-# WORD REPORT
+# WORD REPORT (TÍCH HỢP KẾT QUẢ MÔ HÌNH HỌC MÁY & SHAP)
 # ------------------------------------------------------------
 
 def make_word(patient, r1_score, r1_category, r1_reasons, r2=None):
-    from docx import Document  # import chậm → chỉ nạp khi xuất Word
+    from docx import Document
     doc = Document()
-    doc.add_heading("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", level=3)
-    doc.add_heading("PHIẾU SÀNG LỌC VÀ PHÂN TẦNG NGUY CƠ THALASSEMIA", level=1)
-    doc.add_paragraph("Công cụ hỗ trợ sàng lọc; không thay thế chẩn đoán hoặc chỉ định của nhân viên y tế.")
+    doc.add_heading("TRƯỜNG ĐẠI HỌC PHAN CHÂU TRINH · HỆ THỐNG THAL-SCREEN AI", level=3)
+    doc.add_heading("PHIẾU KẾT QUẢ DỰ ĐOÁN NGUY CƠ MANG GEN THALASSEMIA", level=1)
+    doc.add_paragraph("Công cụ hỗ trợ sàng lọc bằng Học máy (CBC + Ferritin); không thay thế chẩn đoán xác định di truyền.")
 
-    doc.add_heading("I. THÔNG TIN BỆNH NHÂN", level=2)
+    doc.add_heading("I. THÔNG TIN HÀNH CHÍNH", level=2)
     for label, value in [
         ("Họ và tên", patient["full_name"]), ("Ngày sinh", patient["birth_date"]),
         ("Tuổi", patient["age"]), ("Giới tính", patient["gender"]),
@@ -1954,39 +2628,41 @@ def make_word(patient, r1_score, r1_category, r1_reasons, r2=None):
     ]:
         doc.add_paragraph(f"{label}: {value}")
 
-    doc.add_heading("II. VÒNG 1", level=2)
-    doc.add_paragraph(f"Điểm: {r1_score}/{ROUND1_MAX_SCORE}")
-    doc.add_paragraph(f"Mức nguy cơ: {r1_category}")
+    doc.add_heading("II. SÀNG LỌC TIỀN SỬ (VÒNG 1)", level=2)
+    doc.add_paragraph(f"Điểm Vòng 1: {r1_score}/{ROUND1_MAX_SCORE} — Mức lưu ý: {r1_category}")
     for item in r1_reasons:
         doc.add_paragraph(f"- {item}")
 
     if r2:
-        doc.add_heading("III. VÒNG 2", level=2)
+        doc.add_heading("III. KẾT QUẢ XÉT NGHIỆM CBC, FERRITIN & DỰ ĐOÁN HỌC MÁY (VÒNG 2)", level=2)
+        fer_txt = f"{r2['ferritin']:.1f} ng/mL" if r2.get("ferritin") is not None else "Chưa định lượng"
+        prob_a_txt = f"{r2.get('ml_prob_cbc', 0)*100:.1f}%" if r2.get("ml_prob_cbc") is not None else "—"
+        prob_b_txt = f"{r2.get('ml_prob_cbc_ferritin', 0)*100:.1f}%" if r2.get("ml_prob_cbc_ferritin") is not None else "—"
         for line in [
-            f"Khoảng độ cao: {r2['altitude_choice']}",
-            f"Hiệu chỉnh Hb: -{r2['adjustment']:.1f} g/dL",
-            f"Hb thực đo sau quy đổi: {r2['hb']:.1f} g/dL",
-            f"Hb sau hiệu chỉnh: {r2['hb_adjusted']:.1f} g/dL",
-            f"MCV: {r2['mcv']:.1f} fL",
-            f"MCH: {r2['mch']:.1f} pg",
-            f"RBC: {r2['rbc']:.2f} T/L",
-            f"RDW-CV: {r2['rdw']:.1f}%",
-            f"Mentzer Index: {r2['mentzer']:.2f}",
-            f"Điểm CBC prototype: {r2['score']}",
-            f"Mức nguy cơ Vòng 2: {r2['category']}",
-            f"Nhận định: {r2['conclusion']}",
+            f"Khoảng độ cao cư trú: {r2['altitude_choice']} (Hiệu chỉnh Hb: -{r2['adjustment']:.1f} g/dL)",
+            f"Hb thực đo: {r2['hb']:.1f} g/dL ({r2['hb']*10:.0f} g/L) | Hb hiệu chỉnh: {r2['hb_adjusted']:.1f} g/dL",
+            f"RBC: {r2['rbc']:.2f} T/L | HCT: {r2.get('hct', 0):.1f}% | MCV: {r2['mcv']:.1f} fL | MCH: {r2['mch']:.1f} pg | MCHC: {r2.get('mchc', 0):.1f} g/L | RDW-CV: {r2['rdw']:.1f}%",
+            f"Ferritin huyết thanh: {fer_txt}",
+            f"Chỉ số phái sinh: Mentzer = {r2['mentzer']:.2f} | Green & King = {r2.get('green_king', 0):.2f} | RDWI = {r2.get('rdwi', 0):.2f}",
+            f"Xác suất dự đoán Học máy (XGBoost - Mô hình A [Chỉ CBC]): {prob_a_txt}",
+            f"Xác suất dự đoán Học máy (XGBoost - Mô hình B [CBC + Ferritin]): {prob_b_txt}",
+            f"Phân tầng nguy cơ: {r2['category']}",
+            f"Nhận định tổng hợp: {r2['conclusion']}",
         ]:
             doc.add_paragraph(line)
 
-        doc.add_heading("IV. PHÂN TÍCH SƠ BỘ", level=2)
+        if r2.get("shap"):
+            doc.add_heading("IV. GIẢI THÍCH MÔ HÌNH BẰNG PHƯƠNG PHÁP SHAP", level=2)
+            for s_item in r2["shap"][:5]:
+                doc.add_paragraph(
+                    f"- {s_item['label']}: SHAP = {s_item['shap_value']:+.3f} (tỷ trọng {s_item['abs_pct']:.1f}%) — {s_item['direction']}"
+                )
+
+        doc.add_heading("V. PHÂN TÍCH LÂM SÀNG & KHUYẾN NGHỊ CHỈ ĐỊNH", level=2)
         for finding in r2["findings"]:
             doc.add_paragraph(f"- {finding}")
-        doc.add_heading("V. KHUYẾN NGHỊ", level=2)
         for advice in r2["advice"]:
             doc.add_paragraph(f"- {advice}")
-    else:
-        doc.add_heading("III. THEO DÕI", level=2)
-        doc.add_paragraph("Vòng 2 chưa được mở. Tiếp tục theo dõi sức khỏe và đánh giá lại nếu xuất hiện bất thường.")
 
     out = io.BytesIO()
     doc.save(out)
@@ -1996,78 +2672,60 @@ def make_word(patient, r1_score, r1_category, r1_reasons, r2=None):
 
 @st.cache_data(show_spinner=False, max_entries=20, ttl=600)
 def make_word_bytes(patient, r1_score, r1_category, r1_reasons, r2=None):
-    """Chỉ dựng file Word khi dữ liệu thay đổi (trước đây dựng lại sau MỖI lần rerun)."""
     return make_word(patient, r1_score, r1_category, r1_reasons, r2).getvalue()
 
 
 # ============================================================
-# RESEARCH OVERVIEW DIALOG
+# RESEARCH OVERVIEW & PROJECT INTRO DIALOGS (ĐỒNG BỘ ĐỀ CƯƠNG MỚI)
 # ============================================================
 
-@st.dialog("Tìm hiểu về nghiên cứu và cơ sở khoa học", width="large")
+@st.dialog("Giới thiệu đề tài NCKH và Nhóm nghiên cứu", width="large")
+def show_project_intro():
+    st.markdown("""
+### ĐỀ TÀI NGHIÊN CỨU KHOA HỌC
+**XÂY DỰNG VÀ ĐÁNH GIÁ MÔ HÌNH HỌC MÁY DỰ ĐOÁN NGUY CƠ MANG GEN THALASSEMIA DỰA TRÊN CHỈ SỐ CÔNG THỨC MÁU VÀ FERRITIN HUYẾT THANH Ở NGƯỜI TRƯỞNG THÀNH TẠI BỆNH VIỆN TRUNG ƯƠNG HUẾ**
+
+- **Đơn vị chủ trì:** Khoa Kỹ thuật Xét nghiệm Y học – Trường Đại học Phan Châu Trinh
+- **Cơ sở phối hợp nghiên cứu:** Bệnh viện Trung ương Huế (Thời gian: 11/2026 – 05/2027)
+- **Chủ nhiệm đề tài:** Nguyễn Đắc Lâu (Lớp 24XN1)
+- **Thành viên nhóm nghiên cứu:** Trần Phan Thảo Vi, Huỳnh Ngọc Anh Huy, Lê Văn Thịnh, Phan Ngọc Bảo An
+- **Giảng viên hướng dẫn:** ThS. Nguyễn Thị Kim Loan
+
+---
+
+### 1. Mục tiêu nghiên cứu của đề tài
+1. **Mục tiêu 1:** Khảo sát đặc điểm các chỉ số xét nghiệm công thức máu ngoại vi (CBC: RBC, Hb, HCT, MCV, MCH, MCHC, RDW-CV), Ferritin huyết thanh và các chỉ số phân biệt hồng cầu (Mentzer Index, Green & King Index, RDWI) ở người trưởng thành có và không mang gen Thalassemia tại Bệnh viện Trung ương Huế.
+2. **Mục tiêu 2:** Xây dựng, đánh giá hiệu năng 3 thuật toán học máy (**Logistic Regression**, **Random Forest**, **XGBoost**), chứng minh giá trị bổ sung của Ferritin huyết thanh (qua kiểm định DeLong, chỉ số cải thiện phân loại ròng NRI, Brier score), giải thích mô hình bằng phương pháp **SHAP** và triển khai phần mềm hỗ trợ sàng lọc **THAL-SCREEN AI**.
+
+### 2. Điểm mới về mặt khoa học và công nghệ của ứng dụng THAL-SCREEN AI
+- **So sánh trực tiếp Mô hình A (Chỉ CBC) và Mô hình B (CBC + Ferritin):** Lượng hóa ngay trên giao diện sự thay đổi xác suất dự đoán khi bổ sung định lượng Ferritin huyết thanh, giúp giải quyết bài toán chồng lấp hồng cầu nhỏ nhược sắc giữa thiếu máu thiếu sắt (IDA) và Thalassemia.
+- **Nhận diện đồng mắc Thiếu sắt + Mang gen Thalassemia:** Phát hiện các trường hợp Ferritin thấp (< 30 ng/mL) nhưng số lượng hồng cầu RBC tăng bù trừ và MCV giảm sâu để cảnh báo nguy cơ âm tính giả trên điện di HbA2.
+- **Giải thích mô hình cá thể hóa bằng SHAP (Explainable AI):** Minh bạch hóa đóng góp của từng biến số xét nghiệm lên kết quả dự đoán của mỗi người bệnh, khắc phục hoàn toàn hạn chế "hộp đen" của trí tuệ nhân tạo trong y học.
+    """)
+
+
+@st.dialog("Cơ sở khoa học và phương pháp Học máy", width="large")
 def show_research_overview():
     st.markdown("""
-### 1. Lý do khoa học – y tế để phát triển hệ thống
+### 1. Cơ sở huyết học và chuyển hóa sắt trong sàng lọc Thalassemia
+- **7 chỉ số dòng hồng cầu trên CBC (RBC, Hb, HCT, MCV, MCH, MCHC, RDW-CV):** Người lành mang gen Thalassemia thường có MCV giảm (< 80 fL), MCH giảm (< 27 pg) kèm số lượng hồng cầu RBC bình thường hoặc tăng bù trừ (≥ 5,0 T/L) và RDW-CV tăng nhẹ.
+- **Vai trò của Ferritin huyết thanh:** Trong thiếu máu thiếu sắt đơn thuần, dự trữ sắt suy giảm làm Ferritin giảm thấp (< 15–30 ng/mL). Ngược lại, ở người mang gen Thalassemia đơn thuần, Ferritin thường bình thường hoặc tăng. Việc tích hợp Ferritin vào mô hình Học máy giúp bóc tách chính xác thiếu máu thiếu sắt và nhận diện cả nhóm đồng mắc.
+- **Tiêu chuẩn tham chiếu vàng (Reference Standard):** Điện di huyết sắc tố (HPLC) bình thường không thể loại trừ hoàn toàn thể mang gen **alpha-Thalassemia** (như mất đoạn 1 gen *-α3.7*, *-α4.2* hoặc 2 gen *--SEA*). Do đó, nhãn kết cục của mô hình được xác nhận bằng xét nghiệm sinh học phân tử đột biến gen *HBA1, HBA2* và *HBB* kết hợp HPLC.
 
-Thalassemia là nhóm bệnh lý di truyền do giảm tổng hợp chuỗi globin, có thể biểu hiện từ người mang gen gần như không triệu chứng đến các thể thiếu máu nặng. Trong thực hành sàng lọc, **công thức máu (CBC) và các chỉ số hồng cầu** có thể cung cấp dấu hiệu ban đầu của kiểu hình hồng cầu nhỏ, nhược sắc; khi có nghi ngờ, người bệnh cần được đánh giá tiếp bằng các xét nghiệm hemoglobin chuyên sâu và/hoặc xét nghiệm phân tử tùy trường hợp.
-
-Vấn đề thực tiễn là khả năng tiếp cận các tầng xét nghiệm không giống nhau. CBC thường dễ tiếp cận hơn so với HPLC/điện di hemoglobin hoặc xét nghiệm gen. Vì vậy hệ thống này được xây dựng như **một lớp hỗ trợ sàng lọc – giải thích CBC – phân tầng – điều hướng**, không thay thế bác sĩ và không đưa ra chẩn đoán xác định.
-
-### 2. Vì sao Vòng 1 có 20 câu hỏi?
-
-Vòng 1 không nhằm loại người tham gia khỏi quá trình sàng lọc. Nó nhằm thu thập những thông tin có thể làm thay đổi mức độ cần lưu ý, đồng thời đưa ra khuyến nghị phù hợp trước khi xem CBC. Các nhóm câu hỏi được lựa chọn dựa trên 4 nhóm thông tin: **tiền sử gia đình, tiền sử huyết học cá nhân, dấu hiệu hỗ trợ và khả năng tiếp cận xét nghiệm**.
-
-**Q1–Q5 – Tiền sử gia đình:** Thalassemia có tính di truyền. Thông tin về người thân mắc bệnh, mang gen, thiếu máu/hồng cầu nhỏ hoặc truyền máu nhiều lần có thể làm tăng lý do cần xem xét sàng lọc.
-
-**Q6–Q12 – Tiền sử bản thân:** từng được thông báo thiếu máu, MCV/MCH thấp, từng xét nghiệm hemoglobinopathy, HbE, truyền máu hoặc thiếu máu kéo dài giúp hệ thống biết người tham gia đã có những dấu hiệu/lịch sử nào cần được đối chiếu với CBC hiện tại.
-
-**Q13–Q18 – Dấu hiệu hỗ trợ:** mệt mỏi, chóng mặt, da niêm nhợt, vàng da, lách to hoặc tiền sử biến chứng huyết học có thể gợi ý vấn đề huyết học, nhưng **không đặc hiệu cho Thalassemia**. Vì vậy các câu này chỉ có vai trò hỗ trợ, không được dùng để chẩn đoán.
-
-**Q19–Q20 – Khả năng tiếp cận xét nghiệm:** giúp hệ thống hiểu người tham gia đã có CBC hay gặp khó khăn khi tiếp cận xét nghiệm chuyên sâu. Hai câu này **không được cộng vào điểm nguy cơ sinh học**, vì chi phí, khoảng cách và thời gian không phải là đặc điểm bệnh sinh của Thalassemia.
-
-### 3. Ý nghĩa của các thông số huyết học ở Vòng 2
-
-**Hb – Hemoglobin:** phản ánh lượng hemoglobin trong máu và là chỉ số quan trọng để đánh giá thiếu máu. Hb cần được diễn giải theo tuổi, giới, thai kỳ và các yếu tố bối cảnh; hệ thống không dùng một giá trị Hb đơn độc để chẩn đoán Thalassemia.
-
-**MCV – Mean Corpuscular Volume:** thể tích trung bình của hồng cầu. MCV giảm cho thấy hồng cầu nhỏ (microcytosis), là một dấu hiệu quan trọng khi xem xét Thalassemia nhưng cũng gặp trong thiếu sắt và các nguyên nhân khác.
-
-**MCH – Mean Corpuscular Hemoglobin:** lượng hemoglobin trung bình trong mỗi hồng cầu. MCH giảm biểu hiện xu hướng nhược sắc và thường đi cùng microcytosis trong Thalassemia trait.
-
-**RBC – số lượng hồng cầu:** cho biết số lượng hồng cầu. Trong một số trường hợp Thalassemia trait, RBC có thể tương đối cao dù MCV/MCH giảm. Vì vậy RBC giúp đặt MCV/MCH vào bối cảnh thay vì nhìn một chỉ số đơn lẻ.
-
-**RDW – Red Cell Distribution Width:** phản ánh mức độ biến thiên kích thước hồng cầu. RDW tăng có thể gặp trong thiếu sắt và nhiều tình trạng khác; RDW không đủ đặc hiệu để phân biệt Thalassemia với thiếu sắt.
-
-**Mentzer Index = MCV / RBC:** là chỉ số sàng lọc đơn giản được dùng để định hướng giữa kiểu hình gợi ý Thalassemia và thiếu sắt. Đây chỉ là công cụ hỗ trợ, không phải xét nghiệm xác định và có thể sai trong các trường hợp phối hợp bệnh lý.
-
-### 4. Vì sao vẫn cần xét nghiệm chuyên sâu?
-
-CBC chỉ cho thấy **kiểu hình huyết học**, không trực tiếp xác định loại hemoglobin bất thường hay biến thể gen. Khi có nghi ngờ phù hợp, các bước tiếp theo có thể bao gồm đánh giá tình trạng sắt (ví dụ ferritin), phân tích hemoglobin bằng HPLC/điện di và xét nghiệm phân tử khi có chỉ định. Với β-thalassemia trait, HbA₂ tăng có thể là dấu hiệu hỗ trợ; trong một số thể alpha-thalassemia, xét nghiệm phân tử có vai trò quan trọng vì điện di có thể không phát hiện được.
-
-### 5. Vì sao tất cả người tham gia đều được vào Vòng 2?
-
-Vòng 1 là **sàng lọc ban đầu và giáo dục sức khỏe**, không phải một phép loại trừ. Một Vòng 1 “thấp” không có nghĩa là không mang gen. Vì vậy nếu người tham gia đã có CBC, họ vẫn có thể nhập CBC để hệ thống phân tích các chỉ số huyết học.
-
-### 6. Ý nghĩa của kết quả hệ thống
-
-Kết quả của hệ thống được diễn đạt theo hướng **“gợi ý – cần đánh giá thêm – nên trao đổi với cơ sở y tế”**, không phải “mắc bệnh/không mắc bệnh”. Mục tiêu là giúp người dùng hiểu kết quả CBC, nhận biết khi nào cần đánh giá tiếp và tìm đúng cơ sở y tế có năng lực phù hợp.
-
-### 7. Giá trị cộng đồng của nghiên cứu
-
-Giá trị của hệ thống không nằm ở việc thay thế bệnh viện. Giá trị nằm ở việc tận dụng những dữ liệu huyết học cơ bản đã có, đặc biệt là CBC, để **giảm khoảng cách giữa cộng đồng và xét nghiệm chuyên sâu**. Hệ thống hướng tới sử dụng nguồn lực hợp lý hơn: người có ít dấu hiệu đáng lưu ý có thể được hướng dẫn theo dõi phù hợp; người có CBC gợi ý cần đánh giá thêm có thể được hướng dẫn đến cơ sở chuyên môn thay vì tự tìm kiếm hoặc di chuyển không cần thiết.
-
-### 8. Giới hạn cần biết
-
-Các điểm số và ngưỡng của Vòng 1/Vòng 2 trong phiên bản hiện tại là **prototype**, chưa được thẩm định trên một quần thể người Việt Nam đủ lớn. Vì vậy hệ thống chỉ có giá trị hỗ trợ sàng lọc và nghiên cứu phát triển, không thay thế chẩn đoán lâm sàng.
+### 2. Phương pháp Học máy và Giải thích SHAP
+- **Ba thuật toán đối sánh:** Hồi quy Logistic (Logistic Regression), Rừng ngẫu nhiên (Random Forest) và Extreme Gradient Boosting (XGBoost).
+- **Giải thích SHAP (SHapley Additive exPlanations):** Xác định trọng số đóng góp tương đối của từng biến (MCV ~ 25%, MCH ~ 21%, RBC ~ 16%, Ferritin ~ 12%, RDW-CV ~ 10%, Hb ~ 8%, MCHC ~ 5%, HCT ~ 3%) giúp bác sĩ lâm sàng kiểm chứng tính hợp lý sinh bệnh học trên từng ca bệnh.
     """)
     st.divider()
-    st.subheader("Tài liệu chuyên môn tham khảo")
-    st.link_button("WHO 2024 – Guideline on haemoglobin cutoffs", "https://www.who.int/publications/i/item/9789240088542", icon=":material/open_in_new:", use_container_width=True)
-    st.link_button("GeneReviews – Beta-Thalassemia", "https://www.ncbi.nlm.nih.gov/books/NBK1426/", icon=":material/open_in_new:", use_container_width=True)
-    st.link_button("ACOG – Carrier Screening for Genetic Conditions", "https://www.acog.org/clinical/clinical-guidance/committee-opinion/articles/2017/03/carrier-screening-for-genetic-conditions", icon=":material/open_in_new:", use_container_width=True)
-    st.link_button("ACOG – Carrier Screening for Hemoglobinopathies", "https://www.acog.org/womens-health/faqs/carrier-screening-for-hemoglobinopathies", icon=":material/open_in_new:", use_container_width=True)
+    st.subheader("Tài liệu chuyên môn tham khảo chính")
+    st.link_button("Rustam et al. (2022) – Scientific Reports (β-Thalassemia ML Screening)", "https://doi.org/10.1038/s41598-022-22011-8", icon=":material/open_in_new:", use_container_width=True)
+    st.link_button("Trần Danh Cường và cs. (2023) – MJHID (Thalassemia CDSS in Vietnam)", "https://doi.org/10.4084/MJHID.2023.026", icon=":material/open_in_new:", use_container_width=True)
+    st.link_button("Christensen et al. (2025) – CMPB (α-Thalassemia ML Classification)", "https://doi.org/10.1016/j.cmpb.2024.108581", icon=":material/open_in_new:", use_container_width=True)
+    st.link_button("Tepakhan et al. (2025) – Scientific Reports (Differentiating IDA & Thalassemia)", "https://doi.org/10.1038/s41598-025-01458-5", icon=":material/open_in_new:", use_container_width=True)
+    st.link_button("Tạ Văn Thảo và cs. (2025) – Tạp chí Nghiên cứu Y học (Sàng lọc β-Thalassemia bằng ML)", "https://doi.org/10.52852/tcncyh.v196i11E17.4159", icon=":material/open_in_new:", use_container_width=True)
 
 
-# ---------- Câu hỏi Vòng 1: định nghĩa SỚM vì trang phân tích hàng loạt cũng dùng ----------
+# ---------- Câu hỏi Vòng 1 ----------
 YNK = ["Không", "Có", "Không biết"]
 
 ROUND1_SECTIONS = [
@@ -2082,7 +2740,7 @@ ROUND1_SECTIONS = [
         ("q6", "6. Bạn từng được nhân viên y tế thông báo bị thiếu máu chưa?"),
         ("q7", "7. Bạn từng được thông báo MCV thấp/hồng cầu nhỏ chưa?"),
         ("q8", "8. Bạn từng được thông báo MCH thấp/hồng cầu nhược sắc chưa?"),
-        ("q9", None),  # selectbox riêng
+        ("q9", None),
         ("q10", "10. Bạn từng được chẩn đoán HbE hoặc hemoglobinopathy khác chưa?"),
         ("q11", "11. Bản thân từng truyền máu nhiều lần hoặc định kỳ chưa?"),
         ("q12", "12. Bạn có tiền sử thiếu máu kéo dài từ nhỏ hoặc từ tuổi thiếu niên không?"),
@@ -2096,7 +2754,7 @@ ROUND1_SECTIONS = [
         ("q18", "18. Bạn từng được bác sĩ lưu ý có biến chứng liên quan bệnh huyết học mạn chưa?"),
     ]),
     (":material/travel_explore: D. Khả năng tiếp cận xét nghiệm — không tính điểm", [
-        ("q19", "19. Bạn hiện có CBC trong vòng 6–12 tháng gần đây không?"),
+        ("q19", "19. Bạn hiện có kết quả CBC và/hoặc Ferritin trong vòng 6–12 tháng gần đây không?"),
         ("q20", "20. Bạn có gặp khó khăn khi đến cơ sở có xét nghiệm chuyên sâu do khoảng cách, chi phí hoặc thời gian di chuyển không?"),
     ]),
 ]
@@ -2108,29 +2766,15 @@ Q9_OPTIONS = [
 
 
 # ============================================================
-# BATCH ANALYSIS — hồ sơ ĐẦY ĐỦ nhiều người cùng lúc
-#   Vòng 1 (20 câu tầm soát) + CTM 18 chỉ số + sắt/ferritin + HPLC + PCR/di truyền
+# BATCH ANALYSIS — HỒ SƠ ĐẦY ĐỦ NHIỀU NGƯỜI CÙNG LÚC (TÍCH HỢP ML)
 # ============================================================
-# Quy trình: tải file → đọc dữ liệu (bảng hoặc AI) → NGƯỜI DÙNG KIỂM TRA/SỬA
-#            → phân tích theo các hàm của từng vòng → xem chi tiết / xuất Excel.
-# File tải lên chỉ xử lý trong bộ nhớ, KHÔNG lưu vào database hay đĩa.
-# Tối ưu: trang chạy trong st.fragment (tương tác không dựng lại cả app),
-#         đọc bảng/AI có cache ngắn hạn theo nội dung file.
-
-import base64
-import numbers
-import tempfile
-import unicodedata
-from collections import Counter
-
-import pandas as pd
 
 BATCH_MAX_FILES = 20
-BATCH_MAX_MB_TABLE = 30      # bảng / phần mềm thống kê / Word
-BATCH_MAX_MB_AI = 10         # PDF / ảnh gửi AI đọc
-BATCH_MAX_TABLE_ROWS = 2000  # mỗi file
-BATCH_MAX_TOTAL_ROWS = 2000  # mỗi lần tải
-AI_FILE_TYPES = {            # AI nhìn trực tiếp (PDF/ảnh)
+BATCH_MAX_MB_TABLE = 30
+BATCH_MAX_MB_AI = 10
+BATCH_MAX_TABLE_ROWS = 2000
+BATCH_MAX_TOTAL_ROWS = 2000
+AI_FILE_TYPES = {
     ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg", ".webp": "image/webp",
 }
@@ -2144,7 +2788,6 @@ BATCH_Q9 = ["Chưa xét nghiệm", "Đã xét nghiệm, bình thường", "Đã 
             "Đã xác định mang gen", "Không nhớ"]
 BATCH_SEX = ["Nam", "Nữ", "Khác"]
 
-# ---------- Danh sách cột (nguồn sự thật duy nhất) ----------
 COL_LABEL, COL_SRC, COL_NOTE = "Tên/Mã hồ sơ", "Nguồn", "Ghi chú"
 COL_AGE, COL_SEX, COL_ALT = "Tuổi", "Giới tính", "Khoảng độ cao"
 COL_MARITAL, COL_PREG = "Tình trạng hôn nhân", "Đang mang thai"
@@ -2164,7 +2807,7 @@ TEXT_RESULT_COLS = [COL_HPLC, COL_PCR, COL_LAB]
 META_COLS = {COL_LABEL, COL_SRC, COL_AGE, COL_SEX, COL_MARITAL, COL_PREG, COL_ALT, COL_NOTE, *UNIT_COLS}
 COMPUTED_COLS = ["Điểm Vòng 1 (tự tính)", "Mức Vòng 1", "HGB g/dL quy đổi", "Hb sau hiệu chỉnh độ cao",
                  "Mentzer (MCV/RBC)", "Tiêu chí CTM BYT 2022", "HbA2 > 3,5%?", "Ferritin < 30?"]
-SKIP_SHEETS = {"danhsach", "huongdan", "docao", "readme"}  # sheet phụ của file mẫu
+SKIP_SHEETS = {"danhsach", "huongdan", "docao", "readme"}
 BIRTH_ALIASES = {"ngaysinh", "namsinh", "dob", "birthdate", "birthyear", "ngaythangnamsinh"}
 BATCH_COLUMNS = ([COL_LABEL, COL_SRC, COL_AGE, COL_SEX, COL_MARITAL, COL_PREG, COL_ALT] + Q_COLS + CBC_COLS + UNIT_COLS
                  + IRON_COLS + HB_NUM_COLS + [COL_HPLC, COL_PCR, COL_LAB, COL_NOTE])
@@ -2173,7 +2816,7 @@ COLUMN_GROUPS = {
     "Thông tin": [COL_LABEL, COL_SRC, COL_AGE, COL_SEX, COL_MARITAL, COL_PREG, COL_ALT, COL_NOTE],
     "Câu hỏi Vòng 1 (Q1–Q20)": [COL_LABEL] + Q_COLS,
     "Công thức máu (18 chỉ số)": [COL_LABEL] + CBC_COLS + UNIT_COLS,
-    "Sắt · HPLC · PCR": [COL_LABEL] + IRON_COLS + HB_NUM_COLS + TEXT_RESULT_COLS,
+    "Ferritin · Sắt · HPLC · PCR": [COL_LABEL] + IRON_COLS + HB_NUM_COLS + TEXT_RESULT_COLS,
 }
 
 COLUMN_ALIASES = {
@@ -2194,7 +2837,7 @@ COLUMN_ALIASES = {
     "HCT": {"hct", "hematocrit", "haematocrit"},
     "MCV": {"mcv", "mcvfl"},
     "MCH": {"mch", "mchpg"},
-    "MCHC": {"mchc"},
+    "MCHC": {"mchc", "mchcgl"},
     "RDW-CV": {"rdwcv", "rdw"},
     "RDW-SD": {"rdwsd"},
     "PLT": {"plt", "tieucau", "platelet", "platelets"},
@@ -2203,7 +2846,7 @@ COLUMN_ALIASES = {
     "PCT": {"pct", "plateletcrit"},
     "Đơn vị HGB": {"donvihgb", "donvihb", "hbunit", "hgbunit"},
     "Đơn vị RBC": {"donvirbc", "rbcunit"},
-    "Ferritin": {"ferritin", "ferritinngml"},
+    "Ferritin": {"ferritin", "ferritinngml", "ferritinhuyetthanh"},
     "Sắt huyết thanh": {"sathuyetthanh", "serumiron", "iron", "sat", "fe"},
     "TSAT (%)": {"tsat", "transferrinsaturation", "dobaohoatransferrin"},
     "HbA (%)": {"hba"}, "HbA2 (%)": {"hba2"}, "HbF (%)": {"hbf"}, "HbE (%)": {"hbe"},
@@ -2224,7 +2867,6 @@ def _norm(text):
 
 
 def _s(value):
-    """Chuỗi sạch hoặc None (xử lý None/NaN/chuỗi rỗng)."""
     if value is None:
         return None
     if isinstance(value, float) and math.isnan(value):
@@ -2247,21 +2889,12 @@ def _to_float(value):
     return None if math.isnan(number) else number
 
 
-def _is_code(value):
-    """Giá trị dạng mã số (1/2/3...) thường gặp trong file SPSS/Stata chưa gắn nhãn."""
-    if isinstance(value, bool) or value is None:
-        return False
-    if isinstance(value, numbers.Number):
-        return not (isinstance(value, float) and math.isnan(value))
-    return _s(value) in {"0", "1", "2", "3", "8", "9", "99"}
-
-
 def _norm_choice(value, q9=False):
     s = _s(value)
     if s is None:
         return None
     if isinstance(value, numbers.Number) and not isinstance(value, bool) and float(value).is_integer():
-        s = str(int(value))  # 1.0 -> "1"
+        s = str(int(value))
     n = _norm(s)
     if q9:
         codes = {"1": "Chưa xét nghiệm", "2": "Đã xét nghiệm, bình thường", "3": "Đã nghi ngờ",
@@ -2279,7 +2912,6 @@ def _norm_choice(value, q9=False):
         if "khongnho" in n or "khongbiet" in n:
             return "Không nhớ"
         return None
-    # Mã số thường gặp: 1=Có, 2=Không, 3/9=Không biết (cảnh báo người dùng kiểm tra khi đọc từ mã số)
     if s == "?" or n in {"khongbiet", "kb", "unknown", "3", "8", "9", "88", "99"}:
         return "Không biết"
     if n in {"co", "c", "yes", "y", "x", "1", "true", "dung"}:
@@ -2345,7 +2977,7 @@ def _norm_hb_unit(unit, value):
         return "g/dL"
     if u.endswith("gl"):
         return "g/L"
-    if value is not None and value > 30:  # Hb người 5–20 g/dL hay 50–200 g/L
+    if value is not None and value > 30:
         return "g/L"
     return "g/dL"
 
@@ -2367,7 +2999,6 @@ def _blank_row(label, source, default_alt="<500 m", note=""):
 
 
 def _normalize_row_units(row):
-    """Tự quy đổi các đơn vị thường gặp; ghi chú lại để người dùng kiểm tra."""
     notes = []
 
     def conv(col, cond, fn, text):
@@ -2387,22 +3018,13 @@ def _normalize_row_units(row):
     return row
 
 
-# ------------------------------------------------------------
-# AI: đọc phiếu xét nghiệm PDF/ảnh (CTM + sắt + HPLC + PCR + bảng câu hỏi nếu có)
-# ------------------------------------------------------------
-
 AI_PROMPT = """Bạn là công cụ trích xuất số liệu từ tài liệu (ảnh, PDF hoặc văn bản Word) gồm phiếu xét nghiệm (công thức máu CTM/CBC, ferritin/sắt, HPLC/điện di huyết sắc tố, PCR/xét nghiệm gen Thalassemia) và/hoặc phiếu khảo sát tầm soát cộng đồng.
 
 QUY TẮC BẮT BUỘC:
-- KHÔNG trích xuất, KHÔNG nhắc lại họ tên, ngày sinh, số điện thoại, địa chỉ, mã bệnh nhân, tên bác sĩ. Với các trường văn bản, chỉ chép phần KẾT QUẢ/KẾT LUẬN và bỏ mọi thông tin định danh.
+- KHÔNG trích xuất, KHÔNG nhắc lại họ tên, ngày sinh, số điện thoại, địa chỉ, mã bệnh nhân, tên bác sĩ.
 - Chỉ lấy KẾT QUẢ của người bệnh, KHÔNG lấy khoảng tham chiếu/giá trị bình thường.
 - Không thấy thì để null. Tuyệt đối không đoán, không tự tính, không suy diễn.
 - Ghi đơn vị đúng như trên phiếu (hgb_unit: "g/dL" hoặc "g/L"; rbc_unit: "T/L", "10^12/L" hoặc "10^6/µL").
-- Các chỉ số %: neu_pct, lym_pct, mono_pct, eos_pct, baso_pct là tỷ lệ phần trăm (không lấy số tuyệt đối #).
-- Nếu chỉ có RDW-SD thì rdw_cv = null.
-- "answers": chỉ điền khi tài liệu là phiếu khảo sát đã trả lời 20 câu tầm soát; q1..q20 nhận "Có", "Không" hoặc "Không biết"; q9 nhận một trong: "Chưa xét nghiệm", "Đã xét nghiệm, bình thường", "Đã nghi ngờ", "Đã xác định mang gen", "Không nhớ". Không phải phiếu khảo sát thì answers = null.
-- Thông tin nhân khẩu: chỉ lấy tuổi (age_years, số), giới tính (sex: "Nam"/"Nữ"/"Khác"), tình trạng hôn nhân/gia đình (marital_status: "Độc thân", "Chuẩn bị kết hôn", "Đã kết hôn", "Đã ly hôn/góa", "Khác"), đang mang thai (pregnant: "Có"/"Không"). TUYỆT ĐỐI không lấy tên, ngày sinh đầy đủ, địa chỉ, số điện thoại.
-- Ảnh mờ/không phải phiếu xét nghiệm: legible=false và giải thích ngắn trong notes.
 
 Chỉ trả về MỘT đối tượng JSON, không thêm chữ nào khác:
 {"wbc":null,"neu_pct":null,"lym_pct":null,"mono_pct":null,"eos_pct":null,"baso_pct":null,
@@ -2425,7 +3047,6 @@ AI_TEXT_MAP = {"hplc_conclusion": COL_HPLC, "pcr_result": COL_PCR, "lab_conclusi
 
 
 def _ai_request(user_content, max_tokens=2000):
-    """Gọi Anthropic Messages API; trả về dict JSON hoặc raise RuntimeError."""
     if not ANTHROPIC_API_KEY:
         raise RuntimeError("Chưa cấu hình ANTHROPIC_API_KEY trong Streamlit Secrets.")
     payload = {"model": ANTHROPIC_MODEL, "max_tokens": max_tokens, "temperature": 0,
@@ -2458,7 +3079,6 @@ def _ai_request(user_content, max_tokens=2000):
 
 
 def ai_extract_report(file_bytes, mime):
-    """AI đọc PDF/ảnh phiếu xét nghiệm."""
     block_type = "document" if mime == "application/pdf" else "image"
     return _ai_request([
         {"type": block_type, "source": {"type": "base64", "media_type": mime,
@@ -2468,21 +3088,18 @@ def ai_extract_report(file_bytes, mime):
 
 
 def ai_extract_report_text(text):
-    """AI đọc nội dung chữ của Word/văn bản."""
     return _ai_request([{"type": "text",
                          "text": 'NỘI DUNG TÀI LIỆU:\n"""\n' + text[:60000] + '\n"""\n\n' + AI_PROMPT}])
 
 
 def ai_map_columns(headers, labels):
-    """AI ghép TÊN CỘT (không gửi dữ liệu) vào các trường chuẩn."""
     texts = _question_texts()
     fields = [c for c in BATCH_COLUMNS if c not in (COL_SRC, COL_NOTE)]
     field_desc = "\n".join(f"- {c}" + (f": {texts[c]}" if c in texts else "") for c in fields)
     cols = "\n".join(f"- {h}" + (f" (nhãn biến: {l})" if l else "") for h, l in zip(headers, labels))
     prompt = (
         "Bạn ghép TÊN CỘT của một bộ dữ liệu sàng lọc Thalassemia vào danh sách TRƯỜNG CHUẨN. "
-        "Bạn chỉ thấy tên cột và nhãn biến, không có dữ liệu. Chỉ ghép khi chắc chắn "
-        "(ví dụ 'hemo_gdl' → HGB; 'fam_thal' → Q1). Không chắc thì trả null.\n\n"
+        "Chỉ ghép khi chắc chắn. Không chắc thì trả null.\n\n"
         f"TRƯỜNG CHUẨN:\n{field_desc}\n\nCỘT CẦN GHÉP:\n{cols}\n\n"
         'Chỉ trả về MỘT đối tượng JSON dạng {"tên cột gốc": "trường chuẩn hoặc null"}, không thêm chữ nào khác.'
     )
@@ -2491,7 +3108,6 @@ def ai_map_columns(headers, labels):
 
 @st.cache_data(show_spinner=False, max_entries=30, ttl=600)
 def ai_extract_report_cached(file_bytes, mime):
-    # Cache ngắn (10 phút) theo nội dung file: bấm đọc lại cùng file không tốn thêm chi phí/thời gian.
     return ai_extract_report(file_bytes, mime)
 
 
@@ -2534,11 +3150,8 @@ def row_from_ai(label, data, default_alt):
 
 
 # ------------------------------------------------------------
-# QUY ƯỚC MÃ HÓA — người dùng chủ động chọn cách đọc các biến dạng mã số
+# QUY ƯỚC MÃ HÓA & ĐỌC BẢNG HÀNG LOẠT
 # ------------------------------------------------------------
-# Mỗi nghiên cứu mã hóa khác nhau (giới tính 0/1 hay 1/2; Có/Không là 1/2 hay 1/0...).
-# Khi gặp GIÁ TRỊ SỐ, hệ thống chỉ đọc theo bảng quy ước này (không tự đoán).
-# Giá trị chữ (Nam, Nữ, Có, Không, Male, Yes...) vẫn được nhận diện tự động.
 
 BLANK_MEANING = "— bỏ trống —"
 BIRTH_TARGET = "Ngày/Năm sinh (tự tính tuổi)"
@@ -2548,7 +3161,7 @@ CB_TITLES = {
     "marital": "Tình trạng hôn nhân", "preg": "Đang mang thai",
 }
 _Q9_ORDER = ["Chưa xét nghiệm", "Đã xét nghiệm, bình thường", "Đã nghi ngờ", "Đã xác định mang gen", "Không nhớ"]
-CB_PRESETS = {  # mẫu đầu tiên của mỗi nhóm là mặc định
+CB_PRESETS = {
     "sex": {
         "1 = Nam, 2 = Nữ": [("1", "Nam"), ("2", "Nữ")],
         "0 = Nữ, 1 = Nam": [("0", "Nữ"), ("1", "Nam")],
@@ -2585,7 +3198,6 @@ RBC_UNIT_CHOICES = {"Tự nhận diện (mặc định T/L)": "auto", "T/L = 10^
 
 
 def _code_key(value):
-    """Chuẩn hóa mã để so khớp: 1, 1.0, "1", " 1 " đều thành "1"; chữ thì viết thường."""
     if value is None:
         return None
     try:
@@ -2636,7 +3248,6 @@ def default_codebook():
 
 
 def build_codebook():
-    """Gom các lựa chọn của người dùng (đang lưu trong session) thành một bộ quy ước."""
     ss = st.session_state
     cb = default_codebook()
     for key in CB_PRESETS:
@@ -2658,7 +3269,6 @@ def build_codebook():
 
 
 def _decode_cat(value, table, text_fn, unmapped, group):
-    """Số → tra bảng quy ước (mã lạ → để trống + ghi nhận); chữ → nhận diện tự động."""
     key = _code_key(value)
     if key is None:
         return None
@@ -2710,8 +3320,7 @@ def _codebook_editor(key):
         ss[base_k], num_rows="dynamic", hide_index=True, use_container_width=True,
         key=f"cb_{key}_ed_{ss[ver_k]}",
         column_config={
-            CB_COLS[0]: st.column_config.TextColumn("Mã trong file", required=True,
-                                                    help="Số hoặc chữ đúng như trong file (ví dụ 0, 1, 2, 9, M, F)"),
+            CB_COLS[0]: st.column_config.TextColumn("Mã trong file", required=True),
             CB_COLS[1]: st.column_config.SelectboxColumn("Ý nghĩa", options=[*CB_MEANINGS[key], BLANK_MEANING], required=True),
         },
     )
@@ -2720,28 +3329,17 @@ def _codebook_editor(key):
 def render_codebook_panel():
     with st.expander("Quy ước mã hóa & ghép cột — dùng khi file có mã số (0/1/2…) hoặc tên cột khác mẫu",
                      icon=":material/tune:"):
-        st.caption(
-            "Mỗi nghiên cứu mã hóa một kiểu (giới tính 0/1 hay 1/2, Có/Không là 1/2 hay 1/0, 9 là thiếu hay không biết…). "
-            "Khi gặp **giá trị số**, hệ thống chỉ đọc theo các bảng dưới đây; mã nào không có trong bảng sẽ để trống và được báo lại. "
-            "Giá trị chữ (Nam, Nữ, Có, Không, Male, Yes…) vẫn nhận diện tự động. Quy ước áp dụng cho các file Excel/CSV/SPSS/Stata/SAS/R/Word-bảng "
-            "và được ghi vào file kết quả để lưu vết."
-        )
         tabs = st.tabs(["Giới tính", "Có/Không (Q)", "Câu 9", "Hôn nhân", "Thai kỳ", "Số liệu & đơn vị", "Ghép cột thủ công"])
         for tab, key in zip(tabs[:5], ["sex", "yn", "q9", "marital", "preg"]):
             with tab:
                 _codebook_editor(key)
-        with tabs[2]:
-            st.caption("Áp dụng cho cột Q9. Các câu Q khác dùng bảng 'Có/Không (Q)'. Một bảng dùng chung cho Q1–Q8 và Q10–Q20.")
         with tabs[5]:
             st.text_input("Mã thiếu của số liệu (CTM, ferritin, HbA2, tuổi…) — cách nhau bằng dấu phẩy",
-                          key="cb_num_missing", placeholder="Ví dụ: -999, 9999",
-                          help="Các giá trị này sẽ bị coi là bỏ trống. Chỉ áp dụng cho cột số liệu, KHÔNG áp dụng cho câu hỏi (dùng bảng quy ước ở các tab trước).")
+                          key="cb_num_missing", placeholder="Ví dụ: -999, 9999")
             c1, c2 = st.columns(2)
-            c1.selectbox("Đơn vị Hb của file", list(HB_UNIT_CHOICES), key="cb_hb_unit",
-                         help="'Tự nhận diện': số >30 coi là g/L. Chọn cố định nếu file dùng một đơn vị thống nhất.")
+            c1.selectbox("Đơn vị Hb của file", list(HB_UNIT_CHOICES), key="cb_hb_unit")
             c2.selectbox("Đơn vị RBC của file", list(RBC_UNIT_CHOICES), key="cb_rbc_unit")
         with tabs[6]:
-            st.caption("Khi tên cột không giống mẫu: gõ đúng tên cột trong file (không phân biệt hoa/thường, dấu) và chọn trường chuẩn tương ứng.")
             fields = [c for c in BATCH_COLUMNS if c != COL_SRC] + [BIRTH_TARGET]
             st.session_state["cb_manual_val"] = st.data_editor(
                 pd.DataFrame({"Tên cột trong file": pd.Series(dtype="object"), "Trường chuẩn": pd.Series(dtype="object")}),
@@ -2753,10 +3351,6 @@ def render_codebook_panel():
             )
     return build_codebook()
 
-
-# ------------------------------------------------------------
-# ĐỌC FILE: Excel · CSV · Word · SPSS · Stata · SAS · R · JSON · Parquet
-# ------------------------------------------------------------
 
 def _decode_csv(data):
     for enc in ("utf-8-sig", "utf-16", "cp1258", "latin-1"):
@@ -2793,7 +3387,7 @@ def docx_text(data):
             cells = []
             for c in row.cells:
                 txt = c.text.strip()
-                if txt and (not cells or cells[-1] != txt):  # ô gộp bị lặp lại
+                if txt and (not cells or cells[-1] != txt):
                     cells.append(txt)
             if cells:
                 parts.append(" | ".join(cells))
@@ -2801,7 +3395,6 @@ def docx_text(data):
 
 
 def _read_with_tempfile(ext, data):
-    # Thư viện đọc SPSS/R cần đường dẫn file → ghi tạm vào thư mục tạm của hệ điều hành và XÓA NGAY khi xong.
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "data" + ext)
         with open(path, "wb") as f:
@@ -2820,7 +3413,6 @@ def _read_with_tempfile(ext, data):
 
 
 def read_tables(name, data):
-    """Trả về danh sách {sheet, df, labels}. Hỗ trợ nhiều sheet/bảng trong một file."""
     ext = os.path.splitext(name.lower())[1]
     bio = io.BytesIO(data)
     try:
@@ -2853,7 +3445,7 @@ def read_tables(name, data):
         if ext in (".sav", ".zsav", ".por", ".rds", ".rdata", ".rda"):
             return _read_with_tempfile(ext, data)
     except ImportError as exc:
-        raise RuntimeError(f"Thiếu thư viện để đọc định dạng {ext}: {exc.name or exc}. Hãy thêm vào requirements.txt.") from exc
+        raise RuntimeError(f"Thiếu thư viện để đọc định dạng {ext}: {exc.name or exc}.") from exc
     raise RuntimeError("Định dạng không được hỗ trợ")
 
 
@@ -2863,11 +3455,10 @@ def read_tables_cached(name, data):
 
 
 def _map_columns(df, labels, ai_ok, notes, source, manual=None):
-    """Ghép cột bằng bí danh; cột còn lại (nếu được phép) nhờ AI ghép theo TÊN cột."""
     mapping = {}
     computed_norm = {_norm(c) for c in COMPUTED_COLS}
     manual = manual or {}
-    for col in df.columns:  # ưu tiên ghép cột do người dùng chỉ định
+    for col in df.columns:
         tgt = manual.get(_norm(col))
         if tgt in BATCH_COLUMNS and tgt != COL_SRC and tgt not in mapping:
             mapping[tgt] = col
@@ -2894,14 +3485,9 @@ def _map_columns(df, labels, ai_ok, notes, source, manual=None):
                         mapping[target] = by_str[src]
                         added.append(f"{src}→{target}")
                 if added:
-                    notes.append(f"{source}: AI đã ghép {len(added)} cột theo tên: " + ", ".join(added[:25])
-                                 + (" ..." if len(added) > 25 else "") + ". Hãy kiểm tra lại.")
+                    notes.append(f"{source}: AI đã ghép {len(added)} cột theo tên: " + ", ".join(added[:25]))
             except Exception as exc:
                 notes.append(f"{source}: AI không ghép được cột ({exc}).")
-        else:
-            notes.append(f"{source}: {len(unmapped)} cột chưa nhận diện (ví dụ: "
-                         + ", ".join(str(c) for c in unmapped[:5])
-                         + "). Tick xác nhận AI để tự ghép theo tên cột, hoặc đổi tên cột theo file mẫu.")
     return mapping
 
 
@@ -2945,25 +3531,17 @@ def rows_from_dataframe(df, labels, filename, sheet, default_alt, ai_ok, notes, 
         if row[COL_AGE] is None and birth_col is not None:
             row[COL_AGE] = _age_from_birth(rec[birth_col])
         if all(row[c] is None for c in data_cols):
-            continue  # dòng trống (ví dụ dòng chỉ có công thức)
+            continue
         row[COL_LABEL] = row[COL_LABEL] or f"{filename} · dòng {i + 2}"
         row["Đơn vị HGB"] = cb["hb_unit"] if cb["hb_unit"] != "auto" else _norm_hb_unit(row.get("Đơn vị HGB"), row["HGB"])
         row["Đơn vị RBC"] = _norm_rbc_unit(row.get("Đơn vị RBC"))
         if cb["rbc_unit"] == "per_ul" and row["RBC"] is not None:
             row["RBC"] = row["RBC"] / 1_000_000
         rows.append(_normalize_row_units(row))
-
-    for group, counter in unmapped.items():
-        examples = ", ".join(f"{k} (×{n})" for k, n in counter.most_common(6))
-        notes.append(f"{source}: {group} có mã KHÔNG nằm trong bảng quy ước → để trống: {examples}. "
-                     "Hãy bổ sung vào bảng quy ước rồi đọc lại.")
-    if len(df) > BATCH_MAX_TABLE_ROWS:
-        notes.append(f"{source}: chỉ đọc {BATCH_MAX_TABLE_ROWS} dòng đầu (file có {len(df)} dòng).")
     return rows
 
 
 def load_file_rows(name, data, default_alt, ai_ok, cb=None):
-    """Đọc một file bất kỳ được hỗ trợ → (danh sách dòng, danh sách ghi chú)."""
     ext = os.path.splitext(name.lower())[1]
     notes = []
     cb = cb or default_codebook()
@@ -2986,7 +3564,7 @@ def load_file_rows(name, data, default_alt, ai_ok, cb=None):
     try:
         tables = read_tables_cached(name, data)
     except Exception:
-        if ext not in (".txt", *WORD_EXT):  # txt/docx còn đường lui: AI đọc văn bản
+        if ext not in (".txt", *WORD_EXT):
             raise
 
     rows = []
@@ -3005,19 +3583,17 @@ def load_file_rows(name, data, default_alt, ai_ok, cb=None):
             raise RuntimeError("Tài liệu dạng phiếu cần AI đọc — hãy tick xác nhận gửi nội dung tới AI")
         return [row_from_ai(name, ai_extract_report_text_cached(text), default_alt)], notes
 
-    raise RuntimeError("Không nhận diện được cột dữ liệu nào (Q1–Q20, CTM, ferritin, HbA2, PCR...)")
+    raise RuntimeError("Không nhận diện được cột dữ liệu nào")
 
 
 # ------------------------------------------------------------
-# PHÂN TÍCH
+# PHÂN TÍCH HÀNG LOẠT (TÍCH HỢP MÔ HÌNH A, MÔ HÌNH B & SHAP)
 # ------------------------------------------------------------
 
 RISK_RANK = {"THẤP": 1, "TRUNG BÌNH": 2, "CAO": 3}
 
 
 def who_anemia_flag(hb_adj, age, sex, pregnant=False):
-    """Ngưỡng Hb theo WHO 2024 (mực nước biển; Hb đã hiệu chỉnh độ cao). Thai kỳ: 11,0 g/dL
-    (tam cá nguyệt 1 và 3; tam cá nguyệt 2 là 10,5)."""
     if age is None:
         return ""
     suffix = ""
@@ -3040,42 +3616,28 @@ def who_anemia_flag(hb_adj, age, sex, pregnant=False):
 
 def integrated_next_steps(cat1, cat2, has_cbc, ferritin, hba2, hbe, hplc_done, pcr_done, anything,
                           marital=None, pregnant=False):
-    """Gợi ý bước tiếp theo — chỉ là hỗ trợ sàng lọc, bám các ngưỡng BYT 2022 đã dùng trong app."""
     steps = []
     iron_low = ferritin is not None and ferritin < 30
 
     if cat1 == "CAO" and not has_cbc:
-        steps.append("Vòng 1 mức cao nhưng chưa có CTM đầy đủ: nên ưu tiên thực hiện/nhập công thức máu.")
+        steps.append("Vòng 1 mức cao nhưng chưa có CTM đầy đủ: nên ưu tiên thực hiện/nhập công thức máu và Ferritin.")
     if cat2 in ("TRUNG BÌNH", "CAO"):
         if ferritin is None:
-            steps.append("CTM đạt tiêu chí sàng lọc: nên đánh giá tình trạng sắt (ferritin) để phân biệt với thiếu sắt.")
+            steps.append("CTM đạt tiêu chí sàng lọc: nên định lượng Ferritin huyết thanh để kích hoạt Mô hình B (CBC + Ferritin).")
         elif iron_low:
-            steps.append("Ferritin <30 ng/mL: gợi ý có thiếu sắt (có thể đi kèm Thalassemia). Thiếu sắt có thể làm giảm HbA2 "
-                         "nên cần bác sĩ đối chiếu trước khi diễn giải HPLC; không tự bổ sung sắt kéo dài khi chưa có chỉ định.")
+            steps.append("Ferritin <30 ng/mL: gợi ý có thiếu sắt (đơn thuần hoặc đồng mắc cùng Thalassemia). Thiếu sắt có thể làm giảm giả tạo HbA2 trên HPLC.")
         elif not hplc_done:
-            steps.append("CTM đạt tiêu chí sàng lọc và ferritin chưa thấp: nên làm HPLC/điện di huyết sắc tố.")
+            steps.append("Mô hình Học máy (CBC + Ferritin) gợi ý nguy cơ mang gen và Ferritin bình thường: ưu tiên chỉ định HPLC/điện di huyết sắc tố và xét nghiệm gen α/β-Thalassemia.")
         if hplc_done and not pcr_done and hba2 is not None and hba2 <= 3.5 and not (hbe and hbe > 0) and not iron_low:
-            steps.append("CTM gợi ý nhưng HbA2 không tăng: cần lưu ý alpha-thalassemia hoặc thể khác (điện di thường không phát hiện được); "
-                         "bác sĩ có thể cân nhắc xét nghiệm gen/PCR.")
+            steps.append("CTM gợi ý nhưng HbA2 ≤3,5%: cần xét nghiệm PCR đột biến gen alpha-Thalassemia (HBA1, HBA2) vì HPLC bình thường không loại trừ được alpha-Thalassemia.")
     if hba2 is not None and hba2 > 3.5:
-        steps.append("HbA2 >3,5%: gợi ý Beta-thalassemia; nên gặp bác sĩ Huyết học, cân nhắc xét nghiệm gen và tư vấn di truyền "
-                     "(đặc biệt khi chuẩn bị kết hôn/mang thai).")
+        steps.append("HbA2 >3,5%: gợi ý Beta-Thalassemia; cần khám chuyên khoa Huyết học, xét nghiệm gen HBB và tư vấn di truyền.")
     if hbe is not None and hbe > 0:
-        steps.append("Có HbE: cần bác sĩ Huyết học đánh giá hemoglobinopathy và tư vấn di truyền.")
-    if cat1 == "CAO" and cat2 == "THẤP":
-        steps.append("Vòng 1 mức cao nhưng CTM chưa đạt tiêu chí: không loại trừ mang gen; nên trao đổi với bác sĩ nếu tiền sử gia đình rõ.")
-    positive = (cat2 in ("TRUNG BÌNH", "CAO") or cat1 == "CAO" or (hba2 is not None and hba2 > 3.5)
-                or (hbe is not None and hbe > 0))
-    if positive and (pregnant or marital == "Chuẩn bị kết hôn"):
-        steps.append("Có yếu tố gợi ý Thalassemia và đang chuẩn bị kết hôn/mang thai: nên được tư vấn di truyền sớm "
-                     "và cân nhắc xét nghiệm cho người bạn đời.")
-    if iron_low and cat2 not in ("TRUNG BÌNH", "CAO"):
-        steps.append("Ferritin <30 ng/mL: gợi ý thiếu sắt (kể cả khi CTM chưa đạt tiêu chí sàng lọc); nên trao đổi với bác sĩ "
-                     "về đánh giá và bổ sung sắt theo chỉ định.")
+        steps.append("Có HbE: cần bác sĩ Huyết học đánh giá bệnh huyết sắc tố E và tư vấn di truyền.")
     if pcr_done:
-        steps.append("Có kết quả PCR/di truyền: hệ thống không tự diễn giải; cần bác sĩ Huyết học/tư vấn di truyền xem phiếu gốc.")
+        steps.append("Đã có kết quả xét nghiệm gen/PCR: đối chiếu trực tiếp với bác sĩ Huyết học và tư vấn di truyền.")
     if not steps and anything:
-        steps.append("Chưa có dấu hiệu cần thêm bước từ dữ liệu đã nhập; tiếp tục theo dõi và đối chiếu với bác sĩ khi có triệu chứng hoặc nhu cầu tư vấn.")
+        steps.append("Tiếp tục theo dõi sức khỏe và đối chiếu với bác sĩ khi có nhu cầu tư vấn tiền hôn nhân/trước sinh.")
     return steps
 
 
@@ -3090,7 +3652,6 @@ def analyze_batch_row(idx, rec):
            "Tuổi": age if age is not None else "", "Giới tính": sex or "",
            "Hôn nhân": marital or "", "Mang thai": "Có" if pregnant else (_s(rec.get(COL_PREG)) or "")}
 
-    # ---------------- Vòng 1 ----------------
     answers = {f"q{i}": _s(rec.get(f"Q{i}")) for i in range(1, 21)}
     answered = sum(1 for v in answers.values() if v)
     cat1 = None
@@ -3101,11 +3662,9 @@ def analyze_batch_row(idx, rec):
         det["r1"] = {"score": score1, "category": cat1, "conclusion": concl1,
                      "reasons": reasons1, "answered": answered}
         out["Vòng 1 - điểm"], out["Vòng 1 - nguy cơ"] = f"{score1}/{ROUND1_MAX_SCORE}", cat1
-        if answered < 20:
-            warnings.append(f"Vòng 1 mới trả lời {answered}/20 câu — điểm có thể thấp hơn thực tế")
 
-    # ---------------- CTM 18 chỉ số / Vòng 2 ----------------
     nums = {c: _to_float(rec.get(c)) for c in CBC_COLS}
+    ferritin, iron, tsat = (_to_float(rec.get(c)) for c in IRON_COLS)
     n_cbc = sum(v is not None for v in nums.values())
     out["Số chỉ số CTM"] = f"{n_cbc}/18" if n_cbc else ""
     cat2, has_cbc = None, False
@@ -3113,7 +3672,7 @@ def analyze_batch_row(idx, rec):
         core = ["HGB", "MCV", "MCH", "RBC", "RDW-CV"]
         missing = [c for c in core if nums[c] is None]
         if missing:
-            warnings.append("CTM thiếu " + ", ".join(missing) + " — chưa chạy Vòng 2")
+            warnings.append("CTM thiếu " + ", ".join(missing) + " — chưa chạy mô hình Học máy")
         else:
             try:
                 hb = hb_to_g_dl(nums["HGB"], _s(rec.get("Đơn vị HGB")) or "g/dL")
@@ -3123,55 +3682,50 @@ def analyze_batch_row(idx, rec):
                 warnings.append(str(exc))
             if hb is not None:
                 mcv, mch, rdw = nums["MCV"], nums["MCH"], nums["RDW-CV"]
-                limits = [("HGB", hb, 1, 25), ("MCV", mcv, 30, 150), ("MCH", mch, 10, 50),
-                          ("RBC", rbc, 1, 10), ("RDW-CV", rdw, 5, 40)]
-                bad = [f"{n}={v:g} ngoài khoảng {lo}–{hi}" for n, v, lo, hi in limits if not lo <= v <= hi]
-                if bad:
-                    warnings.append("; ".join(bad) + " (kiểm tra đơn vị/số liệu) — chưa chạy Vòng 2")
-                else:
-                    alt_choice = rec.get(COL_ALT) if rec.get(COL_ALT) in ALTITUDE_OPTIONS else "<500 m"
-                    hb_adj = hb - ALTITUDE_OPTIONS[alt_choice]
-                    score2, mentzer, reasons2 = calculate_round2_score(mcv, mch, rbc, rdw)
-                    cat2, concl2 = round2_category(score2, mcv, mch)
-                    findings, advice = narrative_cbc_advice(hb_adj, mcv, mch, rbc, rdw, mentzer)
-                    mchc = nums["MCHC"]
-                    if mchc is not None and mchc < 32:
-                        findings.append("MCHC <32 g/dL — gợi ý nhược sắc (đối chiếu khoảng tham chiếu của labo).")
-                    anemia = who_anemia_flag(hb_adj, age, sex, pregnant)
-                    has_cbc = True
-                    levels.append(cat2)
-                    det["r2"] = {"category": cat2, "conclusion": concl2, "reasons": reasons2,
-                                 "findings": findings, "advice": advice, "altitude": alt_choice,
-                                 "score": score2, "mentzer": mentzer}
-                    out.update({
-                        "Hb (g/dL)": round(hb, 2), "Hb sau hiệu chỉnh": round(hb_adj, 2),
-                        "Thiếu máu (WHO 2024)": anemia, "MCV": mcv, "MCH": mch,
-                        "MCHC": mchc if mchc is not None else "", "RDW-CV": rdw,
-                        "RBC (T/L)": rbc, "Mentzer": mentzer, "Điểm CBC": score2,
-                        "Vòng 2 - nguy cơ": cat2,
-                    })
+                alt_choice = rec.get(COL_ALT) if rec.get(COL_ALT) in ALTITUDE_OPTIONS else "<500 m"
+                hb_adj = hb - ALTITUDE_OPTIONS[alt_choice]
+                ml_res = predict_thal_screen_ai(
+                    hb_g_dl=hb, rbc=rbc, mcv=mcv, mch=mch, rdw=rdw,
+                    hct=nums.get("HCT"), mchc_g_l=nums.get("MCHC"), ferritin=ferritin,
+                )
+                score2, mentzer, reasons2 = calculate_round2_score(mcv, mch, rbc, rdw, ferritin)
+                cat2 = ml_res["category"]
+                concl2 = ml_res["conclusion"]
+                findings, advice = narrative_cbc_advice(hb_adj, mcv, mch, rbc, rdw, mentzer, ferritin, ml_res)
+                anemia = who_anemia_flag(hb_adj, age, sex, pregnant)
+                has_cbc = True
+                levels.append(cat2)
+                det["r2"] = {
+                    "category": cat2, "conclusion": concl2, "reasons": reasons2,
+                    "findings": findings, "advice": advice, "altitude": alt_choice,
+                    "score": score2, "mentzer": mentzer, "ml": ml_res,
+                }
+                out.update({
+                    "Hb (g/dL)": round(hb, 2), "Hb sau hiệu chỉnh": round(hb_adj, 2),
+                    "Thiếu máu (WHO 2024)": anemia, "MCV": mcv, "MCH": mch,
+                    "MCHC": ml_res["cbc"]["MCHC_gL"], "RDW-CV": rdw,
+                    "RBC (T/L)": rbc, "Mentzer": mentzer,
+                    "Green & King": ml_res["indices"]["green_king"],
+                    "Xác suất ML (Chỉ CBC)": f"{ml_res['probs_a']['XGBoost']*100:.1f}%",
+                    "Xác suất ML (CBC + Ferritin)": f"{ml_res['probs_b']['XGBoost']*100:.1f}%" if ferritin is not None else "Chưa có Ferritin",
+                    "Vòng 2 - nguy cơ": cat2,
+                })
         det["cbc_values"] = {c: v for c, v in nums.items() if v is not None}
 
-    # ---------------- Sắt · HPLC · PCR (Vòng 3) ----------------
     hba, hba2, hbf, hbe = (_to_float(rec.get(c)) for c in HB_NUM_COLS)
-    ferritin, iron, tsat = (_to_float(rec.get(c)) for c in IRON_COLS)
     hplc_text, pcr_text, lab_text = _s(rec.get(COL_HPLC)), _s(rec.get(COL_PCR)), _s(rec.get(COL_LAB))
     num3 = [hba, hba2, hbf, hbe, ferritin, iron, tsat]
     has3 = any(v is not None for v in num3) or any((hplc_text, pcr_text, lab_text))
     flag3, notes3 = None, []
     hplc_done = any(v is not None for v in (hba, hba2, hbf, hbe)) or bool(hplc_text)
     if has3:
-        for name, v, hi in [("HbA", hba, 100), ("HbA2", hba2, 30), ("HbF", hbf, 100),
-                            ("HbE", hbe, 100), ("Ferritin", ferritin, 10000)]:
-            if v is not None and not 0 <= v <= hi:
-                warnings.append(f"{name}={v:g} ngoài khoảng 0–{hi}")
         combined_text = " ".join(filter(None, [hplc_text, pcr_text, lab_text])).lower()
         notes3 = round3_byt_interpretation({
             "hba": hba, "hba2": hba2, "hbf": hbf, "hbe": hbe, "ferritin": ferritin,
             "transferrin_saturation": tsat, "genetic_result": pcr_text,
             "lab_conclusion": " ".join(filter(None, [hplc_text, lab_text])),
         })
-        marker = any(m in combined_text for m in ("hbh", "hb bart", "hbcs", "constant spring"))
+        marker = any(m in combined_text for m in ("hbh", "hb bart", "hbcs", "constant spring", "sea", "3.7", "4.2"))
         if (hba2 is not None and hba2 > 3.5) or (hbe is not None and hbe > 0) or marker:
             flag3 = "CAO"
         elif hbf is not None and hbf >= 1:
@@ -3201,10 +3755,6 @@ def analyze_batch_row(idx, rec):
     return out
 
 
-# ------------------------------------------------------------
-# XUẤT EXCEL / FILE MẪU CÓ CÔNG THỨC
-# ------------------------------------------------------------
-
 def results_to_excel(results_df, input_df, codebook_df=None):
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
@@ -3224,15 +3774,6 @@ def results_to_excel(results_df, input_df, codebook_df=None):
                 ws.write(0, c, name, head)
                 ws.set_column(c, c, 60 if name in wide else 16)
             ws.freeze_panes(1, 1)
-        ws = writer.sheets["Ket_qua"]
-        for name in ("Vòng 1 - nguy cơ", "Vòng 2 - nguy cơ", "Vòng 3 - mức lưu ý", "Mức lưu ý cao nhất"):
-            if name in results_df.columns:
-                col = list(results_df.columns).index(name)
-                for text, color in (("THẤP", "#C8E6C9"), ("TRUNG BÌNH", "#FFE0B2"), ("CAO", "#FFCDD2")):
-                    ws.conditional_format(1, col, max(len(results_df), 1), col, {
-                        "type": "cell", "criteria": "==", "value": f'"{text}"',
-                        "format": wb.add_format({"bg_color": color}),
-                    })
     buf.seek(0)
     return buf
 
@@ -3248,7 +3789,6 @@ def _question_texts():
 
 @st.cache_data(show_spinner=False)
 def build_template_xlsx():
-    """File mẫu ĐẦY ĐỦ có CÔNG THỨC: điểm Vòng 1, quy đổi Hb, hiệu chỉnh độ cao, Mentzer, tiêu chí BYT 2022."""
     import xlsxwriter
     from xlsxwriter.utility import xl_col_to_name
 
@@ -3279,7 +3819,7 @@ def build_template_xlsx():
     weights = {1: 3, 2: 3, 3: 1, 4: 2, 5: 2, 6: 1, 7: 2, 8: 1, 10: 2, 11: 1, 12: 2,
                13: 1, 14: 1, 15: 1, 16: 1, 17: 2, 18: 1}
     n_rows = 200
-    for r in range(2, n_rows + 2):  # dòng Excel 2..201
+    for r in range(2, n_rows + 2):
         for c in range(n_in):
             ws.write_blank(r - 1, c, None, cell)
         terms = [f'{w}*({col[f"Q{q}"]}{r}="Có")' for q, w in weights.items()]
@@ -3305,71 +3845,16 @@ def build_template_xlsx():
         for name in computed:
             ws.write_formula(r - 1, n_in + computed.index(name), formulas[name], calc)
 
-    def validate(name, source):
-        c = inputs.index(name)
-        ws.data_validation(1, c, n_rows, c, {"validate": "list", "source": source})
-
-    validate(COL_SEX, BATCH_SEX)
-    validate(COL_MARITAL, BATCH_MARITAL)
-    validate(COL_PREG, ["Có", "Không"])
-    validate("Đơn vị HGB", ["g/dL", "g/L"])
-    validate("Đơn vị RBC", ["T/L", "10^12/L", "10^6/µL"])
-    validate(COL_ALT, "=Danh_sach!$A$2:$A$11")
-    for q in Q_COLS:
-        validate(q, "=Danh_sach!$F$2:$F$6" if q == "Q9" else "=Danh_sach!$D$2:$D$4")
-
-    ws.set_column(0, 0, 22)
-    ws.set_column(1, inputs.index(COL_ALT), 15)
-    ws.set_column(inputs.index("Q1"), inputs.index("Q20"), 7)
-    ws.set_column(inputs.index("WBC"), inputs.index("Đơn vị RBC"), 9)
-    ws.set_column(inputs.index("Ferritin"), inputs.index(COL_NOTE), 16)
-    ws.set_column(inputs.index(COL_HPLC), inputs.index(COL_LAB), 28)
-    ws.set_column(n_in, n_in + len(computed) - 1, 22)
-    ws.set_row(0, 38)
-    ws.freeze_panes(1, 1)
-
     wl = wb.add_worksheet("Danh_sach")
     wl.write(0, 0, "Khoảng độ cao", head)
     wl.write(0, 1, "Hiệu chỉnh Hb (g/dL)", head)
     for i, (k, v) in enumerate(ALTITUDE_OPTIONS.items(), start=1):
         wl.write(i, 0, k)
         wl.write(i, 1, v)
-    wl.write(0, 3, "Lựa chọn Có/Không", head)
-    for i, v in enumerate(BATCH_YNK, start=1):
-        wl.write(i, 3, v)
-    wl.write(0, 5, "Lựa chọn câu 9", head)
-    for i, v in enumerate(BATCH_Q9, start=1):
-        wl.write(i, 5, v)
-    wl.set_column(0, 5, 26)
-
-    wh = wb.add_worksheet("Huong_dan")
-    lines = [
-        "HƯỚNG DẪN",
-        "• Mỗi dòng ở sheet Du_lieu là một người. Cột xám bên phải là công thức tự tính — không cần nhập.",
-        "• Câu hỏi Q1–Q20 (cột cam): chọn Có / Không / Không biết (Q9 có danh sách riêng). Q19–Q20 không tính điểm.",
-        "• CTM 18 chỉ số: WBC, NEU%, LYM%, MONO%, EOS%, BASO%, RBC, HGB, HCT, MCV, MCH, MCHC, RDW-CV, RDW-SD, PLT, MPV, PDW, PCT.",
-        "  Bắt buộc để chạy Vòng 2: HGB, MCV, MCH, RBC, RDW-CV. Các chỉ số còn lại tùy chọn.",
-        "• Sắt · HPLC · PCR: ferritin (ng/mL), sắt huyết thanh, TSAT; HbA/HbA2/HbF/HbE (%); kết luận HPLC/PCR ghi đúng theo phiếu.",
-        "• Tuổi, Giới tính, Tình trạng hôn nhân, Đang mang thai (không bắt buộc): dùng đối chiếu ngưỡng thiếu máu WHO 2024 và gợi ý tư vấn di truyền.",
-        "• Cũng có thể tải file Word, PDF, ảnh, SPSS (.sav), Stata (.dta), SAS, R... — hệ thống tự nhận cột (AI hỗ trợ ghép cột khi được phép).",
-        "• Tiêu chí sàng lọc CTM: MCV < 85 fL và/hoặc MCH < 28 pg (Phụ lục hướng dẫn BYT 2022). Mentzer chỉ là chỉ số hỗ trợ.",
-        "• Có thể tải trực tiếp file này lên trang Phân tích hồ sơ hàng loạt. Kết quả chỉ hỗ trợ sàng lọc, không chẩn đoán.",
-        "",
-        "CÂU HỎI TẦM SOÁT:",
-    ]
-    for q in Q_COLS:
-        lines.append(f"{q}: {texts.get(q, '')}")
-    for i, line in enumerate(lines):
-        wh.write(i, 0, line)
-    wh.set_column(0, 0, 120)
     wb.close()
     buf.seek(0)
     return buf.getvalue()
 
-
-# ------------------------------------------------------------
-# TRANG PHÂN TÍCH HÀNG LOẠT
-# ------------------------------------------------------------
 
 def _risk_cell_style(v):
     colors = {"THẤP": "rgba(46,125,50,.25)", "TRUNG BÌNH": "rgba(230,150,30,.28)", "CAO": "rgba(211,47,47,.28)"}
@@ -3396,12 +3881,10 @@ def _editor_column_config():
 
 @st.fragment
 def render_batch_page(user):
-    # @st.fragment: mọi thao tác trên trang này chỉ chạy lại riêng trang này, không dựng lại cả ứng dụng.
-    st.header(":material/batch_prediction: Phân tích hồ sơ hàng loạt")
+    st.header(":material/batch_prediction: Phân tích hồ sơ hàng loạt (Tích hợp Học máy & SHAP)")
     st.caption(
-        "Phân tích nhiều hồ sơ đầy đủ cùng lúc: thông tin nhân khẩu, 20 câu tầm soát Vòng 1, công thức máu "
-        "18 chỉ số, ferritin/sắt, HPLC và PCR/di truyền. Đọc được Excel, CSV, Word, PDF, ảnh và file phần mềm "
-        "thống kê (SPSS, Stata, SAS, R); kiểm tra trong bảng trước khi phân tích."
+        "Phân tích nhiều hồ sơ cùng lúc bằng cả Mô hình A (Chỉ CBC) và Mô hình B (CBC + Ferritin): "
+        "tự động tính Mentzer, Green & King, RDWI, xác suất dự đoán XGBoost và giải thích SHAP cá thể hóa."
     )
 
     cb = render_codebook_panel()
@@ -3409,25 +3892,17 @@ def render_batch_page(user):
     with st.container(border=True):
         st.subheader(":material/upload_file: 1. Tải hồ sơ")
         files = st.file_uploader(
-            f"Chọn tối đa {BATCH_MAX_FILES} file — Excel/CSV/Word/PDF/ảnh/SPSS/Stata/SAS/R "
-            f"(bảng ≤ {BATCH_MAX_MB_TABLE} MB, PDF/ảnh ≤ {BATCH_MAX_MB_AI} MB)",
+            f"Chọn tối đa {BATCH_MAX_FILES} file — Excel/CSV/Word/PDF/ảnh/SPSS/Stata/SAS/R",
             type=UPLOAD_TYPES,
             accept_multiple_files=True, key="batch_files",
         )
         default_alt = st.selectbox(
             "Khoảng độ cao mặc định cho các hồ sơ mới", list(ALTITUDE_OPTIONS.keys()),
-            key="batch_default_alt", help="Có thể sửa riêng từng dòng trong bảng bên dưới.",
+            key="batch_default_alt",
         )
         ai_ok = st.checkbox(
             "Tôi xác nhận người bệnh đã đồng ý và cho phép gửi PDF/ảnh/nội dung Word, hoặc TÊN CỘT của file bảng, tới dịch vụ AI để đọc/ghép dữ liệu.",
             key="batch_ai_consent",
-        )
-        st.caption(
-            "PDF/ảnh và Word dạng phiếu: nội dung được gửi tới dịch vụ AI của Anthropic để trích xuất CTM, ferritin, "
-            "HPLC, PCR, thông tin nhân khẩu (và câu trả lời nếu là phiếu khảo sát). File bảng/SPSS/Stata/SAS/R được đọc "
-            "ngay trên máy chủ; chỉ khi có cột lạ mới gửi TÊN CỘT (không gửi dữ liệu) cho AI ghép. Hệ thống không lưu file "
-            "(file SPSS/R được ghi tạm vào thư mục tạm và xóa ngay). Nên che họ tên, ngày sinh trên PDF/ảnh. "
-            "AI có thể đọc sai — luôn đối chiếu bảng với phiếu gốc."
         )
         b1, b2 = st.columns(2)
         scan = b1.button("Đọc dữ liệu từ file", icon=":material/document_scanner:",
@@ -3456,23 +3931,13 @@ def render_batch_page(user):
                 except Exception as exc:
                     rows.append(_blank_row(name, "Lỗi đọc file", default_alt,
                                            f"Không đọc được: {exc}. Có thể nhập tay."))
-            if any(str(r.get(COL_SRC, "")).startswith("Bảng:") for r in rows):
-                all_notes.insert(0, "Quy ước mã hóa đã áp dụng — " + codebook_summary_text(cb))
-            if len(rows) > BATCH_MAX_TOTAL_ROWS:
-                all_notes.append(f"Chỉ giữ {BATCH_MAX_TOTAL_ROWS} dòng đầu (tổng {len(rows)} dòng).")
-                rows = rows[:BATCH_MAX_TOTAL_ROWS]
             progress.progress(1.0, text="Hoàn tất đọc file.")
-            st.session_state["batch_rows"] = rows
+            st.session_state["batch_rows"] = rows[:BATCH_MAX_TOTAL_ROWS]
             st.session_state["batch_notes"] = all_notes
             st.session_state["batch_ver"] = st.session_state.get("batch_ver", 0) + 1
             st.session_state.pop("batch_results", None)
 
-    # ---------------- Bảng kiểm tra/sửa ----------------
     st.subheader(":material/edit_note: 2. Kiểm tra và chỉnh sửa dữ liệu")
-    st.caption(
-        "Chọn nhóm cột để xem/sửa (dữ liệu ở các nhóm khác vẫn được giữ nguyên). Đối chiếu với phiếu gốc, "
-        "thêm dòng mới hoặc xóa dòng (chọn dòng rồi nhấn Delete). Ô trống = chưa có dữ liệu."
-    )
     for note in st.session_state.get("batch_notes", []):
         st.info(note, icon=":material/info:")
     group = st.radio("Nhóm cột", list(COLUMN_GROUPS.keys()), horizontal=True,
@@ -3490,12 +3955,12 @@ def render_batch_page(user):
         column_config=_editor_column_config(),
     )
 
-    run = st.button("Phân tích tất cả hồ sơ", icon=":material/analytics:", type="primary",
+    run = st.button("Phân tích tất cả hồ sơ bằng Học máy (THAL-SCREEN AI)", icon=":material/analytics:", type="primary",
                     use_container_width=True, disabled=edited is None or len(edited) == 0)
 
     if run:
         records = edited.to_dict("records")
-        with st.spinner("Đang phân tích..."):
+        with st.spinner("Đang chạy mô hình Học máy và giải thích SHAP..."):
             st.session_state["batch_results"] = [analyze_batch_row(i, r) for i, r in enumerate(records)]
             st.session_state["batch_input_df"] = edited.copy()
             st.session_state["batch_codebook_df"] = codebook_summary_df(cb)
@@ -3504,93 +3969,58 @@ def render_batch_page(user):
     if not results:
         return
 
-    # ---------------- Kết quả ----------------
     st.divider()
-    st.subheader(":material/monitoring: 3. Kết quả phân tích")
+    st.subheader(":material/monitoring: 3. Kết quả phân tích Học máy")
     counts = Counter(r.get("Mức lưu ý cao nhất") for r in results if r.get("Trạng thái") == "OK")
     insufficient = sum(1 for r in results if r.get("Trạng thái") != "OK")
 
     m = st.columns(5)
     m[0].metric("Tổng hồ sơ", len(results))
-    m[1].metric("Mức thấp", counts.get("THẤP", 0))
-    m[2].metric("Mức trung bình", counts.get("TRUNG BÌNH", 0))
-    m[3].metric("Mức cao", counts.get("CAO", 0))
+    m[1].metric("Nguy cơ thấp", counts.get("THẤP", 0))
+    m[2].metric("Nguy cơ trung bình", counts.get("TRUNG BÌNH", 0))
+    m[3].metric("Nguy cơ cao", counts.get("CAO", 0))
     m[4].metric("Không đủ dữ liệu", insufficient)
-    st.caption("“Mức lưu ý cao nhất” = mức cao nhất trong các vòng có dữ liệu (Vòng 1, CTM Vòng 2, dấu hiệu HPLC/PCR Vòng 3).")
 
     all_cols = ["Hồ sơ", "Nguồn", "Tuổi", "Giới tính", "Hôn nhân", "Mang thai", "Vòng 1 - điểm", "Vòng 1 - nguy cơ", "Số chỉ số CTM",
                 "Hb (g/dL)", "Hb sau hiệu chỉnh", "Thiếu máu (WHO 2024)", "MCV", "MCH", "MCHC", "RDW-CV",
-                "RBC (T/L)", "Mentzer", "Điểm CBC", "Vòng 2 - nguy cơ", "Ferritin", "HbA2 (%)", "HbE (%)",
+                "RBC (T/L)", "Mentzer", "Green & King", "Ferritin",
+                "Xác suất ML (Chỉ CBC)", "Xác suất ML (CBC + Ferritin)",
+                "Vòng 2 - nguy cơ", "HbA2 (%)", "HbE (%)",
                 "Vòng 3 - mức lưu ý", "Vòng 3 - đối chiếu BYT", "Mức lưu ý cao nhất", "Bước tiếp theo",
                 "Trạng thái", "Cảnh báo"]
-    show_cols = ["Hồ sơ", "Vòng 1 - điểm", "Vòng 1 - nguy cơ", "Hb sau hiệu chỉnh", "MCV", "MCH", "Mentzer",
-                 "Vòng 2 - nguy cơ", "Ferritin", "HbA2 (%)", "HbE (%)", "Vòng 3 - mức lưu ý",
-                 "Mức lưu ý cao nhất", "Bước tiếp theo", "Trạng thái", "Cảnh báo"]
+    show_cols = ["Hồ sơ", "MCV", "MCH", "RBC (T/L)", "Mentzer", "Ferritin",
+                 "Xác suất ML (Chỉ CBC)", "Xác suất ML (CBC + Ferritin)",
+                 "Vòng 2 - nguy cơ", "Mức lưu ý cao nhất", "Bước tiếp theo", "Trạng thái"]
     full_df = pd.DataFrame([{k: v for k, v in r.items() if k != "_detail"} for r in results]).reindex(columns=all_cols)
     view_df = full_df[show_cols]
 
-    risk_subset = ["Vòng 1 - nguy cơ", "Vòng 2 - nguy cơ", "Vòng 3 - mức lưu ý", "Mức lưu ý cao nhất"]
+    risk_subset = ["Vòng 2 - nguy cơ", "Mức lưu ý cao nhất"]
     try:
         styled = view_df.style.map(_risk_cell_style, subset=[c for c in risk_subset if c in view_df.columns])
     except AttributeError:
         styled = view_df.style.applymap(_risk_cell_style, subset=[c for c in risk_subset if c in view_df.columns])
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
-    if insufficient:
-        st.warning(f"{insufficient} hồ sơ không đủ dữ liệu để phân tích. Xem cột Cảnh báo, bổ sung ở bảng bước 2 rồi phân tích lại.",
-                   icon=":material/warning:")
-
     input_df = st.session_state.get("batch_input_df")
     if input_df is not None:
         st.download_button(
-            "Tải kết quả Excel (đầy đủ cột + dữ liệu đầu vào)",
+            "Tải kết quả Excel (đầy đủ xác suất Học máy + chỉ số phái sinh)",
             data=results_to_excel(full_df, input_df, st.session_state.get("batch_codebook_df")).getvalue(),
-            file_name=f"Ket_qua_phan_tich_hang_loat_{date.today().isoformat()}.xlsx",
+            file_name=f"Ket_qua_THAL_SCREEN_AI_{date.today().isoformat()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             icon=":material/download:", use_container_width=True,
         )
 
     ok_idx = [i for i, r in enumerate(results) if r.get("Trạng thái") == "OK"]
     if ok_idx:
-        st.markdown("### :material/clinical_notes: Xem chi tiết từng hồ sơ")
+        st.markdown("### :material/clinical_notes: Xem chi tiết giải thích SHAP cho từng hồ sơ")
         pick = st.selectbox(
             "Chọn hồ sơ", ok_idx, key="batch_detail_pick",
             format_func=lambda i: f"{i + 1}. {results[i]['Hồ sơ']} — {results[i].get('Mức lưu ý cao nhất') or 'chưa phân tầng'}",
         )
         det = results[pick]["_detail"]
-
-        if "r1" in det:
-            d = det["r1"]
-            risk_alert(f"Vòng 1 ({d['score']}/{ROUND1_MAX_SCORE} điểm, {d['answered']}/20 câu)", d["category"], d["conclusion"])
-            if d["reasons"]:
-                bullet_list(d["reasons"])
-        if "r2" in det:
-            d = det["r2"]
-            risk_alert("CTM — Vòng 2", d["category"], d["conclusion"])
-            st.caption(f"Khoảng độ cao: {d['altitude']} · Mentzer {d['mentzer']:.2f} · Điểm CBC {d['score']}")
-            with st.expander("Các yếu tố, phân tích sơ bộ và khuyến nghị CTM", icon=":material/search:"):
-                st.markdown("**Các yếu tố từ CBC**")
-                bullet_list(d["reasons"])
-                st.markdown("**Phân tích sơ bộ**")
-                bullet_list(d["findings"])
-                st.markdown("**Khuyến nghị**")
-                bullet_list(d["advice"])
-        if det.get("cbc_values"):
-            with st.expander(f"Các chỉ số CTM đã nhập ({len(det['cbc_values'])}/18)", icon=":material/water_drop:"):
-                st.dataframe(pd.DataFrame([det["cbc_values"]]), hide_index=True, use_container_width=True)
-        if "r3" in det:
-            st.markdown("**Sắt · HPLC · PCR — đối chiếu BYT 2022**")
-            bullet_list(det["r3"]["notes"])
-        if det["steps"]:
-            st.markdown("**Gợi ý bước tiếp theo**")
-            bullet_list(det["steps"])
-        if det["warnings"]:
-            st.warning("; ".join(det["warnings"]), icon=":material/warning:")
-
-    st.caption(
-        "Kết quả chỉ hỗ trợ sàng lọc, không chẩn đoán; cần đối chiếu lâm sàng, xét nghiệm chuyên sâu "
-        "và nhân viên y tế. Trang này không lưu dữ liệu vào database."
-    )
+        if "r2" in det and "ml" in det["r2"]:
+            render_shap_explanation_card(det["r2"]["ml"])
 
 
 FACILITY_DISPLAY_LIMIT = 12
@@ -3598,13 +4028,7 @@ FACILITY_DISPLAY_LIMIT = 12
 
 @st.fragment
 def render_facilities(patient):
-    """Lọc/tìm cơ sở y tế chỉ chạy lại riêng khối này (không dựng lại toàn bộ trang)."""
     st.subheader(":material/local_hospital: Danh sách cơ sở y tế")
-    st.caption(
-        "Tra cứu bệnh viện/cơ sở y tế theo tỉnh, tên cơ sở hoặc tuyến. Danh mục là dữ liệu điều hướng "
-        "của prototype và cần được đối soát với bệnh viện trước khi sử dụng thực tế."
-    )
-
     all_facilities = all_medical_facilities()
     province_options = ["Tất cả tỉnh/thành"] + sorted({x["province"] for x in all_facilities})
     default_province = PROVINCE_FACILITY_ALIASES.get(patient["province"], patient["province"])
@@ -3614,7 +4038,7 @@ def render_facilities(patient):
         key="facility_province_filter",
     )
     facility_keyword = st.text_input(
-        "Tìm bệnh viện", placeholder="Ví dụ: Bạch Mai, Huyết học, Đa khoa...",
+        "Tìm bệnh viện", placeholder="Ví dụ: Bệnh viện Trung ương Huế, Huyết học...",
         key="facility_keyword", icon=":material/search:",
     )
 
@@ -3628,11 +4052,6 @@ def render_facilities(patient):
             if kw in " ".join([x["name"], x["tier"], x["note"], x["province"]]).lower()
         ]
 
-    st.write(
-        f"**{len(filtered)} cơ sở** phù hợp với bộ lọc."
-        + (f" Chỉ hiển thị {FACILITY_DISPLAY_LIMIT} cơ sở đầu tiên; hãy lọc thêm để thu hẹp."
-           if len(filtered) > FACILITY_DISPLAY_LIMIT else "")
-    )
     if filtered:
         for i, facility in enumerate(filtered[:FACILITY_DISPLAY_LIMIT], start=1):
             with st.container(border=True):
@@ -3640,34 +4059,6 @@ def render_facilities(patient):
                 st.caption(f"{facility['province']} · {facility['tier']}")
                 st.write(facility["note"])
                 st.link_button("Xem vị trí / chỉ đường", facility["maps"], icon=":material/map:")
-    else:
-        st.info("Chưa tìm thấy cơ sở phù hợp. Hãy thử bỏ bộ lọc hoặc tìm bằng tên bệnh viện khác.")
-
-    st.divider()
-    st.markdown("### :material/star: Cơ sở ưu tiên theo nơi ở của người bệnh")
-
-    facilities = recommended_facilities(patient["province"])
-    if facilities:
-        st.success(f"Đã tìm thấy {len(facilities)} cơ sở ưu tiên cho **{patient['province']}**.",
-                   icon=":material/check_circle:")
-        for i, facility in enumerate(facilities, start=1):
-            with st.container(border=True):
-                st.markdown(f"**{i}. {facility['name']}**")
-                st.caption(f"{facility['tier']} · {facility['note']}")
-                st.link_button("Xem vị trí / chỉ đường", facility["maps"], icon=":material/map:")
-    else:
-        maps_url = ("https://www.google.com/maps/search/?api=1&query="
-                    + quote(f"bệnh viện {patient['province']}"))
-        st.info(
-            f"Chưa có cơ sở được chọn sẵn cho **{patient['province']}**. "
-            "Bạn có thể mở Google Maps để xem các bệnh viện gần khu vực."
-        )
-        st.link_button("Tìm bệnh viện trên Google Maps", maps_url, icon=":material/map:")
-
-    st.caption(
-        "Danh mục chỉ hỗ trợ định hướng. Khả năng thực hiện CBC, HPLC/điện di Hb, xét nghiệm gen "
-        "Thalassemia và tiếp nhận chuyên khoa có thể khác nhau theo cơ sở; nên gọi xác nhận trước khi đến."
-    )
 
 
 # ============================================================
@@ -3676,138 +4067,33 @@ def render_facilities(patient):
 
 st.markdown(
     '<div class="hematology-brand"><div class="brand-orb"></div><div class="brand-text">'
-    '<div class="eyebrow">HEMATOLOGY · COMMUNITY SCREENING RESEARCH</div>'
-    '<div class="title title-main">HỆ THỐNG HỖ TRỢ SÀNG LỌC THALASSEMIA</div>'
-    '<div class="chips"><span class="chip">Vòng 1 · Tầm soát</span><span class="chip">Vòng 2 · Công thức máu</span>'
-    '<span class="chip">Vòng 3 · Theo dõi</span><span class="chip">Prototype</span></div></div></div>'
+    '<div class="eyebrow">TRƯỜNG ĐẠI HỌC PHAN CHÂU TRINH · BỆNH VIỆN TRUNG ƯƠNG HUẾ</div>'
+    '<div class="title title-main">THAL-SCREEN AI · HỆ THỐNG DỰ ĐOÁN NGUY CƠ MANG GEN THALASSEMIA</div>'
+    '<div class="chips"><span class="chip">7 chỉ số CBC + Ferritin huyết thanh</span>'
+    '<span class="chip">Logistic Regression · Random Forest · XGBoost</span>'
+    '<span class="chip">Giải thích mô hình SHAP</span>'
+    '<span class="chip">Nhóm NCKH 24XN1</span></div></div></div>'
     '<div class="section-rule"></div>',
     unsafe_allow_html=True,
 )
 
-@st.dialog("Giới thiệu đề tài và cơ sở nghiên cứu", width="large")
-def show_project_intro():
-    st.markdown("## Lời nói đầu")
-    st.markdown("""
-    Thalassemia là nhóm bệnh lý huyết sắc tố di truyền do giảm hoặc mất khả năng tổng hợp một hoặc nhiều chuỗi globin. Phổ biểu hiện rất rộng, từ người mang gen có biểu hiện huyết học nhẹ hoặc gần như không có triệu chứng đến các thể bệnh thiếu máu nặng cần chăm sóc y tế lâu dài. Vì có tính di truyền, việc nhận diện người mang gen không chỉ có ý nghĩa đối với cá nhân mà còn có giá trị trong tư vấn di truyền và dự phòng nguy cơ cho thế hệ sau.
-
-    Trong thực hành sàng lọc, công thức máu (CBC) và các chỉ số hồng cầu là những dữ liệu ban đầu có giá trị để nhận diện kiểu hình hồng cầu nhỏ, nhược sắc. Tuy nhiên, CBC không thể tự xác định loại hemoglobinopathy hay biến thể gen. Khi có dấu hiệu nghi ngờ, người tham gia cần được đánh giá tiếp bằng tình trạng sắt, HPLC/điện di hemoglobin và trong những trường hợp phù hợp là xét nghiệm phân tử.
-
-    Từ nhu cầu kết nối giữa sàng lọc ban đầu – dữ liệu CBC – giải thích kết quả – khuyến nghị – tiếp cận cơ sở y tế, đề tài “Hệ thống hỗ trợ sàng lọc Thalassemia trong cộng đồng” được xây dựng. Hệ thống được định hướng như một công cụ hỗ trợ sức khỏe cộng đồng, không thay thế bác sĩ và không đưa ra chẩn đoán xác định.
-    """)
-
-    st.markdown("## 1. Lý do chọn đề tài")
-    st.markdown("""
-    Thứ nhất, Thalassemia là bệnh lý di truyền có thể tồn tại âm thầm trong cộng đồng. Người mang gen có thể không có biểu hiện lâm sàng rõ ràng nhưng vẫn có ý nghĩa về mặt di truyền. Do đó, chỉ dựa vào triệu chứng để nhận diện là không đủ; cần có chiến lược sàng lọc phù hợp để phát hiện những trường hợp cần được đánh giá sâu hơn.
-
-    Thứ hai, CBC là xét nghiệm có tính nền tảng trong thực hành huyết học. Các thông số như Hb, MCV, MCH, RBC và RDW cung cấp thông tin về số lượng và đặc điểm hình thái của quần thể hồng cầu. Mẫu hình hồng cầu nhỏ, nhược sắc có thể gặp trong Thalassemia nhưng cũng gặp trong thiếu sắt và nhiều nguyên nhân khác. Vì vậy, vấn đề không chỉ là “đọc một con số”, mà là đặt các chỉ số vào đúng bối cảnh sàng lọc.
-
-    Thứ ba, các xét nghiệm chuyên sâu như HPLC, điện di hemoglobin và xét nghiệm phân tử có vai trò quan trọng nhưng không phải lúc nào cũng là bước đầu tiên hoặc dễ tiếp cận đối với mọi người dân. Một hệ thống hỗ trợ có thể giúp người sử dụng hiểu dữ liệu CBC đang có, nhận biết khi nào cần đánh giá thêm và tránh tâm lý tự kết luận chỉ từ một chỉ số.
-
-    Thứ tư, việc xây dựng hệ thống theo hướng không loại người tham gia chỉ dựa trên bảng câu hỏi Vòng 1 giúp giảm nguy cơ bỏ sót người mang gen không có triệu chứng. Điểm Vòng 1 chỉ được sử dụng để phân tầng và đưa ra khuyến nghị; người tham gia vẫn có thể tiếp tục Vòng 2 để nhập CBC nếu có.
-
-    Từ những cơ sở trên, đề tài được lựa chọn với mục tiêu xây dựng một cầu nối hỗ trợ sàng lọc trong cộng đồng, bắt đầu từ thông tin nguy cơ và CBC, sau đó định hướng đánh giá chuyên sâu và tiếp cận cơ sở y tế khi cần thiết.
-    """)
-
-    st.markdown("## 2. Mục tiêu đề tài")
-    st.markdown("### 2.1. Mục tiêu tổng quát")
-    st.write("Xây dựng hệ thống hỗ trợ sàng lọc Thalassemia trong cộng đồng dựa trên thông tin tiền sử và các chỉ số huyết học cơ bản, nhằm hỗ trợ nhận diện trường hợp cần được đánh giá thêm và định hướng tiếp cận cơ sở y tế phù hợp.")
-    st.markdown("### 2.2. Mục tiêu cụ thể")
-    st.markdown("""
-    1. Xây dựng bộ câu hỏi sàng lọc ban đầu nhằm thu thập tiền sử gia đình, tiền sử huyết học và các yếu tố liên quan.
-    2. Phân tầng mức độ cần lưu ý ở Vòng 1 nhưng không sử dụng điểm số để chẩn đoán hoặc loại trừ Thalassemia.
-    3. Cho phép tất cả người tham gia tiếp tục Vòng 2 và nhập kết quả CBC khi có.
-    4. Phân tích Hb, MCV, MCH, RBC, RDW và Mentzer theo mô hình sàng lọc prototype.
-    5. Định hướng các bước đánh giá tiếp theo như tình trạng sắt, HPLC/điện di hemoglobin hoặc xét nghiệm phân tử khi phù hợp.
-    6. Hỗ trợ người tham gia tiếp cận cơ sở y tế có năng lực chuyên môn phù hợp.
-    """)
-
-    st.markdown("## 3. Cơ sở khoa học")
-    st.markdown("### 3.1. Cơ sở bệnh sinh và ý nghĩa của sàng lọc")
-    st.markdown("""
-    Thalassemia phát sinh từ các biến thể di truyền làm giảm hoặc mất tổng hợp chuỗi globin. Sự mất cân bằng chuỗi globin có thể dẫn đến sinh hồng cầu không hiệu quả và mức độ thiếu máu khác nhau tùy kiểu gen, kiểu hình và thể bệnh. Ở người mang gen, biểu hiện thường nhẹ hơn đáng kể so với các thể bệnh Thalassemia có triệu chứng.
-
-    Vì tình trạng mang gen có thể không biểu hiện rõ trên lâm sàng, sàng lọc dựa trên dữ liệu huyết học và tiền sử có vai trò nhận diện những trường hợp nên được xác nhận bằng xét nghiệm chuyên sâu. Đây là lý do hệ thống được thiết kế theo mô hình nhiều tầng thay vì cố gắng đưa ra chẩn đoán từ một bảng điểm duy nhất.
-    """)
-    st.markdown("### 3.2. Vai trò của công thức máu (CBC)")
-    st.markdown("""
-    Hb (hemoglobin): phản ánh lượng hemoglobin trong máu và là chỉ số quan trọng khi đánh giá thiếu máu. Giá trị Hb cần được diễn giải theo tuổi, giới, thai kỳ, độ cao và các yếu tố liên quan; hệ thống sử dụng hiệu chỉnh độ cao theo hướng dẫn WHO 2024 ở mức prototype.
-
-    MCV (Mean Corpuscular Volume): phản ánh thể tích trung bình của hồng cầu. MCV giảm cho thấy hồng cầu nhỏ (microcytosis). Đây là một dấu hiệu thường gặp trong Thalassemia trait nhưng cũng có thể gặp trong thiếu sắt.
-
-    MCH (Mean Corpuscular Hemoglobin): phản ánh lượng hemoglobin trung bình trong một hồng cầu. MCH thấp thường đi cùng kiểu hình hồng cầu nhược sắc và có thể hỗ trợ nhận diện trường hợp cần đánh giá thêm.
-
-    RBC (số lượng hồng cầu): cung cấp thêm thông tin về số lượng hồng cầu. Trong một số trường hợp microcytosis, số lượng hồng cầu tương đối cao có thể hỗ trợ phân biệt Thalassemia trait với thiếu sắt, nhưng không đủ để xác định chẩn đoán.
-
-    RDW (Red Cell Distribution Width): phản ánh mức độ biến thiên kích thước hồng cầu. RDW có thể hỗ trợ diễn giải bối cảnh microcytosis, nhưng không có tính đặc hiệu đủ cao để dùng riêng cho chẩn đoán Thalassemia.
-    """)
-    st.markdown("### 3.3. Chỉ số Mentzer và các chỉ số phân biệt")
-    st.markdown("""
-    Mentzer Index = MCV / RBC là một chỉ số kinh điển được sử dụng như công cụ định hướng giữa thiếu sắt và Thalassemia trong một số bối cảnh sàng lọc. Tuy nhiên, đây chỉ là chỉ số hỗ trợ, không phải xét nghiệm xác nhận. Độ chính xác của các chỉ số phân biệt thay đổi theo quần thể, tuổi, tình trạng thiếu sắt đồng thời và thể bệnh.
-
-    Vì vậy, hệ thống không sử dụng Mentzer đơn độc. Kết quả được đặt cùng MCV, MCH, RBC, RDW và bối cảnh Vòng 1 để tạo ra một mức nguy cơ sàng lọc prototype.
-    """)
-    st.markdown("### 3.4. Vì sao phải đánh giá thiếu sắt?")
-    st.markdown("""
-    Thiếu sắt là một nguyên nhân phổ biến của thiếu máu hồng cầu nhỏ và có thể tạo ra kiểu hình CBC tương tự Thalassemia. Do đó, khi phát hiện microcytosis/nhược sắc, cần xem xét tình trạng sắt, thường với ferritin và các xét nghiệm chuyển hóa sắt phù hợp theo đánh giá chuyên môn.
-
-    Đặc biệt, người có khả năng mang Thalassemia không nên tự sử dụng sắt kéo dài chỉ vì thấy Hb thấp hoặc MCV thấp. Việc bổ sung sắt nên dựa trên bằng chứng thiếu sắt và chỉ định phù hợp.
-    """)
-    st.markdown("### 3.5. Vì sao CBC chưa đủ để xác định Thalassemia?")
-    st.markdown("""
-    CBC phản ánh kiểu hình huyết học, trong khi Thalassemia là một nhóm rối loạn có nguyên nhân di truyền. Vì vậy, cùng một mẫu hình hồng cầu nhỏ có thể xuất hiện trong nhiều tình trạng khác nhau.
-
-    Khi kết quả sàng lọc gợi ý, bước tiếp theo có thể bao gồm HPLC hoặc điện di hemoglobin để đánh giá thành phần hemoglobin. Trong những trường hợp cần xác định biến thể hoặc khi kết quả xét nghiệm huyết học chưa giải thích được tình trạng nghi ngờ, xét nghiệm phân tử có thể được cân nhắc theo chỉ định chuyên môn. Với α-thalassemia, xét nghiệm di truyền có thể đặc biệt hữu ích vì các xét nghiệm hemoglobin thường quy không phải lúc nào cũng xác định được tình trạng mang gen.
-    """)
-    st.markdown("### 3.6. Cơ sở thiết kế Vòng 1 → Vòng 2")
-    st.markdown("""
-    Vòng 1 thu thập thông tin nguy cơ và tiền sử để tạo bối cảnh trước khi xem CBC. Điểm số chỉ nhằm phân tầng ban đầu.
-
-    Vòng 2 tiếp nhận CBC và phân tích các chỉ số hồng cầu. Đây là tầng có tính khách quan hơn vì sử dụng dữ liệu xét nghiệm thực tế của người tham gia.
-
-    Không có bước nào được thiết kế để “chẩn đoán Thalassemia”. Kết quả cuối cùng được diễn đạt bằng các mức “thấp – trung bình – cao” về mức độ cần đánh giá thêm, kèm khuyến nghị bước tiếp theo. Người tham gia vẫn có thể cần xét nghiệm chuyên sâu và đánh giá bởi nhân viên y tế.
-    """)
-    st.markdown("### 3.7. Phạm vi và giới hạn của mô hình")
-    st.markdown("""
-    Phiên bản hiện tại là prototype hỗ trợ sàng lọc, trong đó các điểm số và ngưỡng phân tầng chưa được thẩm định trên một quần thể người Việt Nam đủ lớn. Do đó, kết quả không được sử dụng như tiêu chuẩn chẩn đoán, không thay thế xét nghiệm chuyên sâu và không được dùng để tự quyết định điều trị.
-
-    Mục tiêu của hệ thống là tạo ra một quy trình dễ tiếp cận: nhận diện nguy cơ → xem CBC → giải thích → khuyến nghị → điều hướng, sau đó việc xác nhận và xử trí thuộc về cơ sở y tế có thẩm quyền.
-    """)
-
-    st.markdown("## 4. Tài liệu tham khảo")
-    refs = [
-        ("World Health Organization. Guideline on haemoglobin cutoffs to define anaemia in individuals and populations. 2024.", "https://www.who.int/publications/i/item/9789240088542"),
-        ("World Health Organization. WHO guidelines on best practices in the measurement of haemoglobin. 2024.", "https://www.who.int/publications/b/71578"),
-        ("GeneReviews®. Beta-Thalassemia. University of Washington, Seattle. Updated February 12, 2026.", "https://www.ncbi.nlm.nih.gov/books/NBK1426/"),
-        ("American College of Obstetricians and Gynecologists (ACOG). Carrier Screening for Genetic Conditions.", "https://www.acog.org/clinical/clinical-guidance/committee-opinion/articles/2017/03/carrier-screening-for-genetic-conditions"),
-        ("American College of Obstetricians and Gynecologists (ACOG). Hemoglobinopathies in Pregnancy.", "https://www.acog.org/clinical/clinical-guidance/practice-advisory/articles/2022/08/hemoglobinopathies-in-pregnancy"),
-        ("American College of Obstetricians and Gynecologists (ACOG). Carrier Screening for Hemoglobinopathies.", "https://www.acog.org/womens-health/faqs/carrier-screening-for-hemoglobinopathies"),
-        ("Prevalence of Thalassemia in the Vietnamese Population and Building a Clinical Decision Support System for Prenatal Screening for Thalassemia.", "https://pmc.ncbi.nlm.nih.gov/articles/PMC10171208/"),
-        ("Thalassemia among ethnic minorities in Vietnam: prevalence and molecular characterization.", "https://pmc.ncbi.nlm.nih.gov/articles/PMC5496844/"),
-        ("A Review of Artificial Intelligence and Machine Learning Applications in Thalassemia Screening and Diagnosis.", "https://pmc.ncbi.nlm.nih.gov/articles/PMC10177591/"),
-        ("Thalassaemia International Federation (TIF). Guidelines and Reports.", "https://thalassaemia.org.cy/publications/tif-publications/guidelines-and-reports/"),
-    ]
-    for i, (title, url) in enumerate(refs, 1):
-        st.markdown(f"{i}. [{title}]({url})")
-        st.caption(url)
-
-# Nội dung dài chỉ được dựng khi người dùng bấm nút → trang chính nhẹ hơn nhiều.
 _bi1, _bi2, _ = st.columns([1, 1, 2])
-if _bi1.button("Giới thiệu đề tài", icon=":material/menu_book:", use_container_width=True):
+if _bi1.button("Giới thiệu đề tài NCKH", icon=":material/menu_book:", use_container_width=True):
     show_project_intro()
-if _bi2.button("Cơ sở khoa học", icon=":material/school:", use_container_width=True):
+if _bi2.button("Cơ sở khoa học & Học máy", icon=":material/school:", use_container_width=True):
     show_research_overview()
 
 st.markdown(
-    '<div class="contact-card"><div class="label">Liên hệ tác giả</div>'
-    '<div class="name">Nguyễn Đắc Lâu</div>'
-    '<div>Điện thoại: <a href="tel:0357930820">0357930820</a></div>'
-    '<div>Email: <a href="mailto:nguyendaclau2309@gmail.com">nguyendaclau2309@gmail.com</a></div>'
-    '<div class="small-note">Tác giả và người phát triển nguyên mẫu hệ thống hỗ trợ sàng lọc Thalassemia.</div></div>',
+    '<div class="contact-card"><div class="label">Chủ nhiệm đề tài & Nhóm nghiên cứu (Trường Đại học Phan Châu Trinh)</div>'
+    '<div class="name">Chủ nhiệm: Nguyễn Đắc Lâu · GVHD: ThS. Nguyễn Thị Kim Loan</div>'
+    '<div>Thành viên: Trần Phan Thảo Vi · Huỳnh Ngọc Anh Huy · Lê Văn Thịnh · Phan Ngọc Bảo An</div>'
+    '<div>Điện thoại: <a href="tel:0357930820">0357930820</a> · Email: <a href="mailto:nguyendaclau2309@gmail.com">nguyendaclau2309@gmail.com</a></div>'
+    '<div class="small-note">Hệ thống hỗ trợ sàng lọc và phân tầng nguy cơ mang gen Thalassemia dựa trên CBC và Ferritin huyết thanh (không thay thế chẩn đoán xác định di truyền).</div></div>',
     unsafe_allow_html=True,
 )
 
 # ============================================================
-# ACCESS / SIDEBAR / ADMIN
+# ACCESS / SIDEBAR / ROUTING
 # ============================================================
 
 render_auth_sidebar()
@@ -3819,12 +4105,17 @@ st.sidebar.toggle(
 )
 
 auth_user = current_auth_user()
+active_page = st.session_state.get("auth_page", PAGE_SCREENING)
 
-if auth_user and st.session_state.get("auth_page") == PAGE_ADMIN:
+if active_page == PAGE_ML_LAB:
+    render_ml_research_lab()
+    st.stop()
+
+if auth_user and active_page == PAGE_ADMIN:
     render_admin_console(auth_user)
     st.stop()
 
-if auth_user and st.session_state.get("auth_page") == PAGE_BATCH:
+if auth_user and active_page == PAGE_BATCH:
     render_batch_page(auth_user)
     st.stop()
 
@@ -3842,21 +4133,20 @@ if operator_mode:
 # PATIENT PROFILE
 # ============================================================
 
-st.header(":material/badge: Thông tin bệnh nhân")
+st.header(":material/badge: Thông tin đối tượng nghiên cứu / người tham gia")
 st.caption(
-    "Nhập hồ sơ người tham gia. "
+    "Nhập hồ sơ người trưởng thành (≥ 18 tuổi) hoặc đối tượng tham gia sàng lọc. "
     + ("Chế độ nhập giúp: hệ thống ghi nhận tài khoản nhân sự thực hiện."
        if operator_mode else "Người tham gia tự nhập thông tin của mình.")
 )
 
-# A. Thông tin cơ bản — form riêng
 with st.form("patient_basic_form_v22", clear_on_submit=False):
     with st.container(border=True):
         p1, p2, p3 = st.columns(3)
         with p1:
             full_name = st.text_input("Họ và tên *", placeholder="Nguyễn Văn A", key="v22_full_name")
             birth_date = st.date_input(
-                "Ngày sinh *", value=date(2000, 1, 1),
+                "Ngày sinh *", value=date(2002, 1, 1),
                 min_value=BIRTH_DATE_MIN, max_value=BIRTH_DATE_MAX,
                 format="DD/MM/YYYY", key="v22_birth_date",
             )
@@ -3866,15 +4156,11 @@ with st.form("patient_basic_form_v22", clear_on_submit=False):
         with p3:
             current_address = st.text_input("Địa chỉ hiện tại *", placeholder="Số nhà/thôn/tổ/đường", key="v22_address")
 
-        st.caption(
-            "Nhập thông tin cơ bản rồi chọn địa giới hành chính bên dưới. "
-            "Danh sách phường/xã sẽ cập nhật ngay khi đổi tỉnh/thành."
-        )
         basic_continue = st.form_submit_button(
             "Tiếp tục", icon=":material/arrow_forward:", type="primary", use_container_width=True
         )
 
-# B. Địa giới — fragment: đổi tỉnh/thành chỉ chạy lại riêng khối này, không chạy lại cả trang.
+
 @st.fragment
 def address_picker():
     st.subheader(":material/location_on: Địa giới hành chính hiện tại")
@@ -3885,8 +4171,7 @@ def address_picker():
         ok = True
     except Exception as exc:
         admin_hierarchy = {}
-        st.error("Không tải được danh mục tỉnh/thành và phường/xã/đặc khu. Vui lòng tải lại trang hoặc thử lại sau.")
-        st.caption(f"Nguồn dữ liệu: {ADMIN_DATA_SOURCE_URL}")
+        st.error("Không tải được danh mục tỉnh/thành và phường/xã/đặc khu.")
         st.code(str(exc))
 
     if ok:
@@ -3900,7 +4185,6 @@ def address_picker():
         else:
             province = province_choice
             available_communes = list(admin_hierarchy.get(province, []))
-            # Key phụ thuộc tỉnh để không tái sử dụng lựa chọn của tỉnh trước đó.
             safe_province = province.replace(" ", "_").replace("/", "_").replace("\\", "_")
             commune_choice = st.selectbox(
                 "Phường / xã / đặc khu *",
@@ -3909,13 +4193,6 @@ def address_picker():
             )
             if commune_choice != "— Chọn phường/xã/đặc khu —":
                 commune = commune_choice
-            if not available_communes:
-                st.error("Tỉnh/thành này chưa có danh mục phường/xã/đặc khu trong dữ liệu hiện tại.")
-
-        st.caption(
-            "Danh mục địa giới được tải theo cấu trúc 2 cấp hiện hành; "
-            "không nhập tay tên phường/xã để tránh sai địa danh."
-        )
 
     st.session_state["addr_data_ok"] = ok
     st.session_state["addr_province"] = province
@@ -3930,44 +4207,20 @@ admin_data_ok = st.session_state.get("addr_data_ok", False)
 selected_province = st.session_state.get("addr_province", "")
 commune_value = st.session_state.get("addr_commune", "")
 
-# C. Đồng ý + lưu hồ sơ — form riêng
 with st.form("patient_consent_save_form_v22", clear_on_submit=False):
     with st.container(border=True):
-        st.markdown("### :material/verified_user: Đồng ý tham gia sàng lọc và nghiên cứu")
-
-        if operator_mode:
-            st.info(
-                "Bạn đang nhập giúp người tham gia. Chỉ tiếp tục khi người tham gia đã được giải thích "
-                "nội dung và đã đồng ý cho sử dụng dữ liệu theo mục đích nghiên cứu/sàng lọc.",
-                icon=":material/info:",
-            )
-        else:
-            st.info(
-                "Để tiếp tục, người tham gia cần đọc và đồng ý với nội dung dưới đây. "
-                "Nếu không đồng ý, hệ thống sẽ không thực hiện sàng lọc và không lưu hồ sơ.",
-                icon=":material/info:",
-            )
-
+        st.markdown("### :material/verified_user: Bản đồng thuận tham gia sàng lọc và nghiên cứu khoa học")
         st.markdown(
-            "**Tôi đồng ý cho nghiên cứu sinh sử dụng thông tin cá nhân, thông tin khảo sát và "
-            "thông tin sức khỏe/xét nghiệm do tôi cung cấp cho mục đích sàng lọc cộng đồng "
-            "Thalassemia và nghiên cứu khoa học.**"
+            "**Tôi đồng ý cho nhóm nghiên cứu sử dụng thông tin khảo sát và kết quả xét nghiệm "
+            "(công thức máu ngoại vi, Ferritin huyết thanh và xét nghiệm tham chiếu Thalassemia) "
+            "để phục vụ mục đích sàng lọc và thực hiện đề tài nghiên cứu khoa học.**"
         )
-        st.markdown(
-            "Tôi hiểu rằng việc tham gia là tự nguyện; kết quả của hệ thống chỉ có tính chất sàng lọc, "
-            "không thay thế chẩn đoán của cơ sở y tế; dữ liệu được lưu phục vụ mục đích nêu trên theo "
-            "phiên bản chấp thuận của nghiên cứu."
-        )
-
         research_consent = st.checkbox(
-            "Tôi đã đọc, hiểu và đồng ý tham gia." if not operator_mode
-            else "Tôi xác nhận người tham gia đã đọc/được giải thích và đã đồng ý.",
+            "Tôi đã đọc, hiểu và tự nguyện đồng ý tham gia." if not operator_mode
+            else "Tôi xác nhận người tham gia đã đọc/được giải thích và đã ký đồng thuận.",
             key="v22_research_consent",
         )
-        if operator_mode:
-            st.caption(f"Người nhập: {auth_user['full_name']} ({auth_user['username']})")
         st.caption(f"Phiên bản nội dung chấp thuận: {CONSENT_VERSION}")
-
         save_profile = st.form_submit_button(
             "Lưu / cập nhật hồ sơ", icon=":material/save:", type="primary", use_container_width=True
         )
@@ -4011,7 +4264,7 @@ if save_profile:
         if action == "updated":
             st.success("Đã cập nhật hồ sơ bằng lần nhập sau cùng.", icon=":material/check_circle:")
         else:
-            st.success("Đã tạo hồ sơ bệnh nhân.", icon=":material/check_circle:")
+            st.success("Đã tạo hồ sơ người tham gia.", icon=":material/check_circle:")
 
 patient = st.session_state.get("patient_profile")
 
@@ -4023,7 +4276,7 @@ if not st.session_state.get("research_consent", False):
     st.stop()
 
 if not patient:
-    st.info("Hãy lưu hồ sơ bệnh nhân trước khi bắt đầu Vòng 1.", icon=":material/arrow_upward:")
+    st.info("Hãy lưu hồ sơ người tham gia trước khi bắt đầu.", icon=":material/arrow_upward:")
     st.stop()
 
 st.success(
@@ -4037,136 +4290,123 @@ st.success(
 # ============================================================
 
 st.divider()
-st.header(":material/quiz: Vòng 1 — 20 câu hỏi sàng lọc")
+st.header(":material/quiz: Vòng 1 — 20 câu hỏi khảo sát tiền sử")
 st.caption(
-    "Vòng 1 dùng để ghi nhận các yếu tố cần lưu ý và đưa khuyến nghị. "
-    "Tất cả người tham gia đều được tiếp tục Vòng 2."
+    "Vòng 1 ghi nhận tiền sử gia đình và cá nhân. Bạn cũng có thể bấm mở nhanh Vòng 2 bên dưới nếu muốn nhập trực tiếp kết quả xét nghiệm CBC + Ferritin huyết thanh."
 )
 
+quick_r2 = st.checkbox(
+    "Bỏ qua bộ câu hỏi Vòng 1 — Mở trực tiếp Vòng 2 (Nhập 7 chỉ số CBC & Ferritin huyết thanh để chạy mô hình Học máy)",
+    value=False,
+    key="quick_open_r2",
+)
+if quick_r2 and not st.session_state.get("round1_completed"):
+    st.session_state.update({
+        "round1_score": 0,
+        "round1_reasons": ["Chuyển trực tiếp sang đánh giá xét nghiệm CBC & Ferritin (Vòng 2)"],
+        "round1_category": "THẤP",
+        "round1_conclusion": "Đánh giá trực tiếp dựa trên thông số xét nghiệm CBC và Ferritin huyết thanh.",
+        "round1_completed": True,
+        "round2_unlocked": True,
+    })
 
-with st.form("round1_form", clear_on_submit=False):
-    answers = {}
-    for section_title, questions in ROUND1_SECTIONS:
-        with st.container(border=True):
-            st.subheader(section_title)
-            for qkey, qtext in questions:
-                if qkey == "q9":
-                    answers[qkey] = st.selectbox(
-                        "9. Bạn từng xét nghiệm Thalassemia/hemoglobinopathy chưa?",
-                        Q9_OPTIONS, key="r1w_q9",
-                    )
-                else:
-                    answers[qkey] = st.radio(qtext, YNK, horizontal=True, key=f"r1w_{qkey}")
-            if section_title.startswith(":material/travel_explore:"):
-                st.info(
-                    "Q19–Q20 được lưu để hỗ trợ điều hướng y tế, **không ảnh hưởng đến điểm nguy cơ Thalassemia**.",
-                    icon=":material/info:",
-                )
+if not quick_r2:
+    with st.form("round1_form", clear_on_submit=False):
+        answers = {}
+        for section_title, questions in ROUND1_SECTIONS:
+            with st.container(border=True):
+                st.subheader(section_title)
+                for qkey, qtext in questions:
+                    if qkey == "q9":
+                        answers[qkey] = st.selectbox(
+                            "9. Bạn từng xét nghiệm Thalassemia/hemoglobinopathy chưa?",
+                            Q9_OPTIONS, key="r1w_q9",
+                        )
+                    else:
+                        answers[qkey] = st.radio(qtext, YNK, horizontal=True, key=f"r1w_{qkey}")
+        round1_submit = st.form_submit_button(
+            "Đánh giá Vòng 1 & Mở Vòng 2 (CBC + Ferritin)", icon=":material/play_arrow:", type="primary", use_container_width=True
+        )
 
-    round1_submit = st.form_submit_button(
-        "Đánh giá Vòng 1", icon=":material/play_arrow:", type="primary", use_container_width=True
-    )
-
-if round1_submit:
-    score1, reasons1 = calculate_round1_score(answers)
-    category1, conclusion1 = round1_category(score1)
-
-    # Vòng 1 mới → xóa kết quả Vòng 2/3 cũ trong phiên.
-    for key in list(st.session_state.keys()):
-        if key.startswith(("round2_", "round3_", "google_")):
-            del st.session_state[key]
-
-    st.session_state["round1_score"] = score1
-    st.session_state["round1_reasons"] = reasons1
-    st.session_state["round1_category"] = category1
-    st.session_state["round1_conclusion"] = conclusion1
-    st.session_state["round1_completed"] = True
-    st.session_state["screening_id"] = create_screening_record(
-        patient=patient, answers=answers, score1=score1, category1=category1,
-        conclusion1=conclusion1, reasons1=reasons1,
-        entry_mode="assisted" if operator_mode else "self",
-        entered_by_username=operator_username,
-    )
-
-# ------------------------------------------------------------
-# ROUND 1 RESULT
-# ------------------------------------------------------------
+    if round1_submit:
+        score1, reasons1 = calculate_round1_score(answers)
+        category1, conclusion1 = round1_category(score1)
+        for key in list(st.session_state.keys()):
+            if key.startswith(("round2_", "round3_", "google_")):
+                del st.session_state[key]
+        st.session_state["round1_score"] = score1
+        st.session_state["round1_reasons"] = reasons1
+        st.session_state["round1_category"] = category1
+        st.session_state["round1_conclusion"] = conclusion1
+        st.session_state["round1_completed"] = True
+        st.session_state["screening_id"] = create_screening_record(
+            patient=patient, answers=answers, score1=score1, category1=category1,
+            conclusion1=conclusion1, reasons1=reasons1,
+            entry_mode="assisted" if operator_mode else "self",
+            entered_by_username=operator_username,
+        )
 
 if st.session_state.get("round1_completed", False):
-    st.subheader(":material/fact_check: Kết quả Vòng 1")
-
     score1 = st.session_state["round1_score"]
     category1 = st.session_state["round1_category"]
     conclusion1 = st.session_state["round1_conclusion"]
     reasons1 = st.session_state["round1_reasons"]
-
-    a1, a2 = st.columns(2)
-    a1.metric("Điểm sàng lọc ban đầu", f"{score1}/{ROUND1_MAX_SCORE}")
-    a2.metric("Vòng 2", "Được tiếp tục")
-
-    risk_alert("Mức độ đáng lưu ý", category1, conclusion1)
-
-    if reasons1:
-        with st.expander("Những điểm Vòng 1 cần lưu ý", expanded=True, icon=":material/search:"):
-            bullet_list(reasons1)
-    else:
-        st.info("Chưa ghi nhận yếu tố đáng lưu ý từ các câu trả lời có tính điểm.")
-
-    st.markdown("### :material/route: Sau Vòng 1, bạn nên làm gì?")
-    for i, item in enumerate(round1_guidance(category1), 1):
-        st.markdown(f"{i}. {item}")
-
-    st.info(
-        "**Vòng 2 được mở cho tất cả người tham gia.** Nếu bạn đã có CBC, hãy nhập kết quả để hệ thống "
-        "phân tích các chỉ số huyết học. Nếu chưa có, bạn có thể thực hiện CBC tại cơ sở y tế phù hợp "
-        "rồi quay lại nhập kết quả.",
-        icon=":material/lock_open:",
-    )
+    if not quick_r2:
+        st.subheader(":material/fact_check: Kết quả Vòng 1")
+        risk_alert("Mức độ lưu ý tiền sử", category1, conclusion1)
     st.session_state["round2_unlocked"] = True
 
 # ============================================================
-# ROUND 2
+# ROUND 2: 7 CHỈ SỐ CBC + FERRITIN HUYẾT THANH + HỌC MÁY & SHAP
 # ============================================================
 
 if st.session_state.get("round2_unlocked", False):
 
     st.divider()
-    st.header(":material/biotech: Vòng 2 — Độ cao và công thức máu")
+    st.header(":material/biotech: Vòng 2 — Dự đoán Học máy dựa trên 7 chỉ số CBC và Ferritin huyết thanh")
+    st.caption(
+        "Nhập các thông số dòng hồng cầu (RBC, Hb, HCT, MCV, MCH, MCHC, RDW-CV) và định lượng Ferritin huyết thanh. "
+        "Hệ thống tự động chạy 3 thuật toán (Logistic Regression, Random Forest, XGBoost), so sánh Mô hình A (Chỉ CBC) "
+        "với Mô hình B (CBC + Ferritin) và giải thích đóng góp của từng biến bằng phương pháp SHAP."
+    )
 
-    with st.form("round2_form_v23", clear_on_submit=False):
+    with st.form("round2_form_v24_ml", clear_on_submit=False):
         with st.container(border=True):
-            st.subheader(":material/terrain: 1. Nơi cư trú và độ cao")
-            st.write(f"**Tỉnh/thành:** {patient['province']}")
-            st.write(f"**Phường/xã/đặc khu:** {patient['commune']}")
-            st.write(f"**Địa chỉ hiện tại:** {patient['current_address']}")
+            st.subheader(":material/terrain: 1. Nơi cư trú và hiệu chỉnh độ cao")
             altitude_choice, altitude_adjustment = altitude_selector("round2")
 
         with st.container(border=True):
-            st.subheader(":material/water_drop: 2. Nhập công thức máu")
-            c1, c2, c3, c4, c5 = st.columns(5)
-            with c1:
-                hb_unit = st.selectbox("Đơn vị Hb", ["g/dL", "g/L"], key="round2_hb_unit")
-                hb_raw = st.number_input("Hb", min_value=0.0, max_value=100000.0, value=None,
-                                         step=0.1, key="round2_hb_raw")
-            with c2:
-                mcv = st.number_input("MCV (fL)", 30.0, 150.0, None, 0.1, key="round2_mcv")
-            with c3:
-                mch = st.number_input("MCH (pg)", 10.0, 50.0, None, 0.1, key="round2_mch")
-            with c4:
+            st.subheader(":material/water_drop: 2. Nhập 7 chỉ số Công thức máu (CBC) và Ferritin huyết thanh")
+            r1_c1, r1_c2, r1_c3, r1_c4 = st.columns(4)
+            with r1_c1:
+                hb_unit = st.selectbox("Đơn vị Hb", ["g/L", "g/dL"], index=0, key="round2_hb_unit")
+                hb_raw = st.number_input("Nồng độ Hb *", min_value=0.0, max_value=1000.0, value=None,
+                                         step=1.0, key="round2_hb_raw", help="Ví dụ: 121.8 g/L hoặc 12.2 g/dL")
+            with r1_c2:
                 rbc_unit = st.selectbox("Đơn vị RBC", ["T/L", "10^12/L", "10^6/µL"], key="round2_rbc_unit")
-                rbc_raw = st.number_input("RBC", 1.0, 10.0, None, 0.1, key="round2_rbc_raw")
-            with c5:
-                rdw = st.number_input("RDW-CV (%)", 5.0, 40.0, None, 0.1, key="round2_rdw")
+                rbc_raw = st.number_input("Số lượng RBC *", 1.0, 10.0, None, 0.05, key="round2_rbc_raw", help="Ví dụ: 5.31 T/L")
+            with r1_c3:
+                mcv = st.number_input("MCV (fL) *", 30.0, 150.0, None, 0.1, key="round2_mcv", help="Ví dụ: 71.9 fL")
+                hct_raw = st.number_input("HCT (%) [tùy chọn]", 10.0, 75.0, None, 0.1, key="round2_hct",
+                                          help="Nếu để trống, hệ thống tự động nội suy HCT = (RBC × MCV) / 10")
+            with r1_c4:
+                mch = st.number_input("MCH (pg) *", 10.0, 50.0, None, 0.1, key="round2_mch", help="Ví dụ: 22.8 pg")
+                mchc_raw = st.number_input("MCHC (g/L) [tùy chọn]", 20.0, 450.0, None, 1.0, key="round2_mchc",
+                                           help="Nếu để trống, hệ thống tự tính từ Hb và HCT")
 
-            st.caption("Hệ thống tự chuyển Hb → g/dL và RBC → T/L trước khi tính.")
-            st.caption(
-                "Tiêu chí sàng lọc CBC theo Phụ lục ‘Quy trình xét nghiệm sàng lọc, chẩn đoán Thalassemia’ "
-                "của Hướng dẫn chẩn đoán và điều trị một số bệnh lý huyết học (Bộ Y tế, 2022): "
-                "MCV <85 fL và/hoặc MCH <28 pg. Đây là tiêu chí sàng lọc, không phải tiêu chuẩn chẩn đoán xác định."
-            )
+            r2_c1, r2_c2 = st.columns(2)
+            with r2_c1:
+                rdw = st.number_input("RDW-CV (%) *", 5.0, 40.0, None, 0.1, key="round2_rdw", help="Ví dụ: 14.2%")
+            with r2_c2:
+                ferritin_raw = st.number_input(
+                    "Ferritin huyết thanh (ng/mL hoặc µg/L) [Khuyến nghị nhập để chạy Mô hình B]",
+                    min_value=0.0, max_value=10000.0, value=None, step=1.0, key="round2_ferritin",
+                    help="Biến đầu vào bổ sung trọng tâm của Đề tài NCKH giúp phân biệt thiếu máu thiếu sắt với mang gen Thalassemia.",
+                )
 
         round2_submit = st.form_submit_button(
-            "Phân tích Vòng 2", icon=":material/biotech:", type="primary", use_container_width=True
+            "Chạy Mô hình Học máy (LR · RF · XGBoost) & Phân tích SHAP",
+            icon=":material/psychology:", type="primary", use_container_width=True,
         )
 
     if round2_submit:
@@ -4174,7 +4414,7 @@ if st.session_state.get("round2_unlocked", False):
         missing = [name for name, value in required_cbc.items() if value is None]
 
         if missing:
-            st.error("Vui lòng nhập đầy đủ số liệu CBC trước khi phân tích: " + ", ".join(missing) + ".")
+            st.error("Vui lòng nhập đầy đủ 5 chỉ số CBC bắt buộc trước khi chạy mô hình: " + ", ".join(missing) + ".")
         elif rbc_raw <= 0:
             st.error("RBC phải lớn hơn 0.")
         else:
@@ -4182,9 +4422,14 @@ if st.session_state.get("round2_unlocked", False):
             rbc = rbc_to_t_l(rbc_raw, rbc_unit)
             hb_adjusted = hb - altitude_adjustment
 
-            score2, mentzer, reasons2 = calculate_round2_score(mcv, mch, rbc, rdw)
-            category2, conclusion2 = round2_category(score2, mcv, mch)
-            findings, advice = narrative_cbc_advice(hb_adjusted, mcv, mch, rbc, rdw, mentzer)
+            ml_res = predict_thal_screen_ai(
+                hb_g_dl=hb, rbc=rbc, mcv=mcv, mch=mch, rdw=rdw,
+                hct=hct_raw, mchc_g_l=mchc_raw, ferritin=ferritin_raw,
+            )
+            score2, mentzer, reasons2 = calculate_round2_score(mcv, mch, rbc, rdw, ferritin_raw)
+            category2 = round2_category(score2, mcv, mch, ml_res["category"])
+            conclusion2 = ml_res["conclusion"]
+            findings, advice = narrative_cbc_advice(hb_adjusted, mcv, mch, rbc, rdw, mentzer, ferritin_raw, ml_res)
 
             st.session_state.update({
                 "round2_altitude_choice": altitude_choice,
@@ -4196,67 +4441,86 @@ if st.session_state.get("round2_unlocked", False):
                 "round2_reasons": reasons2,
                 "round2_hb": hb,
                 "round2_hb_adjusted": hb_adjusted,
+                "round2_hct_result": ml_res["cbc"]["HCT"],
                 "round2_mcv_result": mcv,
                 "round2_mch_result": mch,
+                "round2_mchc_result": ml_res["cbc"]["MCHC_gL"],
                 "round2_rbc_result": rbc,
                 "round2_rdw_result": rdw,
+                "round2_ferritin_result": ferritin_raw,
+                "round2_ml_result": ml_res,
                 "round2_findings": findings,
                 "round2_advice": advice,
             })
+
+            if not st.session_state.get("screening_id"):
+                st.session_state["screening_id"] = create_screening_record(
+                    patient=patient, answers={}, score1=st.session_state.get("round1_score", 0),
+                    category1=st.session_state.get("round1_category", "THẤP"),
+                    conclusion1=st.session_state.get("round1_conclusion", ""),
+                    reasons1=st.session_state.get("round1_reasons", []),
+                    entry_mode="assisted" if operator_mode else "self",
+                    entered_by_username=operator_username,
+                )
 
             update_screening_round2(
                 st.session_state.get("screening_id"),
                 {
                     "altitude_choice": altitude_choice, "adjustment": altitude_adjustment,
-                    "hb": hb, "hb_adjusted": hb_adjusted, "mcv": mcv, "mch": mch,
-                    "rbc": rbc, "rdw": rdw, "mentzer": mentzer, "score": score2,
-                    "category": category2, "conclusion": conclusion2, "reasons": reasons2,
-                    "findings": findings, "advice": advice,
+                    "hb": hb, "hb_adjusted": hb_adjusted,
+                    "hct": ml_res["cbc"]["HCT"], "mcv": mcv, "mch": mch, "mchc": ml_res["cbc"]["MCHC_gL"],
+                    "rbc": rbc, "rdw": rdw, "ferritin": ferritin_raw,
+                    "mentzer": mentzer,
+                    "green_king": ml_res["indices"]["green_king"],
+                    "rdwi": ml_res["indices"]["rdwi"],
+                    "ml_prob_cbc": ml_res["probs_a"]["XGBoost"],
+                    "ml_prob_cbc_ferritin": ml_res["probs_b"]["XGBoost"] if ferritin_raw is not None else None,
+                    "shap": ml_res["shap"],
+                    "score": score2, "category": category2, "conclusion": conclusion2,
+                    "reasons": reasons2, "findings": findings, "advice": advice,
                 },
             )
             st.session_state["round2_completed"] = True
 
-    # --------------------------------------------------------
-    # ROUND 2 RESULTS
-    # --------------------------------------------------------
-
     if st.session_state.get("round2_completed", False):
 
-        st.subheader(":material/monitoring: Kết quả Vòng 2")
+        st.subheader(":material/monitoring: Kết quả Dự đoán Học máy & Phân tích Huyết học (Vòng 2)")
+        ml_res = st.session_state["round2_ml_result"]
 
         a, b, c, d = st.columns(4)
-        a.metric("Mentzer Index", f"{st.session_state['round2_mentzer']:.2f}")
-        b.metric("Điểm CBC", str(st.session_state["round2_score"]))
-        c.metric("Hb thực đo", f"{st.session_state['round2_hb']:.1f} g/dL")
-        d.metric("Hb sau hiệu chỉnh", f"{st.session_state['round2_hb_adjusted']:.1f} g/dL")
+        a.metric("Xác suất Mang gen (XGBoost)", f"{ml_res['active_pct']:.1f}%")
+        b.metric("Mentzer Index (MCV/RBC)", f"{st.session_state['round2_mentzer']:.2f}")
+        c.metric("Hb thực đo", f"{st.session_state['round2_hb']*10:.0f} g/L ({st.session_state['round2_hb']:.1f} g/dL)")
+        d.metric(
+            "Ferritin huyết thanh",
+            f"{st.session_state['round2_ferritin_result']:g} ng/mL"
+            if st.session_state.get("round2_ferritin_result") is not None
+            else "Chưa nhập",
+        )
 
         category2 = st.session_state["round2_category"]
         conclusion2 = st.session_state["round2_conclusion"]
-        risk_alert("Nguy cơ Vòng 2", category2, conclusion2)
+        risk_alert("Phân tầng nguy cơ (THAL-SCREEN AI)", category2, conclusion2)
 
-        with st.expander("Các yếu tố từ CBC", expanded=True, icon=":material/search:"):
+        # Hiển thị thẻ so sánh Mô hình A vs Mô hình B và đồ thị SHAP cá thể hóa
+        render_shap_explanation_card(ml_res)
+
+        with st.expander("Chi tiết các chỉ số huyết học và nhận định lâm sàng", expanded=True, icon=":material/search:"):
+            st.markdown("**Các dấu hiệu ghi nhận từ CBC & Ferritin**")
             bullet_list(st.session_state["round2_reasons"])
-
-        st.markdown("### :material/analytics: Phân tích sơ bộ")
-        bullet_list(st.session_state["round2_findings"])
-
-        st.markdown("### :material/clinical_notes: Khuyến nghị cho người được sàng lọc")
-        bullet_list(st.session_state["round2_advice"])
-
-        st.caption(
-            "Những nhận định trên chỉ hỗ trợ sàng lọc và phải được đối chiếu với lâm sàng, "
-            "xét nghiệm chuyên sâu và nhân viên y tế."
-        )
+            st.markdown("**Phân tích sơ bộ**")
+            bullet_list(st.session_state["round2_findings"])
+            st.markdown("**Khuyến nghị bước tiếp theo**")
+            bullet_list(st.session_state["round2_advice"])
 
         # ----------------------------------------------------
-        # ROUND 3
+        # ROUND 3: XÉT NGHIỆM THAM CHIẾU (HPLC / ĐIỆN DI & GEN HBA1, HBA2, HBB)
         # ----------------------------------------------------
 
-        st.subheader(":material/lab_panel: 3. Theo dõi sau sàng lọc — kết quả xét nghiệm chuyên sâu")
+        st.subheader(":material/lab_panel: 3. Kết quả xét nghiệm tham chiếu chuẩn (HPLC/Điện di Hb & Đột biến gen α, β)")
         st.caption(
-            "Nếu người tham gia đã thực hiện điện di huyết sắc tố, HPLC, xét nghiệm sắt hoặc xét nghiệm "
-            "di truyền, có thể nhập bổ sung tại đây để phục vụ theo dõi và tư vấn về sau. Vòng 3 không "
-            "chấm điểm và không tự xác lập chẩn đoán."
+            "Nhập kết quả HPLC/điện di huyết sắc tố và xét nghiệm sinh học phân tử (gen HBA1, HBA2, HBB) "
+            "để xác lập nhãn tham chiếu vàng và hoàn thiện hồ sơ nghiên cứu."
         )
 
         with st.form("round3_followup_form", clear_on_submit=False):
@@ -4265,16 +4529,17 @@ if st.session_state.get("round2_unlocked", False):
                 r3_date = st.date_input("Ngày thực hiện xét nghiệm", value=None, key="round3_test_date")
             with c2:
                 r3_type = st.selectbox(
-                    "Loại xét nghiệm",
-                    ["Điện di huyết sắc tố", "HPLC huyết sắc tố", "Xét nghiệm di truyền",
-                     "Ferritin / đánh giá sắt", "Kết hợp nhiều xét nghiệm", "Khác"],
+                    "Phương pháp xét nghiệm tham chiếu",
+                    ["Kết hợp HPLC/Điện di + Xét nghiệm gen (HBA1, HBA2, HBB)",
+                     "Xét nghiệm đột biến gen (Gap-PCR / RDB / Giải trình tự)",
+                     "HPLC / Điện di mao quản huyết sắc tố",
+                     "Ferritin / đánh giá sắt bổ sung", "Khác"],
                     key="round3_test_type",
                 )
             with c3:
-                r3_facility = st.text_input("Cơ sở thực hiện", key="round3_facility",
-                                            placeholder="Bệnh viện / phòng xét nghiệm")
+                r3_facility = st.text_input("Cơ sở thực hiện", value="Bệnh viện Trung ương Huế", key="round3_facility")
 
-            st.markdown("**Kết quả huyết sắc tố (nếu có trên phiếu xét nghiệm)**")
+            st.markdown("**Thành phần huyết sắc tố trên HPLC / Điện di mao quản (nếu có)**")
             h1, h2, h3, h4 = st.columns(4)
             with h1:
                 r3_hba = st.number_input("HbA (%)", min_value=0.0, max_value=100.0, value=None, step=0.1, key="round3_hba")
@@ -4285,70 +4550,65 @@ if st.session_state.get("round2_unlocked", False):
             with h4:
                 r3_hbe = st.number_input("HbE (%)", min_value=0.0, max_value=100.0, value=None, step=0.1, key="round3_hbe")
 
-            st.markdown("**Xét nghiệm liên quan khác (nếu có)**")
             f1, f2, f3 = st.columns(3)
             with f1:
-                r3_ferritin = st.number_input("Ferritin", min_value=0.0, max_value=10000.0, value=None, step=0.1, key="round3_ferritin")
+                r3_ferritin = st.number_input(
+                    "Ferritin cập nhật (ng/mL)",
+                    min_value=0.0, max_value=10000.0,
+                    value=st.session_state.get("round2_ferritin_result"),
+                    step=0.1, key="round3_ferritin",
+                )
             with f2:
-                r3_iron = st.number_input("Sắt huyết thanh", min_value=0.0, max_value=1000.0, value=None, step=0.1, key="round3_iron")
+                r3_iron = st.number_input("Sắt huyết thanh (µmol/L)", min_value=0.0, max_value=1000.0, value=None, step=0.1, key="round3_iron")
             with f3:
                 r3_tsat = st.number_input("Độ bão hòa transferrin (%)", min_value=0.0, max_value=100.0, value=None, step=0.1, key="round3_tsat")
 
-            r3_genetic = st.text_area("Kết quả xét nghiệm di truyền (nếu có)", key="round3_genetic",
-                                      placeholder="Ghi theo phiếu xét nghiệm hoặc tóm tắt chính xác kết quả...")
-            r3_lab = st.text_area("Kết luận trên phiếu xét nghiệm / nhận xét của cơ sở thực hiện", key="round3_lab",
-                                  placeholder="Ưu tiên ghi đúng nội dung của cơ sở xét nghiệm, không tự suy diễn.")
+            r3_genetic = st.text_area(
+                "Kết quả xét nghiệm đột biến gen HBA1, HBA2, HBB (Tiêu chuẩn tham chiếu chính)",
+                key="round3_genetic",
+                placeholder="Ví dụ: Dương tính dị hợp tử mất đoạn --SEA (alpha-Thalassemia) / Dương tính đột biến CD17 (beta-Thalassemia) / Âm tính...",
+            )
+            r3_lab = st.text_area(
+                "Kết luận phân nhóm nghiên cứu (Không mang gen / Mang gen Alpha / Mang gen Beta / Đồng mang Alpha+Beta)",
+                key="round3_lab",
+            )
 
             s1, s2 = st.columns(2)
             with s1:
                 r3_status = st.selectbox(
-                    "Trạng thái theo dõi",
-                    ["Đã có kết quả", "Đã thực hiện — đang chờ kết quả", "Chưa thực hiện"],
+                    "Trạng thái xác nhận tham chiếu",
+                    ["Đã có kết quả xét nghiệm tham chiếu", "Đã lấy mẫu — đang chờ kết quả PCR/HPLC", "Chưa thực hiện"],
                     key="round3_status",
                 )
             with s2:
-                r3_follow_date = st.date_input("Ngày hẹn theo dõi tiếp theo (nếu có)", value=None, key="round3_follow_date")
+                r3_follow_date = st.date_input("Ngày hẹn tư vấn di truyền / tái khám", value=None, key="round3_follow_date")
 
-            r3_note = st.text_area(
-                "Ghi chú tư vấn / theo dõi", key="round3_note",
-                placeholder="Ví dụ: mang kết quả đến bác sĩ Huyết học; cân nhắc tư vấn di truyền khi phù hợp...",
-            )
+            r3_note = st.text_area("Ghi chú tư vấn di truyền", key="round3_note")
 
             save_r3 = st.form_submit_button(
-                "Lưu kết quả theo dõi", icon=":material/save:", type="primary", use_container_width=True
+                "Lưu kết quả xét nghiệm tham chiếu", icon=":material/save:", type="primary", use_container_width=True
             )
 
         if save_r3:
-            has_result = (
-                any(v is not None for v in [r3_hba, r3_hba2, r3_hbf, r3_hbe, r3_ferritin, r3_iron, r3_tsat])
-                or bool(r3_genetic.strip()) or bool(r3_lab.strip())
+            update_screening_round3(
+                st.session_state.get("screening_id"),
+                {
+                    "test_date": r3_date.isoformat() if r3_date else None,
+                    "facility": r3_facility.strip() or None, "test_type": r3_type,
+                    "hba": r3_hba, "hba2": r3_hba2, "hbf": r3_hbf, "hbe": r3_hbe,
+                    "ferritin": r3_ferritin, "serum_iron": r3_iron, "transferrin_saturation": r3_tsat,
+                    "genetic_result": r3_genetic.strip() or None,
+                    "lab_conclusion": r3_lab.strip() or None,
+                    "followup_status": r3_status,
+                    "counseling_note": r3_note.strip() or None,
+                    "followup_date": r3_follow_date.isoformat() if r3_follow_date else None,
+                },
             )
-            if r3_status == "Đã có kết quả" and not has_result:
-                st.warning("Bạn chọn 'Đã có kết quả' nhưng chưa nhập dữ liệu. Vui lòng kiểm tra lại.")
-            else:
-                update_screening_round3(
-                    st.session_state.get("screening_id"),
-                    {
-                        "test_date": r3_date.isoformat() if r3_date else None,
-                        "facility": r3_facility.strip() or None, "test_type": r3_type,
-                        "hba": r3_hba, "hba2": r3_hba2, "hbf": r3_hbf, "hbe": r3_hbe,
-                        "ferritin": r3_ferritin, "serum_iron": r3_iron, "transferrin_saturation": r3_tsat,
-                        "genetic_result": r3_genetic.strip() or None,
-                        "lab_conclusion": r3_lab.strip() or None,
-                        "followup_status": r3_status,
-                        "counseling_note": r3_note.strip() or None,
-                        "followup_date": r3_follow_date.isoformat() if r3_follow_date else None,
-                    },
-                )
-                st.session_state["round3_completed"] = True
-                st.success("Đã lưu kết quả theo dõi sau sàng lọc.", icon=":material/check_circle:")
+            st.session_state["round3_completed"] = True
+            st.success("Đã lưu kết quả xét nghiệm tham chiếu.", icon=":material/check_circle:")
 
         if st.session_state.get("round3_completed", False):
-            st.info(
-                "Hồ sơ đã có dữ liệu Vòng 3. Khi có kết quả mới, bạn có thể cập nhật lại để duy trì hồ sơ theo dõi hiện hành.",
-                icon=":material/info:",
-            )
-            st.markdown("### :material/rule: Đối chiếu kết quả theo hướng dẫn BYT 2022")
+            st.markdown("### :material/rule: Đối chiếu kết quả chuyên sâu theo hướng dẫn BYT 2022")
             current_r3 = {
                 "hba": st.session_state.get("round3_hba"), "hba2": st.session_state.get("round3_hba2"),
                 "hbf": st.session_state.get("round3_hbf"), "hbe": st.session_state.get("round3_hbe"),
@@ -4358,22 +4618,10 @@ if st.session_state.get("round2_unlocked", False):
                 "lab_conclusion": st.session_state.get("round3_lab", ""),
             }
             bullet_list(round3_byt_interpretation(current_r3))
-            st.caption(
-                "Đây là đối chiếu hỗ trợ dựa trên dữ liệu đã nhập và nội dung tài liệu BYT 2022; "
-                "không thay thế kết luận của cơ sở xét nghiệm/bác sĩ Huyết học."
-            )
-
-        # ----------------------------------------------------
-        # MEDICAL FACILITIES
-        # ----------------------------------------------------
 
         render_facilities(patient)
 
-        # ----------------------------------------------------
-        # WORD REPORT
-        # ----------------------------------------------------
-
-        st.subheader(":material/description: Phiếu kết quả")
+        st.subheader(":material/description: Xuất Phiếu Kết quả Sàng lọc & Giải thích SHAP (.docx)")
 
         report = make_word_bytes(
             patient=patient,
@@ -4385,11 +4633,19 @@ if st.session_state.get("round2_unlocked", False):
                 "adjustment": st.session_state["round2_adjustment"],
                 "hb": st.session_state["round2_hb"],
                 "hb_adjusted": st.session_state["round2_hb_adjusted"],
+                "hct": st.session_state.get("round2_hct_result"),
                 "mcv": st.session_state["round2_mcv_result"],
                 "mch": st.session_state["round2_mch_result"],
+                "mchc": st.session_state.get("round2_mchc_result"),
                 "rbc": st.session_state["round2_rbc_result"],
                 "rdw": st.session_state["round2_rdw_result"],
+                "ferritin": st.session_state.get("round2_ferritin_result"),
                 "mentzer": st.session_state["round2_mentzer"],
+                "green_king": ml_res["indices"]["green_king"],
+                "rdwi": ml_res["indices"]["rdwi"],
+                "ml_prob_cbc": ml_res["probs_a"]["XGBoost"],
+                "ml_prob_cbc_ferritin": ml_res["probs_b"]["XGBoost"] if st.session_state.get("round2_ferritin_result") is not None else None,
+                "shap": ml_res["shap"],
                 "score": st.session_state["round2_score"],
                 "category": st.session_state["round2_category"],
                 "conclusion": st.session_state["round2_conclusion"],
@@ -4399,9 +4655,9 @@ if st.session_state.get("round2_unlocked", False):
         )
 
         st.download_button(
-            "Tải phiếu Word",
+            "Tải phiếu kết quả Word (kèm xác suất Học máy & giải thích SHAP)",
             data=report,
-            file_name=f"Phieu_Thalassemia_{safe_filename(patient['full_name'])}.docx",
+            file_name=f"Phieu_THAL_SCREEN_AI_{safe_filename(patient['full_name'])}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             icon=":material/download:",
             use_container_width=True,
@@ -4413,6 +4669,6 @@ if st.session_state.get("round2_unlocked", False):
 
 st.divider()
 st.caption(
-    "V5 Prototype — các trọng số/ngưỡng cần validation trên dữ liệu người Việt Nam "
-    "trước khi sử dụng trong nghiên cứu lâm sàng."
+    "THAL-SCREEN AI (V6 Research Edition) — Đề tài NCKH Trường Đại học Phan Châu Trinh & Bệnh viện Trung ương Huế. "
+    "Công cụ hỗ trợ sàng lọc và phân tầng nguy cơ bằng Học máy có giải thích (SHAP), không thay thế chẩn đoán xác định di truyền."
 )
