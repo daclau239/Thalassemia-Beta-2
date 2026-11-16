@@ -26,7 +26,7 @@ import streamlit as st
 #              tại Bệnh viện Trung ương Huế
 # Chủ nhiệm đề tài: Nguyễn Đắc Lâu (24XN1 - Trường Đại học Phan Châu Trinh)
 # Thành viên: Trần Phan Thảo Vi, Huỳnh Ngọc Anh Huy, Lê Văn Thịnh, Phan Ngọc Bảo An
-# Giảng viên hướng dẫn: ThS. Nguyễn Thị Kim Loan
+# Giảng viên hướng dẫn: TS. Nguyễn Đình Khắc Chân
 # Yêu cầu: xem requirements.txt (streamlit>=1.45, scikit-learn, xgboost, shap, scipy, psycopg[pool], python-docx, XlsxWriter, openpyxl...)
 
 # set_page_config PHẢI là lệnh Streamlit đầu tiên.
