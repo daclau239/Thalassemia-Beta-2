@@ -2727,7 +2727,7 @@ def show_project_intro():
 - **Cơ sở phối hợp nghiên cứu:** Bệnh viện Trung ương Huế (Thời gian: 11/2026 – 05/2027)
 - **Chủ nhiệm đề tài:** Nguyễn Đắc Lâu (Lớp 24XN1)
 - **Thành viên nhóm nghiên cứu:** Trần Phan Thảo Vi, Huỳnh Ngọc Anh Huy, Lê Văn Thịnh, Phan Ngọc Bảo An
-- **Giảng viên hướng dẫn:** ThS. Nguyễn Thị Kim Loan
+- **Giảng viên hướng dẫn:** TS. Nguyễn Đình Khắc Chân
 
 ---
 
@@ -4123,7 +4123,7 @@ if _bi2.button("Cơ sở khoa học & Học máy", icon=":material/school:", use
 
 st.markdown(
     '<div class="contact-card"><div class="label">Chủ nhiệm đề tài & Nhóm nghiên cứu (Trường Đại học Phan Châu Trinh)</div>'
-    '<div class="name">Chủ nhiệm: Nguyễn Đắc Lâu · GVHD: ThS. Nguyễn Thị Kim Loan</div>'
+    '<div class="name">Chủ nhiệm: Nguyễn Đắc Lâu · GVHD: TS. Nguyễn Đình Khắc Chân</div>'
     '<div>Thành viên: Trần Phan Thảo Vi · Huỳnh Ngọc Anh Huy · Lê Văn Thịnh · Phan Ngọc Bảo An</div>'
     '<div>Điện thoại: <a href="tel:0357930820">0357930820</a> · Email: <a href="mailto:nguyendaclau2309@gmail.com">nguyendaclau2309@gmail.com</a></div>'
     '<div class="small-note">Hệ thống hỗ trợ sàng lọc và phân tầng nguy cơ mang gen Thalassemia dựa trên CBC và Ferritin huyết thanh (không thay thế chẩn đoán xác định di truyền).</div></div>',
