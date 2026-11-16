@@ -232,20 +232,20 @@ def _minify_css(css):
     return re.sub(r"\s+", " ", css).strip()
 
 
-_LG_LIGHT = (  # Chế độ sáng mới: nền xám ngọc trai dịu mắt, thẻ trắng rõ khối, chữ đen đậm #0F172A sắc nét
-    "--lg-text:#0F172A;--lg-bg:#F1F5F9;--lg-link:#B91C3C;color-scheme:light;"
-    "--lg-stroke:rgba(15,23,42,.15);--lg-muted:#475569;"
-    "--lg-fill:rgba(255,255,255,.90);--lg-fill-soft:#FFFFFF;"
-    "--lg-fill-strong:#FFFFFF;--lg-pop:#FFFFFF;"
-    "--lg-spec:inset 0 1px 0 rgba(255,255,255,.95),inset 0 -1px 0 rgba(15,23,42,.05),0 1px 2px rgba(15,23,42,.04);"
-    "--lg-shadow:0 10px 28px -12px rgba(15,23,42,.12),0 2px 6px -1px rgba(15,23,42,.06);"
-    "--lg-risk-low:#15803D;--lg-risk-mid:#B45309;--lg-risk-high:#B91C1C;"
-    "--lg-aurora:radial-gradient(900px 620px at 6% -6%,rgba(192,57,79,.13),transparent 62%),"
-    "radial-gradient(820px 580px at 102% 2%,rgba(79,124,255,.12),transparent 62%),"
-    "radial-gradient(920px 700px at 72% 108%,rgba(43,179,163,.11),transparent 62%),"
-    "radial-gradient(700px 520px at 0% 100%,rgba(155,107,255,.09),transparent 62%);"
+_LG_LIGHT = (  # giữ NGUYÊN giao diện sáng cũ
+    "--lg-text:#1d1d1f;--lg-bg:#ffffff;--lg-link:#C0394F;"
+    "--lg-stroke:color-mix(in srgb,var(--lg-text) 13%,transparent);--lg-muted:color-mix(in srgb,var(--lg-text) 62%,transparent);"
+    "--lg-fill:color-mix(in srgb,var(--lg-bg) 66%,transparent);--lg-fill-soft:color-mix(in srgb,var(--lg-bg) 30%,transparent);"
+    "--lg-fill-strong:color-mix(in srgb,var(--lg-bg) 74%,transparent);--lg-pop:color-mix(in srgb,var(--lg-bg) 90%,transparent);"
+    "--lg-spec:inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(255,255,255,.08),inset 0 0 0 1px rgba(255,255,255,.08);"
+    "--lg-shadow:0 8px 22px -14px rgba(20,25,45,.30);"
+    "--lg-risk-low:#2E7D32;--lg-risk-mid:#B26A00;--lg-risk-high:#B3261E;"
+    "--lg-aurora:radial-gradient(900px 620px at 6% -6%,color-mix(in srgb,var(--lg-accent) 30%,transparent),transparent 62%),"
+    "radial-gradient(820px 580px at 102% 2%,color-mix(in srgb,var(--lg-blue) 26%,transparent),transparent 62%),"
+    "radial-gradient(920px 700px at 72% 108%,color-mix(in srgb,var(--lg-teal) 24%,transparent),transparent 62%),"
+    "radial-gradient(700px 520px at 0% 100%,color-mix(in srgb,#9B6BFF 16%,transparent),transparent 62%);"
 )
-_LG_DARK = (  # GIỮ NGUYÊN 100% chế độ tối gốc
+_LG_DARK = (  # chế độ tối: nền xanh đen, chữ sáng, kính trắng mờ nhẹ
     "--lg-text:#eef1f7;--lg-bg:#0f131b;--lg-link:#FF8FA1;color-scheme:dark;"
     "--lg-stroke:color-mix(in srgb,var(--lg-text) 15%,transparent);--lg-muted:color-mix(in srgb,var(--lg-text) 70%,transparent);"
     "--lg-fill:rgba(255,255,255,.07);--lg-fill-soft:rgba(255,255,255,.05);--lg-fill-strong:rgba(255,255,255,.13);--lg-pop:rgba(27,32,43,.98);"
@@ -257,7 +257,7 @@ _LG_DARK = (  # GIỮ NGUYÊN 100% chế độ tối gốc
     "radial-gradient(920px 700px at 72% 108%,rgba(43,179,163,.12),transparent 62%),"
     "radial-gradient(700px 520px at 0% 100%,rgba(155,107,255,.10),transparent 62%);"
 )
-# GIỮ NGUYÊN 100% quy tắc ép màu chữ theo biến --lg-text / --lg-muted của bản gốc
+# Quy tắc CHỈ áp dụng khi ở chế độ tối (ép màu chữ để luôn đọc rõ trên nền tối)
 _DARK_ONLY_CSS = r"""
 .stApp,[data-testid="stApp"]{ color:var(--lg-text); }
 /* Màu chữ do chính giao diện này quyết định → luôn tương phản với nền, ở cả sáng lẫn tối */
@@ -280,7 +280,7 @@ input::placeholder,textarea::placeholder{ color:var(--lg-muted) !important; -web
 
 
 def _theme_vars_css():
-    """Dark mode giữ nguyên 100% bản gốc; Light mode dùng bảng màu mới rõ nét và áp dụng luôn quy tắc chữ tương phản."""
+    """Sáng: giữ nguyên như cũ. Tối: bảng màu + quy tắc riêng. Chế độ lấy từ st.context.theme (nếu có), không thì theo hệ điều hành."""
     try:
         mode = st.context.theme.type
     except Exception:
@@ -288,22 +288,18 @@ def _theme_vars_css():
     if mode == "dark":
         body = ":root{" + _LG_DARK + "}" + _DARK_ONLY_CSS
     elif mode == "light":
-        body = ":root{" + _LG_LIGHT + "}" + _DARK_ONLY_CSS
+        body = ":root{" + _LG_LIGHT + "}"
     else:
-        body = (
-            ":root{" + _LG_LIGHT + "}"
-            + _DARK_ONLY_CSS
-            + " @media (prefers-color-scheme: dark){:root{" + _LG_DARK + "}}"
-        )
+        body = (":root{" + _LG_LIGHT + "} @media (prefers-color-scheme: dark){:root{" + _LG_DARK + "}"
+                + _DARK_ONLY_CSS + "}")
     return "<style>" + body + "</style>"
 
 
+# Có thể tắt hiệu ứng kính ở thanh bên (máy yếu / mạng chậm) → nhẹ và nhanh hơn.
+# Công tắc khẩn cấp: thêm ?glass=off vào cuối địa chỉ web để tắt toàn bộ CSS kính.
 _glass_on = st.session_state.get("glass_fx", True) and st.query_params.get("glass") != "off"
 if st.query_params.get("glass") != "off":
-    st.markdown(
-        _minify_css(_theme_vars_css() + GLASS_CSS + ("" if _glass_on else GLASS_OFF_CSS)),
-        unsafe_allow_html=True,
-    )
+    st.markdown(_minify_css(_theme_vars_css() + GLASS_CSS + ("" if _glass_on else GLASS_OFF_CSS)), unsafe_allow_html=True)
 
 # ------------------------------------------------------------
 # CONFIG
