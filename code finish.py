@@ -232,22 +232,22 @@ def _minify_css(css):
     return re.sub(r"\s+", " ", css).strip()
 
 
-_LG_LIGHT = (
-    "--lg-text:#1d1d1f;--lg-bg:#ffffff;--lg-link:#C0394F;"
-    "--lg-stroke:color-mix(in srgb,var(--lg-text) 13%,transparent);--lg-muted:color-mix(in srgb,var(--lg-text) 62%,transparent);"
-    "--lg-fill:color-mix(in srgb,var(--lg-bg) 66%,transparent);--lg-fill-soft:color-mix(in srgb,var(--lg-bg) 30%,transparent);"
-    "--lg-fill-strong:color-mix(in srgb,var(--lg-bg) 74%,transparent);--lg-pop:color-mix(in srgb,var(--lg-bg) 90%,transparent);"
-    "--lg-spec:inset 0 1px 0 rgba(255,255,255,.55),inset 0 -1px 0 rgba(255,255,255,.08),inset 0 0 0 1px rgba(255,255,255,.08);"
-    "--lg-shadow:0 8px 22px -14px rgba(20,25,45,.30);"
-    "--lg-risk-low:#2E7D32;--lg-risk-mid:#B26A00;--lg-risk-high:#B3261E;"
-    "--lg-aurora:radial-gradient(900px 620px at 6% -6%,color-mix(in srgb,var(--lg-accent) 30%,transparent),transparent 62%),"
-    "radial-gradient(820px 580px at 102% 2%,color-mix(in srgb,var(--lg-blue) 26%,transparent),transparent 62%),"
-    "radial-gradient(920px 700px at 72% 108%,color-mix(in srgb,var(--lg-teal) 24%,transparent),transparent 62%),"
-    "radial-gradient(700px 520px at 0% 100%,color-mix(in srgb,#9B6BFF 16%,transparent),transparent 62%);"
+_LG_LIGHT = (  # Chế độ Sáng (Light Pearl Glass): nền xám ngọc trai dịu mắt, thẻ trắng sắc nét, chữ đen sâu #0F172A tương phản AAA
+    "--lg-text:#0F172A;--lg-bg:#F1F5F9;--lg-link:#B91C3C;color-scheme:light;"
+    "--lg-stroke:rgba(15,23,42,.15);--lg-muted:#475569;"
+    "--lg-fill:rgba(255,255,255,.90);--lg-fill-soft:#FFFFFF;"
+    "--lg-fill-strong:#FFFFFF;--lg-pop:#FFFFFF;"
+    "--lg-spec:inset 0 1px 0 rgba(255,255,255,.95),inset 0 -1px 0 rgba(15,23,42,.05),0 1px 2px rgba(15,23,42,.04);"
+    "--lg-shadow:0 10px 28px -12px rgba(15,23,42,.12),0 2px 6px -1px rgba(15,23,42,.06);"
+    "--lg-risk-low:#15803D;--lg-risk-mid:#B45309;--lg-risk-high:#B91C1C;"
+    "--lg-aurora:radial-gradient(900px 620px at 6% -6%,rgba(192,57,79,.13),transparent 62%),"
+    "radial-gradient(820px 580px at 102% 2%,rgba(79,124,255,.12),transparent 62%),"
+    "radial-gradient(920px 700px at 72% 108%,rgba(43,179,163,.11),transparent 62%),"
+    "radial-gradient(700px 520px at 0% 100%,rgba(155,107,255,.09),transparent 62%);"
 )
-_LG_DARK = (
-    "--lg-text:#eef1f7;--lg-bg:#0f131b;--lg-link:#FF8FA1;color-scheme:dark;"
-    "--lg-stroke:color-mix(in srgb,var(--lg-text) 15%,transparent);--lg-muted:color-mix(in srgb,var(--lg-text) 70%,transparent);"
+_LG_DARK = (  # Chế độ Tối (Dark Liquid Glass): nền xanh đêm, chữ trắng bạc, kính mờ sang trọng
+    "--lg-text:#EEF1F7;--lg-bg:#0F131B;--lg-link:#FF8FA1;color-scheme:dark;"
+    "--lg-stroke:color-mix(in srgb,var(--lg-text) 15%,transparent);--lg-muted:color-mix(in srgb,var(--lg-text) 72%,transparent);"
     "--lg-fill:rgba(255,255,255,.07);--lg-fill-soft:rgba(255,255,255,.05);--lg-fill-strong:rgba(255,255,255,.13);--lg-pop:rgba(27,32,43,.98);"
     "--lg-spec:inset 0 1px 0 rgba(255,255,255,.14),inset 0 -1px 0 rgba(255,255,255,.03),inset 0 0 0 1px rgba(255,255,255,.04);"
     "--lg-shadow:0 10px 26px -14px rgba(0,0,0,.75);"
@@ -257,39 +257,78 @@ _LG_DARK = (
     "radial-gradient(920px 700px at 72% 108%,rgba(43,179,163,.12),transparent 62%),"
     "radial-gradient(700px 520px at 0% 100%,rgba(155,107,255,.10),transparent 62%);"
 )
-_DARK_ONLY_CSS = r"""
-.stApp,[data-testid="stApp"]{ color:var(--lg-text); }
-.stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp h5,.stApp h6,.stApp p,.stApp li,.stApp label,
-[data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li,[data-testid="stWidgetLabel"] p,
+# Quy tắc ép độ tương phản chữ sắc nét áp dụng cho CẢ Chế độ Sáng lẫn Chế độ Tối
+_SHARED_CONTRAST_CSS = r"""
+.stApp,[data-testid="stApp"]{ color:var(--lg-text) !important; }
+.stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp h5,.stApp h6,.stApp p,.stApp li,.stApp label,.stApp span,
+[data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li,[data-testid="stMarkdownContainer"] span,
+[data-testid="stWidgetLabel"] p,[data-testid="stWidgetLabel"] label,
 [data-testid="stMetricLabel"] p,[data-testid="stMetricValue"],[data-testid="stExpander"] summary p,
-[data-testid="stRadio"] label p,[data-testid="stCheckbox"] label p,[data-testid="stToggle"] label p,
-[data-testid="stTabs"] button p{ color:var(--lg-text) !important; }
-[data-testid="stCaptionContainer"],[data-testid="stCaptionContainer"] p,.stCaption,.small-note{ color:var(--lg-muted) !important; }
-[data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li{ line-height:1.6; }
-[data-testid^="stBaseButton"],[data-testid^="stBaseLinkButton"]{ color:var(--lg-text); }
+[data-testid="stRadio"] label p,[data-testid="stRadio"] div[role="radiogroup"] label,
+[data-testid="stCheckbox"] label p,[data-testid="stToggle"] label p,
+[data-testid="stTabs"] button p,[data-testid="stSidebar"] p,[data-testid="stSidebar"] label,[data-testid="stSidebar"] span{
+  color:var(--lg-text) !important;
+}
+[data-testid="stCaptionContainer"],[data-testid="stCaptionContainer"] p,.stCaption,.small-note{
+  color:var(--lg-muted) !important;
+  font-weight:500 !important;
+}
+[data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li{ line-height:1.62; }
+[data-testid^="stBaseButton"],[data-testid^="stBaseLinkButton"],.stButton>button,.stDownloadButton>button{
+  color:var(--lg-text) !important;
+}
 [data-baseweb="input"] input,[data-baseweb="textarea"] textarea,[data-baseweb="select"] input,
-[data-baseweb="select"] div,[data-baseweb="select"] span{ color:var(--lg-text) !important; -webkit-text-fill-color:var(--lg-text) !important; caret-color:var(--lg-link); }
+[data-baseweb="select"] div,[data-baseweb="select"] span,[data-testid="stDateInput"] input{
+  color:var(--lg-text) !important;
+  -webkit-text-fill-color:var(--lg-text) !important;
+  caret-color:var(--lg-link) !important;
+  font-weight:500 !important;
+}
 [data-baseweb="select"] svg,[data-baseweb="input"] svg{ fill:var(--lg-muted) !important; }
-input::placeholder,textarea::placeholder{ color:var(--lg-muted) !important; -webkit-text-fill-color:var(--lg-muted) !important; opacity:1; }
-[data-baseweb="popover"] li,[data-baseweb="menu"] li,[role="option"]{ color:var(--lg-text) !important; }
-[role="option"]:hover,[role="option"][aria-selected="true"],[data-baseweb="menu"] li:hover{ background:var(--lg-fill-strong) !important; }
-.stApp [data-testid="stBaseButton-primary"] *,.stApp [data-testid="stBaseButton-primaryFormSubmit"] *,.stApp button[kind="primary"] *,.stApp button[kind="primaryFormSubmit"] *{ color:#fff !important; -webkit-text-fill-color:#fff !important; }
+input::placeholder,textarea::placeholder{
+  color:var(--lg-muted) !important;
+  -webkit-text-fill-color:var(--lg-muted) !important;
+  opacity:.75 !important;
+}
+[data-baseweb="popover"] li,[data-baseweb="menu"] li,[role="option"],[data-baseweb="popover"] div{
+  color:var(--lg-text) !important;
+}
+[role="option"]:hover,[role="option"][aria-selected="true"],[data-baseweb="menu"] li:hover{
+  background:var(--lg-fill-strong) !important;
+}
+.stApp [data-testid="stBaseButton-primary"],.stApp [data-testid="stBaseButton-primary"] *,
+.stApp [data-testid="stBaseButton-primaryFormSubmit"],.stApp [data-testid="stBaseButton-primaryFormSubmit"] *,
+.stApp button[kind="primary"],.stApp button[kind="primary"] *,
+.stApp button[kind="primaryFormSubmit"],.stApp button[kind="primaryFormSubmit"] *{
+  color:#FFFFFF !important;
+  -webkit-text-fill-color:#FFFFFF !important;
+}
 """
 
 
 def _theme_vars_css():
-    try:
-        mode = st.context.theme.type
-    except Exception:
-        mode = None
+    """Ưu tiên chế độ giao diện người dùng chọn ở Sidebar (Tự động / Sáng / Tối),
+    sau đó tới st.context.theme.type và cuối cùng là prefers-color-scheme của hệ điều hành.
+    Cả 2 chế độ Sáng & Tối đều nạp _SHARED_CONTRAST_CSS để chữ luôn sắc nét tuyệt đối."""
+    user_pref = st.session_state.get("ui_theme_mode", "Tự động")
+    if user_pref == "Tối (Dark Glass)":
+        mode = "dark"
+    elif user_pref == "Sáng (Light Glass)":
+        mode = "light"
+    else:
+        try:
+            mode = st.context.theme.type
+        except Exception:
+            mode = None
     if mode == "dark":
-        body = ":root{" + _LG_DARK + "}" + _DARK_ONLY_CSS
+        body = ":root{" + _LG_DARK + "}" + _SHARED_CONTRAST_CSS
     elif mode == "light":
-        body = ":root{" + _LG_LIGHT + "}"
+        body = ":root{" + _LG_LIGHT + "}" + _SHARED_CONTRAST_CSS
     else:
         body = (
-            ":root{" + _LG_LIGHT + "} @media (prefers-color-scheme: dark){:root{" + _LG_DARK + "}"
-            + _DARK_ONLY_CSS + "}"
+            ":root{" + _LG_LIGHT + "} "
+            "@media (prefers-color-scheme: dark){:root{" + _LG_DARK + "}} "
+            + _SHARED_CONTRAST_CSS
         )
     return "<style>" + body + "</style>"
 
@@ -4137,6 +4176,12 @@ st.markdown(
 render_auth_sidebar()
 
 st.sidebar.divider()
+st.sidebar.selectbox(
+    "Chế độ màu giao diện",
+    ["Tự động", "Sáng (Light Glass)", "Tối (Dark Glass)"],
+    key="ui_theme_mode",
+    help="Chuyển đổi tức thì giữa giao diện Sáng (chữ đen đậm #0F172A trên nền kính trắng ngọc trai) và Tối (Dark Liquid Glass).",
+)
 st.sidebar.toggle(
     "Hiệu ứng kính (Liquid Glass)", value=True, key="glass_fx",
     help="Tắt nếu máy yếu hoặc mạng chậm để trang nhẹ và mở nhanh hơn.",
