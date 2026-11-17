@@ -35,3 +35,5 @@ odfpy
 # --- nên đã tắt mặc định để không làm app lỗi khi triển khai. Bỏ dấu # ở đầu dòng để bật. ---
 # pyreadstat
 # pyreadr
+scikit-learn>=1.5
+xgboost>=2.1
